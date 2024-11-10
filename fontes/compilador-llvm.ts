@@ -196,6 +196,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         switch (expressao.operador.tipo) {
             case 'MULTIPLICACAO':
                 return Promise.resolve(this.montador.CreateMul(valorEsquerdo, valorDireito));
+            case 'ADICAO':
+                return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+            case 'SUBTRACAO':
+                return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
+            case 'DIVISAO_INTEIRA':
+                return Promise.resolve(this.montador.CreateSDiv(valorEsquerdo, valorDireito));
         }
     }
 
@@ -346,7 +352,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             await declaracao.aceitar(this);
         }
 
-        const tipoRetorno = this.montador.getInt32Ty();
+        // Exemplo de função que retorna zero.
+        /* const tipoRetorno = this.montador.getInt32Ty();
         const tipoFuncao = llvm.FunctionType.get(
             tipoRetorno,
             [this.montador.getInt32Ty()],
@@ -362,7 +369,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoFoo);
         this.montador.SetInsertPoint(blocoEscopo);
-        this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
+        this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0))); */
 
         this.criarPontoEntrada();
 
