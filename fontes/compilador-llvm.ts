@@ -47,18 +47,18 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     visitarDeclaracaoDefinicaoFuncao(declaracao: FuncaoDeclaracao): void {
         const tipoRetorno = this.montador.getInt32Ty();
         const tipoFuncao = llvm.FunctionType.get(
-            tipoRetorno, 
-            [this.montador.getInt32Ty()], 
+            tipoRetorno,
+            [this.montador.getInt32Ty()],
             false
         );
 
         const funcaoFoo = llvm.Function.Create(
-            tipoFuncao, 
-            llvm.Function.LinkageTypes.ExternalLinkage, 
-            declaracao.simbolo.lexema, 
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            declaracao.simbolo.lexema,
             this.modulo
         );
-    
+
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoFoo);
         this.montador.SetInsertPoint(blocoEscopo);
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
@@ -249,12 +249,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         const tipoRetorno = this.montador.getInt32Ty();
         const tipoFuncao = llvm.FunctionType.get(tipoRetorno, [], false);
         const funcaoInicio = llvm.Function.Create(
-            tipoFuncao, 
-            llvm.Function.LinkageTypes.ExternalLinkage, 
-            'main', 
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'main',
             this.modulo
         );
-    
+
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
@@ -280,21 +280,21 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         for (const declaracao of resultadoAvaliadorSintatico.declaracoes) {
             declaracao.aceitar(this);
         }
-    
+
         const tipoRetorno = this.montador.getInt32Ty();
         const tipoFuncao = llvm.FunctionType.get(
-            tipoRetorno, 
-            [this.montador.getInt32Ty()], 
+            tipoRetorno,
+            [this.montador.getInt32Ty()],
             false
         );
 
         const funcaoFoo = llvm.Function.Create(
-            tipoFuncao, 
-            llvm.Function.LinkageTypes.ExternalLinkage, 
-            'foo', 
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'foo',
             this.modulo
         );
-    
+
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoFoo);
         this.montador.SetInsertPoint(blocoEscopo);
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
@@ -305,7 +305,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             console.error('Falha ao verificar módulo.');
             return;
         }
-    
+
         return this.modulo.print();
     }
 }
