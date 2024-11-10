@@ -58,8 +58,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
     protected obterTipoLlvm(tipoDelegua: string): llvm.Type {
         switch (tipoDelegua) {
-            case 'numero':
+            case 'inteiro':
                 return this.montador.getInt32Ty();
+            case 'numero':
+            case 'número':
+                return this.montador.getFloatTy();
         }
     }
 
@@ -193,13 +196,19 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         const valorEsquerdo = promises[0],
             valorDireito = promises[1];
 
+        // TODO: Devolver operadores diferentes de acordo com o tipo do dado.
         switch (expressao.operador.tipo) {
             case 'MULTIPLICACAO':
-                return Promise.resolve(this.montador.CreateMul(valorEsquerdo, valorDireito));
+                // return Promise.resolve(this.montador.CreateMul(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateFMul(valorEsquerdo, valorDireito));
             case 'ADICAO':
-                return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+                // return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateFAdd(valorEsquerdo, valorDireito));
             case 'SUBTRACAO':
-                return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
+                // return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateFSub(valorEsquerdo, valorDireito));
+            case 'DIVISAO':
+                return Promise.resolve(this.montador.CreateFDiv(valorEsquerdo, valorDireito));
             case 'DIVISAO_INTEIRA':
                 return Promise.resolve(this.montador.CreateSDiv(valorEsquerdo, valorDireito));
         }
@@ -351,25 +360,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         for (const declaracao of resultadoAvaliadorSintatico.declaracoes) {
             await declaracao.aceitar(this);
         }
-
-        // Exemplo de função que retorna zero.
-        /* const tipoRetorno = this.montador.getInt32Ty();
-        const tipoFuncao = llvm.FunctionType.get(
-            tipoRetorno,
-            [this.montador.getInt32Ty()],
-            false
-        );
-
-        const funcaoFoo = llvm.Function.Create(
-            tipoFuncao,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'foo',
-            this.modulo
-        );
-
-        const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoFoo);
-        this.montador.SetInsertPoint(blocoEscopo);
-        this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0))); */
 
         this.criarPontoEntrada();
 
