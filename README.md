@@ -51,6 +51,16 @@ source ~/.zshrc
 yarn
 ```
 
+## Compilando seu programa para código de máquina
+
+Para compilar seu código para código de máquina, utilizamos o [Clang](https://clang.llvm.org/), que é o compilador do LLVM para C e C++.
+
+O comando para compilar seu programa Delégua já convertido para LLVM é:
+
+```sh
+clang meu_programa.ll -o meu_programa
+```
+
 ## Considerações na compilação
 
 Todo código que passa por este compilador precisa ser fortemente tipado. Diferentemente do interpretador Delégua, que deduz o tipo de variável em tempo de execução, a arquitetura de LLVM nos obriga a ter tipos definidos, que são mapeados para os tipos correspondentes em LLVM.

@@ -7,6 +7,12 @@ describe('Compilador', () => {
         expect(resultado).toBeTruthy();
     });
 
+    it('Escreva', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar(['escreva(123)']);
+        expect(resultado).toBeTruthy();
+    });
+
     describe('Funções', () => {
         it('Quadrado, número', async () => {
             const compilador = new CompiladorLLVM();

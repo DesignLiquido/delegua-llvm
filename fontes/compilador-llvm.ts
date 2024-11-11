@@ -13,6 +13,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     montador: llvm.IRBuilder;
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
+    funcaoPrintf: llvm.Function;
+    formatoPrintf: llvm.Value;
 
     constructor() {
         this.lexador = new Lexador();
@@ -112,7 +114,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> | void {
-        throw new Error('Método não implementado.');
+        this.criarFuncaoNativaEscreva();
     }
 
     visitarDeclaracaoEscrevaMesmaLinha(declaracao: EscrevaMesmaLinha): Promise<any> | void {
@@ -314,6 +316,45 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     /**
+     * Aqui ficam as ideias de implementação encontradas em 
+     * https://gist.github.com/seven1m/2ca74265cca9ef6f493ef1de87e9252d. 
+     * 
+     * Outras ideias que foram testadas, mas não funcionaram muito bem, 
+     * estão em:
+     * 
+     * - https://gist.github.com/alendit/defe3d518cd8f3f3e28cb46708d4c9d6
+     * - https://github.com/numba/numba/blob/c699ef8679316f40af8d0678219fa197522a741f/numba/cgutils.py#L975
+     * 
+     * No entanto, elas podem servir de inspiração para funções futuras.
+     */
+    protected criarFuncaoNativaEscreva(): void {
+        this.formatoPrintf = this.montador.CreateGlobalStringPtr(
+            // "Ola Mundo",
+            "%d\n",
+            "qualquer",
+            0,
+            this.modulo
+        );
+
+        const tipoRetornoPrinter = this.montador.getInt32Ty();
+        const tipoFuncaoPrinter = llvm.FunctionType.get(
+            tipoRetornoPrinter, 
+            [
+                this.montador.getInt8PtrTy(0)
+            ], 
+            true
+        );
+
+        // Declara a função como módulo externo.
+        this.funcaoPrintf = llvm.Function.Create(
+            tipoFuncaoPrinter,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'printf',
+            this.modulo
+        );
+    }
+
+    /**
      * Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas 
      * LLVM, ao passar pelo CMake, requer este ponto de entrada, que é criado automaticamente. 
      * @returns Sempre retorna `void`.
@@ -330,6 +371,14 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
+        
+        // TODO: Incorporar demais declarações do escopo raiz aqui.
+        // Mover este teste para a parte de `escreva`.
+        this.montador.CreateCall(this.funcaoPrintf, [
+            this.formatoPrintf,
+            ConstantInt.get(this.contexto, new APInt(32, 5))
+        ]);
+
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
 
         if (llvm.verifyFunction(funcaoInicio)) {
