@@ -1,7 +1,7 @@
-import { Lexador, AvaliadorSintatico, AcessoElementoMatriz, AcessoIndiceVariavel, AcessoMetodoOuPropriedade, Agrupamento, Aleatorio, AtribuicaoPorIndice, AtribuicaoPorIndicesMatriz, Atribuir, Binario, Bloco, CabecalhoPrograma, Chamada, Classe, Comentario, Const, Constante, ConstMultiplo, Continua, DefinirValor, Dicionario, Enquanto, Escolha, Escreva, EscrevaMesmaLinha, Expressao, ExpressaoRegular, Falhar, Fazer, FimPara, FormatacaoEscrita, FuncaoConstruto, FuncaoDeclaracao, Importar, InicioAlgoritmo, Isto, Leia, LeiaMultiplo, Literal, Logico, Para, ParaCada, Retorna, Se, Super, Sustar, TendoComo, Tente, TipoDe, Tupla, Unario, Var, Variavel, VarMultiplo, Vetor } from '@designliquido/delegua';
+import { Lexador, AvaliadorSintatico, AcessoElementoMatriz, AcessoIndiceVariavel, AcessoMetodoOuPropriedade, Agrupamento, Aleatorio, AtribuicaoPorIndice, AtribuicaoPorIndicesMatriz, Atribuir, Binario, Bloco, CabecalhoPrograma, Chamada, Classe, Comentario, Const, Constante, ConstMultiplo, Continua, DefinirValor, Dicionario, Enquanto, Escolha, Escreva, EscrevaMesmaLinha, Expressao, ExpressaoRegular, Falhar, Fazer, FimPara, FormatacaoEscrita, FuncaoConstruto, FuncaoDeclaracao, Importar, InicioAlgoritmo, Isto, Leia, LeiaMultiplo, Literal, Logico, Para, ParaCada, Retorna, Se, Super, Sustar, TendoComo, Tente, TipoDe, Tupla, Unario, Var, Variavel, VarMultiplo, Vetor, Declaracao } from '@designliquido/delegua';
 import { VisitanteComumInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
-import llvm, { APInt, ConstantInt } from 'llvm-bindings';
+import llvm, { APFloat, APInt, Constant, ConstantFP, ConstantInt } from 'llvm-bindings';
 import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 
 export class CompiladorLLVM implements VisitanteComumInterface {
@@ -114,7 +114,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> | void {
-        this.criarFuncaoNativaEscreva();
+        this.montador.CreateCall(this.funcaoPrintf, [
+            this.formatoPrintf,
+            // TODO: Parametrizar corretamente.
+            ConstantInt.get(this.contexto, new APInt(32, 5))
+        ], "printf");
     }
 
     visitarDeclaracaoEscrevaMesmaLinha(declaracao: EscrevaMesmaLinha): Promise<any> | void {
@@ -204,7 +208,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 // return Promise.resolve(this.montador.CreateMul(valorEsquerdo, valorDireito));
                 return Promise.resolve(this.montador.CreateFMul(valorEsquerdo, valorDireito));
             case 'ADICAO':
-                // return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+                // TODO: Como testar o tipo aqui? 
+                /* if (expressao.esquerda.valor.tipo === 'inteiro' && expressao.direita.valor.tipo === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+                } */
+
                 return Promise.resolve(this.montador.CreateFAdd(valorEsquerdo, valorDireito));
             case 'SUBTRACAO':
                 // return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
@@ -279,7 +287,24 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     visitarExpressaoLiteral(expressao: Literal): Promise<any> | void {
-        throw new Error('Método não implementado.');
+        // TODO: Por questões de preguiça, por enquanto vamos imaginar que aqui só
+        // teremos inteiros. Ajustar depois.
+        return Promise.resolve(
+            this.montador.CreateRet(
+                ConstantInt.get(
+                    this.contexto, 
+                    new APInt(32, expressao.valor)
+                )
+            )
+        );
+        /* return Promise.resolve(
+            this.montador.CreateRet(
+                ConstantFP.get(
+                    this.montador.getFloatTy(), 
+                    new APFloat(expressao.valor)
+                )
+            )
+        ); */
     }
 
     visitarExpressaoLogica(expressao: Logico): Promise<any> | void {
@@ -359,7 +384,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
      * LLVM, ao passar pelo CMake, requer este ponto de entrada, que é criado automaticamente. 
      * @returns Sempre retorna `void`.
      */
-    protected criarPontoEntrada(): void {
+    protected async criarPontoEntrada(declaracoes: Declaracao[]): Promise<void> {
         const tipoRetorno = this.montador.getInt32Ty();
         const tipoFuncao = llvm.FunctionType.get(tipoRetorno, [], false);
         const funcaoInicio = llvm.Function.Create(
@@ -372,12 +397,9 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
         
-        // TODO: Incorporar demais declarações do escopo raiz aqui.
-        // Mover este teste para a parte de `escreva`.
-        this.montador.CreateCall(this.funcaoPrintf, [
-            this.formatoPrintf,
-            ConstantInt.get(this.contexto, new APInt(32, 5))
-        ]);
+        for (const declaracao of declaracoes) {
+            await declaracao.aceitar(this);
+        }
 
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
 
@@ -406,11 +428,19 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);
         }
 
-        for (const declaracao of resultadoAvaliadorSintatico.declaracoes) {
+        // Criação das funções nativas aqui.
+        this.criarFuncaoNativaEscreva();
+
+        // Declarações de funções durante o código.
+        // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
+        // reclama se fizermos isso no ponto de entrada.
+        const declaracoesFuncoes = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof FuncaoDeclaracao);
+        for (const declaracao of declaracoesFuncoes) {
             await declaracao.aceitar(this);
         }
 
-        this.criarPontoEntrada();
+        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => !(d instanceof FuncaoDeclaracao));
+        await this.criarPontoEntrada(outrasDeclaracoes);
 
         if (llvm.verifyModule(this.modulo)) {
             console.error('Falha ao verificar módulo.');
