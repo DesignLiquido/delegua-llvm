@@ -57,7 +57,7 @@ A biblioteca [llvm-bindings](https://github.com/ApsarasX/llvm-bindings), parte e
 
 Você precisará baixar os fontes do projeto ([link direto aqui](https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-14.0.6.zip)), o instalador do CMake, que [pode ser a versão mais recente](https://cmake.org/download/) com todas as opções padrão marcadas no instalador, e algum Visual Studio versões 2019 ou mais recente. [Há uma versão Community que é gratuita](https://visualstudio.microsoft.com/vs/community/). Ao executar o instalador do Visual Studio, marque a opção "Desenvolvimento em Desktop com C++" (ou, em inglês, _"Desktop Development with C++"_). 
 
-Baixados os fontes do projeto, descompacte o arquivo em um diretório qualquer (por exemplo, `C:\Estudos`). Feito isso, abra um prompt de comando (ou uma janela do PowerShell), navegue até o diretório descompatado do LLVM (por exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6`) e dentro deve haver um diretório `llvm` (ou seja, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm`). Neste diretório, execute os seguintes comandos:
+Baixados os fontes do projeto, descompacte o arquivo em um diretório qualquer (por exemplo, `C:\Estudos`). Feito isso, abra um prompt de comando (ou uma janela do PowerShell), navegue até o diretório descompactado do LLVM (por exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6`) e dentro deve haver um diretório `llvm`, ou seja, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm`. Neste diretório, execute os seguintes comandos:
 
 ```powershell
 mkdir build
@@ -91,9 +91,9 @@ clang meu_programa.ll -o meu_programa
 
 ## Considerações na compilação
 
-Todo código que passa por este compilador precisa ser fortemente tipado. Diferentemente do interpretador Delégua, que deduz o tipo de variável em tempo de execução, a arquitetura de LLVM nos obriga a ter tipos definidos, que são mapeados para os tipos correspondentes em LLVM.
+Todo código Delégua que passa por este compilador precisa ser fortemente tipado. Diferentemente do interpretador Delégua, que deduz o tipo de variável em tempo de execução, a arquitetura de LLVM nos obriga a ter tipos definidos, que são mapeados para os tipos correspondentes em LLVM.
 
-Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas LLVM requer este ponto de entrada, que é criado automaticamente. 
+Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas LLVM requer este ponto de entrada, que é criado automaticamente. Este ponto de entrada chama as demais funções, classes, etc.
 
 Todo o código gerado por esta biblioteca _não é otimizado_, e nem precisa ser. A otimização do código pode ser feita [pelo comando `opt` do LLVM](https://llvm.org/docs/CommandGuide/opt.html), usando, por exemplo:
 
