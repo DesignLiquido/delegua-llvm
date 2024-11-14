@@ -11,7 +11,7 @@ Funciona apenas com Node.js.
 - [CMake](https://cmake.org/);
 - [LLVM](https://llvm.org/);
 
-É possível fazer funcionar em Windows, mas recomendamos um ecossistema baseado em Unix, como Linux e MacOS, que são mais fáceis de obter essas dependências.
+É possível fazer funcionar em Windows (roteiro abaixo), mas recomendamos um ecossistema baseado em Unix, como Linux e MacOS, que são mais fáceis de obter essas dependências.
 
 Após instalar qualquer versão do Node.js, o Yarn pode ser instalado usando o seguinte comando:
 
@@ -50,6 +50,34 @@ source ~/.zshrc
 # Após clonar este projeto, navegar para o diretório raiz e usar o comando
 yarn
 ```
+
+### Instalação para Windows
+
+A biblioteca [llvm-bindings](https://github.com/ApsarasX/llvm-bindings), parte essencial deste projeto, funciona até a versão 14 do LLVM. [A versão 14.0.6](https://github.com/llvm/llvm-project/releases/tag/llvmorg-14.0.6) compila sem problemas. 
+
+Você precisará baixar os fontes do projeto ([link direto aqui](https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-14.0.6.zip)), o instalador do CMake, que [pode ser a versão mais recente](https://cmake.org/download/) com todas as opções padrão marcadas no instalador, e algum Visual Studio versões 2019 ou mais recente. [Há uma versão Community que é gratuita](https://visualstudio.microsoft.com/vs/community/). Ao executar o instalador do Visual Studio, marque a opção "Desenvolvimento em Desktop com C++" (ou, em inglês, _"Desktop Development with C++"_). 
+
+Baixados os fontes do projeto, descompacte o arquivo em um diretório qualquer (por exemplo, `C:\Estudos`). Feito isso, abra um prompt de comando (ou uma janela do PowerShell), navegue até o diretório descompatado do LLVM (por exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6`) e dentro deve haver um diretório `llvm` (ou seja, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm`). Neste diretório, execute os seguintes comandos:
+
+```powershell
+mkdir build
+cd build
+# Compila para x64
+cmake -Thost=x64 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_INCLUDE_TESTS=OFF ..
+cmake --build . --config Release
+```
+
+Após esses comandos, uma versão funcional do LLVM estará no diretório `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\Release\bin`. 
+
+Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando os fontes do LLVN que baixamos, estes arquivos vivem dentro do subdiretório `llvm\build\lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\lib\cmake\llvm`. 
+
+Finalmente, execute:
+
+```powershell
+yarn
+```
+
+A instalação e construção de pacotes deve ocorrer sem erros.
 
 ## Compilando seu programa para código de máquina
 
