@@ -69,7 +69,7 @@ cmake --build . --config Release
 
 Após esses comandos, uma versão funcional do LLVM estará no diretório `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\Release\bin`. 
 
-Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando os fontes do LLVN que baixamos, estes arquivos vivem dentro do subdiretório `llvm\build\lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\lib\cmake\llvm`. 
+Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando os fontes do LLVM que baixamos, estes arquivos vivem dentro do subdiretório `llvm\build\lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\lib\cmake\llvm`. 
 
 Finalmente, execute:
 

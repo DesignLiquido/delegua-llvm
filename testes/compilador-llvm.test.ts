@@ -29,32 +29,32 @@ describe('Compilador', () => {
             expect(resultado).toContain('  ret float %1');
         });
 
-        it('Soma, número', async () => {
+        it('Soma, inteiro', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                'funcao soma(a: numero, b: numero): numero {',
+                'funcao soma(a: inteiro, b: inteiro): inteiro {',
                 '    retorna a + b',
                 '}'
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define float @soma(float %0, float %1)');
-            expect(resultado).toContain('  %2 = fadd float %0, %1');
-            expect(resultado).toContain('  ret float %2');
+            expect(resultado).toContain('define i32 @soma(i32 %0, i32 %1)');
+            expect(resultado).toContain('  %2 = add i32 %0, %1');
+            expect(resultado).toContain('  ret i32 %2');
         });
 
-        it('Subtração, número', async () => {
+        it('Subtração, inteiro', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                'funcao subtracao(a: numero, b: numero): numero {',
+                'funcao subtracao(a: inteiro, b: inteiro): inteiro {',
                 '    retorna a - b',
                 '}'
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define float @subtracao(float %0, float %1)');
-            expect(resultado).toContain('  %2 = fsub float %0, %1');
-            expect(resultado).toContain('  ret float %2');
+            expect(resultado).toContain('define i32 @subtracao(i32 %0, i32 %1)');
+            expect(resultado).toContain('  %2 = sub i32 %0, %1');
+            expect(resultado).toContain('  ret i32 %2');
         });
 
         it('Divisão inteira, inteiro', async () => {
@@ -71,17 +71,16 @@ describe('Compilador', () => {
             expect(resultado).toContain('  ret i32 %2');
         });
 
-        it.skip('Operações encadeadas', async () => {
+        it.skip('Operações encadeadas, operandos inteiros', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                // 'funcao encadeadas(a: numero, b: numero, c: numero): numero {',
                 'funcao encadeadas(a: inteiro, b: inteiro, c: inteiro): inteiro {',
-                '    retorna a + c + 1 * b + 7',
+                '    retorna a + c + 1 - b + 7',
                 '}'
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define i32 @divisao_inteira(float %0, float %1, float %2)');
+            expect(resultado).toContain('define i32 @encadeadas(i32 %0, i32 %1, i32 %2)');
             // expect(resultado).toContain('  %2 = sdiv i32 %0, %1');
             // expect(resultado).toContain('  ret i32 %2');
         });

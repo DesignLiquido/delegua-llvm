@@ -213,10 +213,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                     return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
                 } */
 
-                return Promise.resolve(this.montador.CreateFAdd(valorEsquerdo, valorDireito));
+                // return Promise.resolve(this.montador.CreateFAdd(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
             case 'SUBTRACAO':
-                // return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
-                return Promise.resolve(this.montador.CreateFSub(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
+                // return Promise.resolve(this.montador.CreateFSub(valorEsquerdo, valorDireito));
             case 'DIVISAO':
                 return Promise.resolve(this.montador.CreateFDiv(valorEsquerdo, valorDireito));
             case 'DIVISAO_INTEIRA':
