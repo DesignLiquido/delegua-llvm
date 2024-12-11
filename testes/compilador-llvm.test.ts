@@ -43,6 +43,21 @@ describe('Compilador', () => {
             expect(resultado).toContain('  ret i32 %2');
         });
 
+        it('Soma, inteiro com número', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'funcao soma(a: inteiro, b: número): número {',
+                '    retorna a + b',
+                '}'
+            ]);
+            
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('define float @soma(i32 %0, float %1)');
+            expect(resultado).toContain('  %2 = sitofp i32 %0 to float');
+            expect(resultado).toContain('  %3 = fadd float %2, %1');
+            expect(resultado).toContain('  ret float %3');
+        });
+
         it('Subtração, inteiro', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
