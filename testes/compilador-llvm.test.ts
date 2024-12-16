@@ -86,18 +86,19 @@ describe('Compilador', () => {
             expect(resultado).toContain('  ret i32 %2');
         });
 
-        it.skip('Operações encadeadas, operandos inteiros', async () => {
+        it('Operações encadeadas, operandos inteiros', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
                 'funcao encadeadas(a: inteiro, b: inteiro, c: inteiro): inteiro {',
-                '    retorna a + c + 1 - b + 7',
+                '    retorna a + b + c',
                 '}'
             ]);
             
             expect(resultado).toBeTruthy();
             expect(resultado).toContain('define i32 @encadeadas(i32 %0, i32 %1, i32 %2)');
-            // expect(resultado).toContain('  %2 = sdiv i32 %0, %1');
-            // expect(resultado).toContain('  ret i32 %2');
+            expect(resultado).toContain('  %3 = add i32 %0, %1');
+            expect(resultado).toContain('  %4 = add i32 %3, %2');
+            expect(resultado).toContain('  ret i32 %4');
         });
     });
 });

@@ -4,6 +4,11 @@ import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
 import llvm, { APFloat, APInt, Constant, ConstantFP, ConstantInt } from 'llvm-bindings';
 import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 
+interface OperandoInterface {
+    valor: llvm.Value,
+    tipo: string
+}
+
 export class CompiladorLLVM implements VisitanteComumInterface {
     lexador: Lexador;
     avaliadorSintatico: AvaliadorSintatico;
@@ -195,51 +200,67 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
     resolverTipoConstruto(construto: Construto): string {
         switch (construto.constructor.name) {
+            case 'Binario':
             case 'Literal':
             case 'Variavel':
             case 'Constante':
-                return (construto as any).tipo;
+                return construto.tipo;
         }
     }
 
-    protected resolverMultiplicacao(valorEsquerdo: llvm.Value, tipoEsquerdo: string, valorDireito: llvm.Value, tipoDireito: string): Promise<llvm.Value> {
-        if (tipoEsquerdo === 'inteiro' && tipoDireito === 'inteiro') {
-            return Promise.resolve(this.montador.CreateMul(valorEsquerdo, valorDireito));
+    protected resolverOperando(operando: llvm.Value, tipo: string): OperandoInterface {
+        if (operando.constructor.name === 'Instruction') {
+            const operandoEsquerdoTipado = operando as llvm.Instruction;
+            const tipoOperandoEsquerdo = operandoEsquerdoTipado.getType();
+            switch (tipoOperandoEsquerdo.constructor.name) {
+                case 'IntegerType':
+                    return { valor: operando, tipo: 'inteiro' };
+                default:
+                    return { valor: this.montador.CreateSIToFP(operando, llvm.Type.getFloatTy(this.contexto)), tipo: 'número' }
+            }
         }
 
-        const valorEsquerdoConvertido = this.montador.CreateSIToFP(valorEsquerdo, llvm.Type.getFloatTy(this.contexto));
-        const valorDireitoConvertido = this.montador.CreateSIToFP(valorDireito, llvm.Type.getFloatTy(this.contexto));
-        return Promise.resolve(this.montador.CreateFMul(valorEsquerdoConvertido, valorDireitoConvertido));
+        return { valor: operando, tipo: tipo };
     }
 
-    protected resolverAdicao(valorEsquerdo: llvm.Value, tipoEsquerdo: string, valorDireito: llvm.Value, tipoDireito: string): Promise<llvm.Value> {
-        if (tipoEsquerdo === 'inteiro' && tipoDireito === 'inteiro') {
-            return Promise.resolve(this.montador.CreateAdd(valorEsquerdo, valorDireito));
+    protected resolverMultiplicacao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateMul(operandoEsquerdo.valor, operandoDireito.valor));
         }
-            
-        const valorEsquerdoConvertido = this.montador.CreateSIToFP(valorEsquerdo, llvm.Type.getFloatTy(this.contexto));
-        const valorDireitoConvertido = this.montador.CreateSIToFP(valorDireito, llvm.Type.getFloatTy(this.contexto));
-        return Promise.resolve(this.montador.CreateFAdd(valorEsquerdoConvertido, valorDireitoConvertido));
+
+        return Promise.resolve(this.montador.CreateFMul(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
-    protected resolverSubtracao(valorEsquerdo: llvm.Value, tipoEsquerdo: string, valorDireito: llvm.Value, tipoDireito: string): Promise<llvm.Value> {
-        if (tipoEsquerdo === 'inteiro' && tipoDireito === 'inteiro') {
-            return Promise.resolve(this.montador.CreateSub(valorEsquerdo, valorDireito));
+    protected resolverAdicao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateAdd(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
-        const valorEsquerdoConvertido = this.montador.CreateSIToFP(valorEsquerdo, llvm.Type.getFloatTy(this.contexto));
-        const valorDireitoConvertido = this.montador.CreateSIToFP(valorDireito, llvm.Type.getFloatTy(this.contexto));
-        return Promise.resolve(this.montador.CreateFSub(valorEsquerdoConvertido, valorDireitoConvertido));
+        return Promise.resolve(this.montador.CreateFAdd(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
-    protected resolverDivisao(valorEsquerdo: llvm.Value, tipoEsquerdo: string, valorDireito: llvm.Value, tipoDireito: string): Promise<llvm.Value> {
-        if (tipoEsquerdo === 'inteiro' && tipoDireito === 'inteiro') {
-            return Promise.resolve(this.montador.CreateSDiv(valorEsquerdo, valorDireito));
+    protected resolverSubtracao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateSub(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
-        const valorEsquerdoConvertido = this.montador.CreateSIToFP(valorEsquerdo, llvm.Type.getFloatTy(this.contexto));
-        const valorDireitoConvertido = this.montador.CreateSIToFP(valorDireito, llvm.Type.getFloatTy(this.contexto));
-        return Promise.resolve(this.montador.CreateFDiv(valorEsquerdoConvertido, valorDireitoConvertido));
+        return Promise.resolve(this.montador.CreateFSub(operandoEsquerdo.valor, operandoDireito.valor));
+    }
+
+    protected resolverDivisao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateSDiv(operandoEsquerdo.valor, operandoDireito.valor));
+        }
+
+        return Promise.resolve(this.montador.CreateFDiv(operandoEsquerdo.valor, operandoDireito.valor));
+    }
+
+    protected definirTipoPrevalente(tipo1: string, tipo2: string) {
+        if (tipo1 === 'número' || tipo2 === 'número') {
+            return 'número';
+        }
+
+        return 'inteiro';
     }
 
     async visitarExpressaoBinaria(expressao: Binario): Promise<any> {
@@ -248,24 +269,35 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             expressao.direita.aceitar(this)
         ]);
 
-        const valorEsquerdo = promises[0],
-            valorDireito = promises[1];
+        let operandoEsquerdo: llvm.Value = promises[0],
+            operandoDireito: llvm.Value = promises[1];
 
-        const tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
-        const tipoDireito = this.resolverTipoConstruto(expressao.direita);
+        let tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
+        let tipoDireito = this.resolverTipoConstruto(expressao.direita);
 
-        // TODO: Devolver operadores diferentes de acordo com o tipo do dado.
+        const tipoPrevalente = this.definirTipoPrevalente(tipoEsquerdo, tipoDireito);
+        if (tipoEsquerdo != tipoPrevalente) {
+            operandoEsquerdo = this.montador.CreateSIToFP(operandoEsquerdo, llvm.Type.getFloatTy(this.contexto));
+        }
+
+        if (tipoDireito != tipoPrevalente) {
+            operandoDireito = this.montador.CreateSIToFP(operandoDireito, llvm.Type.getFloatTy(this.contexto));
+        }
+
+        const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
+        const operandoDireitoResolvido: OperandoInterface = this.resolverOperando(operandoDireito, tipoDireito);
+
         switch (expressao.operador.tipo) {
             case 'MULTIPLICACAO':
-                return this.resolverMultiplicacao(valorEsquerdo, tipoEsquerdo, valorDireito, tipoDireito);
+                return this.resolverMultiplicacao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'ADICAO':
-                return this.resolverAdicao(valorEsquerdo, tipoEsquerdo, valorDireito, tipoDireito);
+                return this.resolverAdicao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'SUBTRACAO':
-                return this.resolverSubtracao(valorEsquerdo, tipoEsquerdo, valorDireito, tipoDireito);
+                return this.resolverSubtracao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIVISAO':
-                return this.resolverDivisao(valorEsquerdo, tipoEsquerdo, valorDireito, tipoDireito);
+                return this.resolverDivisao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIVISAO_INTEIRA':
-                return Promise.resolve(this.montador.CreateSDiv(valorEsquerdo, valorDireito));
+                return Promise.resolve(this.montador.CreateSDiv(operandoEsquerdo, operandoDireito));
         }
     }
 
