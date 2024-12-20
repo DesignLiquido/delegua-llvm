@@ -74,8 +74,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     async visitarDeclaracaoDefinicaoFuncao(declaracao: FuncaoDeclaracao): Promise<void> {
-        // TODO: O tipo de retorno deveria estar definido na declaração, mas está definido no
-        // construto.
         const tipoRetorno = this.obterTipoLlvm(declaracao.funcao.tipoRetorno);
         const tiposParametros: llvm.Type[] = [];
 
@@ -108,6 +106,9 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
         await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
         this.pilhaVariaveisEscopo.removerUltimo();
+
+        const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
+        topoDaPilha.set(declaracao.simbolo.lexema, objetoLlvmFuncao);
     }
 
     visitarDeclaracaoEnquanto(declaracao: Enquanto): Promise<any> | void {
@@ -118,12 +119,15 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> | void {
-        this.montador.CreateCall(this.funcaoPrintf, [
-            this.formatoPrintf,
-            // TODO: Parametrizar corretamente.
-            ConstantInt.get(this.contexto, new APInt(32, 5))
-        ], "printf");
+    async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
+        const argumentosResolvidos: llvm.Value[] = [];
+        for (const argumento of declaracao.argumentos) {
+            const argumentoResolvido = await argumento.aceitar(this);
+            argumentosResolvidos.push(argumentoResolvido);
+        }
+
+        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "printf");
+        return Promise.resolve();
     }
 
     visitarDeclaracaoEscrevaMesmaLinha(declaracao: EscrevaMesmaLinha): Promise<any> | void {
@@ -163,7 +167,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     visitarDeclaracaoVar(declaracao: Var): Promise<any> | void {
-        throw new Error('Método não implementado.');
+        console.log(declaracao);
+        // const inicializacaoVariavel = this.montador.CreateAlloca()
     }
 
     visitarDeclaracaoVarMultiplo(declaracao: VarMultiplo): Promise<any> | void {
@@ -255,6 +260,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         return Promise.resolve(this.montador.CreateFDiv(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
+    // TODO: Não sei se vai mais precisar.
     protected definirTipoPrevalente(tipo1: string, tipo2: string) {
         if (tipo1 === 'número' || tipo2 === 'número') {
             return 'número';
@@ -309,8 +315,15 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoDeChamada(expressao: Chamada): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
+        const entidadeChamadaResolvida = await expressao.entidadeChamada.aceitar(this);
+        const argumentos: llvm.Value[] = [];
+        for (const argumento of expressao.argumentos) {
+            const argumentoResolvido = await argumento.aceitar(this);
+            argumentos.push(argumentoResolvido);
+        }
+
+        return this.montador.CreateCall(entidadeChamadaResolvida, argumentos);
     }
 
     visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> | void {
@@ -363,25 +376,43 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoLiteral(expressao: Literal): Promise<any> | void {
+    visitarExpressaoLiteral(expressao: Literal): Promise<llvm.Value> {
         // TODO: Por questões de preguiça, por enquanto vamos imaginar que aqui só
-        // teremos inteiros. Ajustar depois.
-        return Promise.resolve(
-            this.montador.CreateRet(
-                ConstantInt.get(
-                    this.contexto, 
-                    new APInt(32, expressao.valor)
-                )
-            )
-        );
-        /* return Promise.resolve(
-            this.montador.CreateRet(
-                ConstantFP.get(
-                    this.montador.getFloatTy(), 
-                    new APFloat(expressao.valor)
-                )
-            )
-        ); */
+        // teremos números. Ajustar depois.
+        switch (expressao.tipo) {
+            case 'inteiro':
+                return Promise.resolve(
+                    ConstantInt.get(
+                        this.contexto,
+                        new APInt(32, expressao.valor)
+                    )
+                );
+            case 'número':
+                return Promise.resolve(
+                    ConstantFP.get(
+                        this.montador.getFloatTy(),
+                        new APFloat(expressao.valor)
+                    )
+                );
+            /* case 'inteiro':
+                return Promise.resolve(
+                    this.montador.CreateRet(
+                        ConstantInt.get(
+                            this.contexto,
+                            new APInt(32, expressao.valor)
+                        )
+                    )
+                );
+            case 'número':
+                return Promise.resolve(
+                    this.montador.CreateRet(
+                        ConstantFP.get(
+                            this.montador.getFloatTy(),
+                            new APFloat(expressao.valor)
+                        )
+                    )
+                ); */
+        }
     }
 
     visitarExpressaoLogica(expressao: Logico): Promise<any> | void {
@@ -440,10 +471,10 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const tipoRetornoPrinter = this.montador.getInt32Ty();
         const tipoFuncaoPrinter = llvm.FunctionType.get(
-            tipoRetornoPrinter, 
+            tipoRetornoPrinter,
             [
                 this.montador.getInt8PtrTy(0)
-            ], 
+            ],
             true
         );
 
@@ -473,7 +504,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
-        
+
         for (const declaracao of declaracoes) {
             await declaracao.aceitar(this);
         }
@@ -493,6 +524,9 @@ export class CompiladorLLVM implements VisitanteComumInterface {
      */
     async compilar(codigo: string[]): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
+        const mapaVariaveis: Map<string, llvm.Value> = new Map<string, llvm.Value>();
+        // TODO: Talvez colocar `printf` aqui.
+        this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
 
         this.contexto = new llvm.LLVMContext();
         this.modulo = new llvm.Module('demo', this.contexto);

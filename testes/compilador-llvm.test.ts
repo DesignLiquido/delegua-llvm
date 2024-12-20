@@ -12,6 +12,7 @@ describe('Compilador', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123)']);
         expect(resultado).toBeTruthy();
+        expect(resultado).toContain('  %printf = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @qualquer, i32 0, i32 0), i32 5)');
     });
 
     describe('Funções', () => {
@@ -99,6 +100,35 @@ describe('Compilador', () => {
             expect(resultado).toContain('  %3 = add i32 %0, %1');
             expect(resultado).toContain('  %4 = add i32 %3, %2');
             expect(resultado).toContain('  ret i32 %4');
+        });
+
+        it('Operações encadeadas, operandos inteiros e números', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'funcao encadeadas(a: inteiro, b: número, c: inteiro): número {',
+                '    retorna a + b + c',
+                '}'
+            ]);
+            
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('define float @encadeadas(i32 %0, float %1, i32 %2)');
+            expect(resultado).toContain('  %3 = sitofp i32 %0 to float');
+            expect(resultado).toContain('  %4 = fadd float %3, %1');
+            expect(resultado).toContain('  %5 = sitofp i32 %2 to float');
+            expect(resultado).toContain('  %6 = fadd float %4, %5');
+            expect(resultado).toContain('  ret float %6');
+        });
+
+        it.skip('Chamada de função', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'funcao soma(a: inteiro, b: número): número {',
+                '    retorna a + b',
+                '}',
+                'var c = soma(1, 2)'
+            ]);
+
+            expect(resultado).toBeTruthy();
         });
     });
 });
