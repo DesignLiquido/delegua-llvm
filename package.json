@@ -12,7 +12,7 @@
     "testes-unitarios": "jest --coverage"
   },
   "dependencies": {
-    "@designliquido/delegua": "^0.38.2",
+    "@designliquido/delegua": "^0.38.3",
     "commander": "^12.1.0",
     "llvm-bindings": "^0.4.2"
   },
