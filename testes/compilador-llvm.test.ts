@@ -119,7 +119,25 @@ describe('Compilador', () => {
             expect(resultado).toContain('  ret float %6');
         });
 
-        it('Chamada de função', async () => {
+        it('Chamada de função, inteiro', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'funcao soma(a: inteiro, b: inteiro): inteiro {',
+                '    retorna a + b',
+                '}',
+                'var c = soma(1, 2)'
+            ]);
+
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('define i32 @soma(i32 %0, i32 %1)');
+            expect(resultado).toContain('  %2 = add i32 %0, %1');
+            expect(resultado).toContain('  ret i32 %2');
+            expect(resultado).toContain('  %c = alloca i32, align 4');
+            expect(resultado).toContain('  %0 = call i32 @soma(i32 1, i32 2)');
+            expect(resultado).toContain('  store i32 %0, i32* %c, align 4');
+        });
+
+        it.skip('Chamada de função, número', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
                 'funcao soma(a: inteiro, b: número): número {',

@@ -1,13 +1,11 @@
 import { Lexador, AvaliadorSintatico, AcessoElementoMatriz, AcessoIndiceVariavel, AcessoMetodoOuPropriedade, Agrupamento, Aleatorio, AtribuicaoPorIndice, AtribuicaoPorIndicesMatriz, Atribuir, Binario, Bloco, CabecalhoPrograma, Chamada, Classe, Comentario, Const, Constante, ConstMultiplo, Continua, DefinirValor, Dicionario, Enquanto, Escolha, Escreva, EscrevaMesmaLinha, Expressao, ExpressaoRegular, Falhar, Fazer, FimPara, FormatacaoEscrita, FuncaoConstruto, FuncaoDeclaracao, Importar, InicioAlgoritmo, Isto, Leia, LeiaMultiplo, Literal, Logico, Para, ParaCada, Retorna, Se, Super, Sustar, TendoComo, Tente, TipoDe, Tupla, Unario, Var, Variavel, VarMultiplo, Vetor, Declaracao, Construto } from '@designliquido/delegua';
-import { VisitanteComumInterface } from '@designliquido/delegua/interfaces';
+import { ParametroInterface, VisitanteComumInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
-import llvm, { APFloat, APInt, Constant, ConstantFP, ConstantInt } from 'llvm-bindings';
-import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
+import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from 'llvm-bindings';
 
-interface OperandoInterface {
-    valor: llvm.Value,
-    tipo: string
-}
+import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
+import { VariavelEscopo } from './variavel-escopo';
+import { OperandoInterface } from './interfaces';
 
 export class CompiladorLLVM implements VisitanteComumInterface {
     lexador: Lexador;
@@ -95,12 +93,13 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             this.modulo
         );
 
-        const mapaVariaveis: Map<string, llvm.Value> = new Map<string, llvm.Value>();
+        const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
         // Aqui temos que iterar de novo os parâmetros da função, dado que a
         // referência aos argumentos da função só estão disponíveis depois que o 
         // objeto LLVM da função é criado.
         for (const [indice, parametro] of declaracao.funcao.parametros.entries()) {
-            mapaVariaveis.set(parametro.nome.lexema, objetoLlvmFuncao.getArg(indice));
+            const variavelEscopo = new VariavelEscopo(objetoLlvmFuncao.getArg(indice));
+            mapaVariaveis.set(parametro.nome.lexema, variavelEscopo);
         }
 
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
@@ -108,7 +107,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         this.pilhaVariaveisEscopo.removerUltimo();
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
-        topoDaPilha.set(declaracao.simbolo.lexema, objetoLlvmFuncao);
+        const variavelEscopoObjetoLlvmFuncao = new VariavelEscopo(objetoLlvmFuncao, declaracao);
+        topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopoObjetoLlvmFuncao);
     }
 
     visitarDeclaracaoEnquanto(declaracao: Enquanto): Promise<any> | void {
@@ -166,9 +166,18 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarDeclaracaoVar(declaracao: Var): Promise<any> | void {
-        console.log(declaracao);
-        // const inicializacaoVariavel = this.montador.CreateAlloca()
+    async visitarDeclaracaoVar(declaracao: Var): Promise<any> {
+        // Se a variável não tem tipo, o tipo do inicializador deve ser verificado.
+        let tipoVariavel = declaracao.tipo;
+        if (tipoVariavel === 'qualquer') {
+            tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
+        }
+
+        const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
+        const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
+        const valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+        this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+        return Promise.resolve();
     }
 
     visitarDeclaracaoVarMultiplo(declaracao: VarMultiplo): Promise<any> | void {
@@ -206,26 +215,45 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     resolverTipoConstruto(construto: Construto): string {
         switch (construto.constructor.name) {
             case 'Binario':
+            case 'Constante':
             case 'Literal':
             case 'Variavel':
-            case 'Constante':
                 return construto.tipo;
+            case 'Chamada':
+                return (construto as Chamada).entidadeChamada.tipo;
         }
     }
 
-    protected resolverOperando(operando: llvm.Value, tipo: string): OperandoInterface {
-        if (operando.constructor.name === 'Instruction') {
-            const operandoEsquerdoTipado = operando as llvm.Instruction;
-            const tipoOperandoEsquerdo = operandoEsquerdoTipado.getType();
-            switch (tipoOperandoEsquerdo.constructor.name) {
-                case 'IntegerType':
-                    return { valor: operando, tipo: 'inteiro' };
-                default:
-                    return { valor: this.montador.CreateSIToFP(operando, llvm.Type.getFloatTy(this.contexto)), tipo: 'número' }
-            }
+    protected resolverOperando(operando: llvm.Value | VariavelEscopo, tipo: string): OperandoInterface {
+        switch (operando.constructor.name) {
+            case 'VariavelEscopo':
+                return { 
+                    valor: (operando as VariavelEscopo).variavelLlvm, 
+                    tipo: tipo 
+                };
+            case 'Instruction':
+                const operandoEsquerdoTipado = operando as llvm.Instruction;
+                const tipoOperandoEsquerdo = operandoEsquerdoTipado.getType();
+                switch (tipoOperandoEsquerdo.constructor.name) {
+                    case 'IntegerType':
+                        return { 
+                            valor: operando as llvm.Value, 
+                            tipo: 'inteiro' 
+                        };
+                    default:
+                        return { 
+                            valor: this.montador.CreateSIToFP(
+                                operando as llvm.Value, 
+                                llvm.Type.getFloatTy(this.contexto)), 
+                                tipo: 'número' 
+                            }
+                }
+            default:
+                return { 
+                    valor: operando as llvm.Value, 
+                    tipo: tipo 
+                };
         }
-
-        return { valor: operando, tipo: tipo };
     }
 
     protected resolverMultiplicacao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
@@ -275,19 +303,19 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             expressao.direita.aceitar(this)
         ]);
 
-        let operandoEsquerdo: llvm.Value = promises[0],
-            operandoDireito: llvm.Value = promises[1];
+        let operandoEsquerdo: llvm.Value | VariavelEscopo = promises[0],
+            operandoDireito: llvm.Value | VariavelEscopo = promises[1];
 
         let tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
         let tipoDireito = this.resolverTipoConstruto(expressao.direita);
 
         const tipoPrevalente = this.definirTipoPrevalente(tipoEsquerdo, tipoDireito);
         if (tipoEsquerdo != tipoPrevalente) {
-            operandoEsquerdo = this.montador.CreateSIToFP(operandoEsquerdo, llvm.Type.getFloatTy(this.contexto));
+            operandoEsquerdo = this.montador.CreateSIToFP((operandoEsquerdo as VariavelEscopo).variavelLlvm, llvm.Type.getFloatTy(this.contexto));
         }
 
         if (tipoDireito != tipoPrevalente) {
-            operandoDireito = this.montador.CreateSIToFP(operandoDireito, llvm.Type.getFloatTy(this.contexto));
+            operandoDireito = this.montador.CreateSIToFP((operandoDireito as VariavelEscopo).variavelLlvm, llvm.Type.getFloatTy(this.contexto));
         }
 
         const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
@@ -303,7 +331,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             case 'DIVISAO':
                 return this.resolverDivisao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIVISAO_INTEIRA':
-                return Promise.resolve(this.montador.CreateSDiv(operandoEsquerdo, operandoDireito));
+                return Promise.resolve(this.montador.CreateSDiv((operandoEsquerdo as VariavelEscopo).variavelLlvm, (operandoDireito as VariavelEscopo).variavelLlvm));
         }
     }
 
@@ -315,15 +343,41 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
+    private resolverArgumentoChamada(argumento: Construto, tipoParametro: string) {
+        const tipoArgumento = this.resolverTipoConstruto(argumento);
+        if (tipoArgumento === tipoParametro) {
+            return argumento;
+        }
+
+        // TODO: Terminar.
+        if (tipoParametro === 'inteiro') {
+            if (tipoArgumento === 'número') {
+                argumento.tipo = 'inteiro';
+                argumento.valor = Math.trunc(argumento.valor);
+            }
+        }
+        
+        return argumento;
+    }
+
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
         const entidadeChamadaResolvida = await expressao.entidadeChamada.aceitar(this);
+        const variavelEscopoCorrespondente = this.pilhaVariaveisEscopo.obterValor((expressao.entidadeChamada as Variavel).simbolo.lexema);
+        const construtoCorrespondente = (variavelEscopoCorrespondente.construtoVariavel as FuncaoDeclaracao).funcao;
+
+        const tiposParametros = [];
+        for (const parametro of construtoCorrespondente.parametros) {
+            tiposParametros.push(parametro.tipoDado);
+        }
+
         const argumentos: llvm.Value[] = [];
-        for (const argumento of expressao.argumentos) {
-            const argumentoResolvido = await argumento.aceitar(this);
+        for (const [indice, argumento] of expressao.argumentos.entries()) {
+            const argumentoAjustado = this.resolverArgumentoChamada(argumento, tiposParametros[indice]);
+            const argumentoResolvido = await argumentoAjustado.aceitar(this);
             argumentos.push(argumentoResolvido);
         }
 
-        return this.montador.CreateCall(entidadeChamadaResolvida, argumentos);
+        return this.montador.CreateCall(entidadeChamadaResolvida.variavelLlvm, argumentos);
     }
 
     visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> | void {
@@ -334,7 +388,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    async visitarExpressaoDeVariavel(expressao: Variavel | Constante): Promise<llvm.Value> {
+    async visitarExpressaoDeVariavel(expressao: Variavel | Constante): Promise<VariavelEscopo> {
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha();
         const valorOuReferenciaVariavel = topoDaPilhaDeVariaveis.get(expressao.simbolo.lexema);
         if (!valorOuReferenciaVariavel) {
@@ -524,7 +578,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
      */
     async compilar(codigo: string[]): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
-        const mapaVariaveis: Map<string, llvm.Value> = new Map<string, llvm.Value>();
+        const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
         // TODO: Talvez colocar `printf` aqui.
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
 

@@ -1,13 +1,14 @@
 import { PilhaInterface } from "@designliquido/delegua";
+import { VariavelEscopo } from "./variavel-escopo";
 
-export class PilhaVariaveisEscopo implements PilhaInterface<Map<string, llvm.Value>> {
-    pilha: Map<string, llvm.Value>[];
+export class PilhaVariaveisEscopo implements PilhaInterface<Map<string, VariavelEscopo>> {
+    pilha: Map<string, VariavelEscopo>[];
 
     constructor() {
         this.pilha = [];
     }
 
-    empilhar(item: Map<string, llvm.Value>): void {
+    empilhar(item: Map<string, VariavelEscopo>): void {
         this.pilha.push(item);
     }
 
@@ -15,20 +16,20 @@ export class PilhaVariaveisEscopo implements PilhaInterface<Map<string, llvm.Val
         return this.pilha.length === 0;
     }
 
-    topoDaPilha(): Map<string, llvm.Value> {
+    topoDaPilha(): Map<string, VariavelEscopo> {
         if (this.eVazio()) throw new Error('Pilha vazia.');
         return this.pilha[this.pilha.length - 1];
     }
 
-    removerUltimo(): Map<string, llvm.Value> {
+    removerUltimo(): Map<string, VariavelEscopo> {
         if (this.eVazio()) throw new Error('Pilha vazia.');
         return this.pilha.pop();
     }
 
-    obterValor(nome: string): llvm.Value {
+    obterValor(nome: string): VariavelEscopo {
         for (let i = 1; i <= this.pilha.length; i++) {
             const escopoAtual = this.pilha[this.pilha.length - i];
-            if (nome in escopoAtual) {
+            if (escopoAtual.has(nome)) {
                 return escopoAtual.get(nome);
             }
         }
