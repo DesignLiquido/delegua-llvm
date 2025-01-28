@@ -11,7 +11,7 @@ Funciona apenas com Node.js.
 - [CMake](https://cmake.org/);
 - [LLVM](https://llvm.org/);
 
-É possível fazer funcionar em Windows (roteiro abaixo), mas recomendamos um ecossistema baseado em Unix, como Linux e MacOS, que são mais fáceis de obter essas dependências.
+É possível fazer funcionar em Windows (roteiro abaixo), mas recomendamos um ecossistema baseado em Unix, como Linux e MacOS, que são mais fáceis de obter e configurar essas dependências.
 
 Após instalar qualquer versão do Node.js, o Yarn pode ser instalado usando o seguinte comando:
 
@@ -91,7 +91,7 @@ clang meu_programa.ll -o meu_programa
 
 ## Considerações na compilação
 
-Todo código Delégua que passa por este compilador precisa ser fortemente tipado. Diferentemente do interpretador Delégua, que deduz o tipo de variável em tempo de execução, a arquitetura de LLVM nos obriga a ter tipos definidos, que são mapeados para os tipos correspondentes em LLVM.
+Todo código Delégua que passa por este compilador precisa ser fortemente tipado. Diferentemente do interpretador Delégua, que deduz o tipo de variável em tempo de execução, a arquitetura de LLVM nos obriga a ter tipos definidos, que são mapeados para os tipos correspondentes em LLVM. Certos literais, como números, têm o tipo deduzido de acordo com o local onde são usados, e algumas conversões são implícitas: por exemplo, `1` pode ser um número inteiro ou um número real (com parte decimal). 
 
 Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas LLVM requer este ponto de entrada, que é criado automaticamente. Este ponto de entrada chama as demais funções, classes, etc.
 
