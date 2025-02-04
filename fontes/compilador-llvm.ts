@@ -67,7 +67,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 return this.montador.getInt32Ty();
             case 'numero':
             case 'número':
-                return this.montador.getFloatTy();
+                return this.montador.getDoubleTy();
         }
     }
 
@@ -244,7 +244,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                         return { 
                             valor: this.montador.CreateSIToFP(
                                 operando as llvm.Value, 
-                                llvm.Type.getFloatTy(this.contexto)), 
+                                llvm.Type.getDoubleTy(this.contexto)), 
                                 tipo: 'número' 
                             }
                 }
@@ -311,11 +311,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const tipoPrevalente = this.definirTipoPrevalente(tipoEsquerdo, tipoDireito);
         if (tipoEsquerdo != tipoPrevalente) {
-            operandoEsquerdo = this.montador.CreateSIToFP((operandoEsquerdo as VariavelEscopo).variavelLlvm, llvm.Type.getFloatTy(this.contexto));
+            operandoEsquerdo = this.montador.CreateSIToFP((operandoEsquerdo as VariavelEscopo).variavelLlvm, llvm.Type.getDoubleTy(this.contexto));
         }
 
         if (tipoDireito != tipoPrevalente) {
-            operandoDireito = this.montador.CreateSIToFP((operandoDireito as VariavelEscopo).variavelLlvm, llvm.Type.getFloatTy(this.contexto));
+            operandoDireito = this.montador.CreateSIToFP((operandoDireito as VariavelEscopo).variavelLlvm, llvm.Type.getDoubleTy(this.contexto));
         }
 
         const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
@@ -444,7 +444,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             case 'número':
                 return Promise.resolve(
                     ConstantFP.get(
-                        this.montador.getFloatTy(),
+                        this.montador.getDoubleTy(),
                         new APFloat(expressao.valor)
                     )
                 );

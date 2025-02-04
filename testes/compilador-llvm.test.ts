@@ -25,9 +25,9 @@ describe('Compilador', () => {
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define float @quadrado(float %0)');
-            expect(resultado).toContain('  %1 = fmul float %0, %0');
-            expect(resultado).toContain('  ret float %1');
+            expect(resultado).toContain('define double @quadrado(double %0)');
+            expect(resultado).toContain('  %1 = fmul double %0, %0');
+            expect(resultado).toContain('  ret double %1');
         });
 
         it('Soma, inteiro', async () => {
@@ -53,10 +53,10 @@ describe('Compilador', () => {
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define float @soma(i32 %0, float %1)');
-            expect(resultado).toContain('  %2 = sitofp i32 %0 to float');
-            expect(resultado).toContain('  %3 = fadd float %2, %1');
-            expect(resultado).toContain('  ret float %3');
+            expect(resultado).toContain('define double @soma(i32 %0, double %1)');
+            expect(resultado).toContain('  %2 = sitofp i32 %0 to double');
+            expect(resultado).toContain('  %3 = fadd double %2, %1');
+            expect(resultado).toContain('  ret double %3');
         });
 
         it('Subtração, inteiro', async () => {
@@ -111,12 +111,12 @@ describe('Compilador', () => {
             ]);
             
             expect(resultado).toBeTruthy();
-            expect(resultado).toContain('define float @encadeadas(i32 %0, float %1, i32 %2)');
-            expect(resultado).toContain('  %3 = sitofp i32 %0 to float');
-            expect(resultado).toContain('  %4 = fadd float %3, %1');
-            expect(resultado).toContain('  %5 = sitofp i32 %2 to float');
-            expect(resultado).toContain('  %6 = fadd float %4, %5');
-            expect(resultado).toContain('  ret float %6');
+            expect(resultado).toContain('define double @encadeadas(i32 %0, double %1, i32 %2)');
+            expect(resultado).toContain('  %3 = sitofp i32 %0 to double');
+            expect(resultado).toContain('  %4 = fadd double %3, %1');
+            expect(resultado).toContain('  %5 = sitofp i32 %2 to double');
+            expect(resultado).toContain('  %6 = fadd double %4, %5');
+            expect(resultado).toContain('  ret double %6');
         });
 
         it('Chamada de função, inteiro', async () => {
@@ -137,7 +137,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('  store i32 %0, i32* %c, align 4');
         });
 
-        it.skip('Chamada de função, número', async () => {
+        it('Chamada de função, número', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
                 'funcao soma(a: inteiro, b: número): número {',
