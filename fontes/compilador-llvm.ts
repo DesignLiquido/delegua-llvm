@@ -17,7 +17,13 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
     funcaoPrintf: llvm.Function;
-    formatoPrintf: llvm.Value;
+
+    printfFormatos: Map<string, string> = new Map<string, string>([
+        ['inteiro', '%d\n'],
+        ['número', '%g\n'],
+    ]);
+
+    printFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
 
     constructor() {
         this.lexador = new Lexador();
@@ -125,6 +131,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             const argumentoResolvido = await argumento.aceitar(this);
             argumentosResolvidos.push(argumentoResolvido);
         }
+
+        const tipoPrimeiroArgumento = declaracao.argumentos[0].tipo;
+
+        const formatoPrintf = this.buscarFormatoPrintf(tipoPrimeiroArgumento);
+        argumentosResolvidos.unshift(formatoPrintf);
 
         this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "printf");
         return Promise.resolve();
@@ -502,6 +513,23 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
+    protected buscarFormatoPrintf(tipoDelegua: string): llvm.Constant {
+        let formatoPrintf = this.printFormatosCarregados.get(tipoDelegua);
+
+        if (!formatoPrintf) {
+            const formatoString = this.printfFormatos.get(tipoDelegua);
+            formatoPrintf = this.montador.CreateGlobalStringPtr(
+                formatoString,
+                `formato_printf_${tipoDelegua}`,
+                0,
+                this.modulo
+            );
+            this.printFormatosCarregados.set(tipoDelegua, formatoPrintf);
+        }
+
+        return formatoPrintf;
+    }
+
     /**
      * Aqui ficam as ideias de implementação encontradas em 
      * https://gist.github.com/seven1m/2ca74265cca9ef6f493ef1de87e9252d. 
@@ -515,14 +543,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
     protected criarFuncaoNativaEscreva(): void {
-        this.formatoPrintf = this.montador.CreateGlobalStringPtr(
-            // "Ola Mundo",
-            "%d\n",
-            "qualquer",
-            0,
-            this.modulo
-        );
-
         const tipoRetornoPrinter = this.montador.getInt32Ty();
         const tipoFuncaoPrinter = llvm.FunctionType.get(
             tipoRetornoPrinter,
@@ -611,7 +631,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             console.error('Falha ao verificar módulo.');
             return;
         }
-
+        console.log(this.modulo.print());
         return this.modulo.print();
     }
 }

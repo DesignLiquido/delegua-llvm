@@ -7,12 +7,11 @@ describe('Compilador', () => {
         expect(resultado).toBeTruthy();
     });
 
-    // TODO: "Call parameter type does not match function signature!"
-    it.skip('Escreva', async () => {
+    it('Escreva', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123)']);
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('  %printf = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @qualquer, i32 0, i32 0), i32 5)');
+        expect(resultado).toContain('%printf = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @\"formato_printf_n\\C3\\BAmero\", i32 0, i32 0), double 1.230000e+02)');
     });
 
     describe('Funções', () => {
