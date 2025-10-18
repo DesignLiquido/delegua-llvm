@@ -17,13 +17,21 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
     funcaoPrintf: llvm.Function;
+    funcaoScanf: llvm.Function;
+    funcaoPuts: llvm.Function;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d\n'],
         ['número', '%g\n'],
     ]);
 
+    scanfFormatos: Map<string, string> = new Map<string, string>([
+        ['inteiro', '%d'],
+        ['número', '%lf'],
+    ]);
+
     printFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
+    scanfFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
 
     constructor() {
         this.lexador = new Lexador();
@@ -129,7 +137,19 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         const argumentosResolvidos: llvm.Value[] = [];
         for (const argumento of declaracao.argumentos) {
             const argumentoResolvido = await argumento.aceitar(this);
-            argumentosResolvidos.push(argumentoResolvido);
+
+            // Se for VariavelEscopo, precisa carregar o valor
+            if (argumentoResolvido instanceof VariavelEscopo) {
+                const tipoArgumento = this.obterTipoLlvm(argumento.tipo);
+                const valorCarregado = this.montador.CreateLoad(
+                    tipoArgumento,
+                    argumentoResolvido.variavelLlvm,
+                    "load_var"
+                );
+                argumentosResolvidos.push(valorCarregado);
+            } else {
+                argumentosResolvidos.push(argumentoResolvido);
+            }
         }
 
         const tipoPrimeiroArgumento = declaracao.argumentos[0].tipo;
@@ -184,10 +204,21 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
 
+        // Se o inicializador é um `leia`, ajusta seu tipo para o tipo da variável
+        if (declaracao.inicializador instanceof Leia) {
+            declaracao.inicializador.tipo = tipoVariavel;
+        }
+
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         const valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+
+        // Adiciona a variável à pilha de escopos
+        const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
+        const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao);
+        topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopo);
+
         return Promise.resolve();
     }
 
@@ -433,8 +464,27 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoLeia(expressao: Leia): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoLeia(expressao: Leia): Promise<llvm.Value> {
+        // Tem um problema aqui.
+        // Se o tipo da variavel que recebe o leia for numero e o usuario digitar um texto,
+        // o scanf vai colocar um valor numerico inválido na variável.
+        if (expressao.argumentos && expressao.argumentos.length > 0) {
+            const mensagemPrompt = expressao.argumentos[0];
+            const mensagemResolvida = await mensagemPrompt.aceitar(this);
+            this.montador.CreateCall(this.funcaoPuts, [mensagemResolvida], "puts");
+        }
+
+        const tipoLeitura = expressao.tipo || 'número';
+        const tipoLlvm = this.obterTipoLlvm(tipoLeitura);
+
+        // Aloca espaço temporário para armazenar o valor lido
+        const variavelTemporaria = this.montador.CreateAlloca(tipoLlvm, null, "temp_leia");
+
+        const formatoScanf = this.buscarFormatoScanf(tipoLeitura);
+
+        this.montador.CreateCall(this.funcaoScanf, [formatoScanf, variavelTemporaria], "scanf");
+
+        return this.montador.CreateLoad(tipoLlvm, variavelTemporaria, "valor_lido");
     }
 
     visitarExpressaoLeiaMultiplo(expressao: LeiaMultiplo): Promise<any> | void {
@@ -457,6 +507,15 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                     ConstantFP.get(
                         this.montador.getDoubleTy(),
                         new APFloat(expressao.valor)
+                    )
+                );
+            case 'texto':
+                return Promise.resolve(
+                    this.montador.CreateGlobalStringPtr(
+                        expressao.valor as string,
+                        "str",
+                        0,
+                        this.modulo
                     )
                 );
             /* case 'inteiro':
@@ -530,16 +589,33 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         return formatoPrintf;
     }
 
+    protected buscarFormatoScanf(tipoDelegua: string): llvm.Constant {
+        let formatoScanf = this.scanfFormatosCarregados.get(tipoDelegua);
+
+        if (!formatoScanf) {
+            const formatoString = this.scanfFormatos.get(tipoDelegua);
+            formatoScanf = this.montador.CreateGlobalStringPtr(
+                formatoString,
+                `formato_scanf_${tipoDelegua}`,
+                0,
+                this.modulo
+            );
+            this.scanfFormatosCarregados.set(tipoDelegua, formatoScanf);
+        }
+
+        return formatoScanf;
+    }
+
     /**
-     * Aqui ficam as ideias de implementação encontradas em 
-     * https://gist.github.com/seven1m/2ca74265cca9ef6f493ef1de87e9252d. 
-     * 
-     * Outras ideias que foram testadas, mas não funcionaram muito bem, 
+     * Aqui ficam as ideias de implementação encontradas em
+     * https://gist.github.com/seven1m/2ca74265cca9ef6f493ef1de87e9252d.
+     *
+     * Outras ideias que foram testadas, mas não funcionaram muito bem,
      * estão em:
-     * 
+     *
      * - https://gist.github.com/alendit/defe3d518cd8f3f3e28cb46708d4c9d6
      * - https://github.com/numba/numba/blob/c699ef8679316f40af8d0678219fa197522a741f/numba/cgutils.py#L975
-     * 
+     *
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
     protected criarFuncaoNativaEscreva(): void {
@@ -557,6 +633,44 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             tipoFuncaoPrinter,
             llvm.Function.LinkageTypes.ExternalLinkage,
             'printf',
+            this.modulo
+        );
+    }
+
+    protected criarFuncaoNativaLeia(): void {
+        const tipoRetornoScanf = this.montador.getInt32Ty();
+        const tipoFuncaoScanf = llvm.FunctionType.get(
+            tipoRetornoScanf,
+            [
+                this.montador.getInt8PtrTy(0)
+            ],
+            true
+        );
+
+        // Declara a função scanf como módulo externo.
+        this.funcaoScanf = llvm.Function.Create(
+            tipoFuncaoScanf,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'scanf',
+            this.modulo
+        );
+    }
+
+    protected criarFuncaoNativaPuts(): void {
+        const tipoRetornoPuts = this.montador.getInt32Ty();
+        const tipoFuncaoPuts = llvm.FunctionType.get(
+            tipoRetornoPuts,
+            [
+                this.montador.getInt8PtrTy(0)
+            ],
+            false
+        );
+
+        // Declara a função puts como módulo externo.
+        this.funcaoPuts = llvm.Function.Create(
+            tipoFuncaoPuts,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'puts',
             this.modulo
         );
     }
@@ -615,6 +729,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         // Criação das funções nativas aqui.
         this.criarFuncaoNativaEscreva();
+        this.criarFuncaoNativaLeia();
+        this.criarFuncaoNativaPuts();
 
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
