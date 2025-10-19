@@ -150,38 +150,25 @@ describe('Compilador', () => {
     });
 
     describe('Leia', () => {
-        it('Leia inteiro com prompt', async () => {
+        it('Leia texto com prompt', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                'var idade: inteiro = leia("Digite sua idade")'
+                'var nome: texto = leia("Digite seu nome")'
             ]);
 
             expect(resultado).toBeTruthy();
             expect(resultado).toContain('declare i32 @scanf(i8*, ...)');
             expect(resultado).toContain('declare i32 @puts(i8*)');
             expect(resultado).toContain('call i32 @puts');
-            expect(resultado).toContain('%temp_leia = alloca i32');
+            expect(resultado).toContain('%temp_leia = alloca i8*');
             expect(resultado).toContain('call i32 (i8*, ...) @scanf');
-            expect(resultado).toContain('%valor_lido = load i32, i32* %temp_leia');
-        });
-
-        it('Leia número com prompt', async () => {
-            const compilador = new CompiladorLLVM();
-            const resultado = await compilador.compilar([
-                'var altura: número = leia("Digite sua altura")'
-            ]);
-
-            expect(resultado).toBeTruthy();
-            expect(resultado).toContain('declare i32 @scanf(i8*, ...)');
-            expect(resultado).toContain('declare i32 @puts(i8*)');
-            expect(resultado).toContain('%temp_leia = alloca double');
-            expect(resultado).toContain('%valor_lido = load double, double* %temp_leia');
+            expect(resultado).toContain('%valor_lido = load i8*, i8** %temp_leia');
         });
 
         it('Leia e escreva', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                'var idade: inteiro = leia("Digite sua idade")',
+                'var idade: texto = leia("Digite sua idade")',
                 'escreva(idade)'
             ]);
 

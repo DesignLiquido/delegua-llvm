@@ -23,11 +23,13 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d\n'],
         ['número', '%g\n'],
+        ['texto', '%s\n'],
     ]);
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
         ['número', '%lf'],
+        ['texto', '%s'],
     ]);
 
     printFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
@@ -82,6 +84,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             case 'numero':
             case 'número':
                 return this.montador.getDoubleTy();
+            case 'texto':
+                return llvm.Type.getInt8PtrTy(this.contexto);
         }
     }
 
@@ -204,17 +208,11 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
 
-        // Se o inicializador é um `leia`, ajusta seu tipo para o tipo da variável
-        if (declaracao.inicializador instanceof Leia) {
-            declaracao.inicializador.tipo = tipoVariavel;
-        }
-
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         const valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
-        // Adiciona a variável à pilha de escopos
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
         const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopo);
@@ -465,19 +463,16 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     }
 
     async visitarExpressaoLeia(expressao: Leia): Promise<llvm.Value> {
-        // Tem um problema aqui.
-        // Se o tipo da variavel que recebe o leia for numero e o usuario digitar um texto,
-        // o scanf vai colocar um valor numerico inválido na variável.
         if (expressao.argumentos && expressao.argumentos.length > 0) {
             const mensagemPrompt = expressao.argumentos[0];
             const mensagemResolvida = await mensagemPrompt.aceitar(this);
             this.montador.CreateCall(this.funcaoPuts, [mensagemResolvida], "puts");
         }
 
-        const tipoLeitura = expressao.tipo || 'número';
+        const tipoLeitura = "texto";
+
         const tipoLlvm = this.obterTipoLlvm(tipoLeitura);
 
-        // Aloca espaço temporário para armazenar o valor lido
         const variavelTemporaria = this.montador.CreateAlloca(tipoLlvm, null, "temp_leia");
 
         const formatoScanf = this.buscarFormatoScanf(tipoLeitura);
@@ -727,6 +722,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);
         }
 
+        // Deve ser chamado de forma dinâmica assim que é usado algo que dependa dele.
         // Criação das funções nativas aqui.
         this.criarFuncaoNativaEscreva();
         this.criarFuncaoNativaLeia();
