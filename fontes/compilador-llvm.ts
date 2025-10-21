@@ -356,7 +356,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 const variavelEscopo = operando as VariavelEscopo;
                 const tipoVariavel = variavelEscopo.variavelLlvm.getType();
 
-                };
                 if (tipoVariavel.constructor.name === 'PointerType') {
                     const tipoLlvm = this.obterTipoLlvm(tipo);
                     const valorCarregado = this.montador.CreateLoad(
