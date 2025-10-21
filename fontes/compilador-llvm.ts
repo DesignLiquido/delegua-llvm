@@ -181,16 +181,102 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarDeclaracaoPara(declaracao: Para): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarDeclaracaoPara(declaracao: Para): Promise<Promise<any> | void> {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+
+        for (const inicializador of [].concat(declaracao.inicializador)) {
+            await inicializador.aceitar(this);
+        }
+
+        const blocoCabecaLoop = llvm.BasicBlock.Create(this.contexto, 'para_cabeca', funcaoAtual);
+        const blocoCorpoLoop = llvm.BasicBlock.Create(this.contexto, 'para_corpo', funcaoAtual);
+        const blocoIncremento = llvm.BasicBlock.Create(this.contexto, 'para_incremento', funcaoAtual);
+        const blocoAposLoop = llvm.BasicBlock.Create(this.contexto, 'para_apos', funcaoAtual);
+
+        this.montador.CreateBr(blocoCabecaLoop);
+        this.montador.SetInsertPoint(blocoCabecaLoop);
+
+        let condicao: llvm.Value = await declaracao.condicao.aceitar(this);
+
+        if (condicao instanceof VariavelEscopo) {
+            const tipoCondicao = this.obterTipoLlvm(declaracao.condicao.tipo);
+            condicao = this.montador.CreateLoad(
+                tipoCondicao,
+                condicao.variavelLlvm,
+                "load_condicao_para"
+            )
+        }
+
+        this.montador.CreateCondBr(
+            condicao,
+            blocoCorpoLoop,
+            blocoAposLoop
+        )
+
+        this.montador.SetInsertPoint(blocoCorpoLoop);
+
+        for (const instrucao of declaracao.corpo.declaracoes) {
+            await instrucao.aceitar(this);
+        }
+
+        this.montador.CreateBr(blocoIncremento);
+        this.montador.SetInsertPoint(blocoIncremento);
+
+        if (declaracao.incrementar) {
+            await declaracao.incrementar.aceitar(this);
+        }
+
+        this.montador.CreateBr(blocoCabecaLoop);
+
+        this.montador.SetInsertPoint(blocoAposLoop);
+
+        return Promise.resolve();
     }
 
     visitarDeclaracaoParaCada(declaracao: ParaCada): Promise<any> | void {
         throw new Error('Método não implementado.');
     }
 
-    visitarDeclaracaoSe(declaracao: Se): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarDeclaracaoSe(declaracao: Se): Promise<any> {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+
+        let condicao: llvm.Value | VariavelEscopo = await declaracao.condicao.aceitar(this);
+
+        if (condicao instanceof VariavelEscopo) {
+            const tipoVariavel = condicao.variavelLlvm.getType();
+            if (tipoVariavel.constructor.name === 'PointerType') {
+                const tipoCondicao = this.obterTipoLlvm(declaracao.condicao.tipo);
+                condicao = this.montador.CreateLoad(
+                    tipoCondicao,
+                    condicao.variavelLlvm,
+                    "load_condicao_se"
+                );
+            } else {
+                condicao = condicao.variavelLlvm;
+            }
+        }
+
+        const blocoEntao = llvm.BasicBlock.Create(this.contexto, 'se_entao', funcaoAtual);
+        const blocoSenao = llvm.BasicBlock.Create(this.contexto, 'se_senao', funcaoAtual);
+        const blocoApos = llvm.BasicBlock.Create(this.contexto, 'se_apos', funcaoAtual);
+
+        this.montador.CreateCondBr(condicao as llvm.Value, blocoEntao, blocoSenao);
+
+        this.montador.SetInsertPoint(blocoEntao);
+        if (declaracao.caminhoEntao) {
+            await declaracao.caminhoEntao.aceitar(this);
+        }
+        this.montador.CreateBr(blocoApos);
+
+        this.montador.SetInsertPoint(blocoSenao);
+        if (declaracao.caminhoSenao) {
+            await declaracao.caminhoSenao.aceitar(this);
+        }
+        this.montador.CreateBr(blocoApos);
+
+        this.montador.SetInsertPoint(blocoApos);
+
+        return Promise.resolve();
     }
 
     visitarDeclaracaoTendoComo(declaracao: TendoComo): Promise<any> | void {
@@ -240,8 +326,8 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoAgrupamento(expressao: Agrupamento): Promise<any> {
+        return await expressao.expressao.aceitar(this);
     }
 
     visitarExpressaoAtribuicaoPorIndice(expressao: AtribuicaoPorIndice): Promise<any> | void {
@@ -267,31 +353,48 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     protected resolverOperando(operando: llvm.Value | VariavelEscopo, tipo: string): OperandoInterface {
         switch (operando.constructor.name) {
             case 'VariavelEscopo':
-                return { 
-                    valor: (operando as VariavelEscopo).variavelLlvm, 
-                    tipo: tipo 
+                const variavelEscopo = operando as VariavelEscopo;
+                const tipoVariavel = variavelEscopo.variavelLlvm.getType();
+
                 };
+                if (tipoVariavel.constructor.name === 'PointerType') {
+                    const tipoLlvm = this.obterTipoLlvm(tipo);
+                    const valorCarregado = this.montador.CreateLoad(
+                        tipoLlvm,
+                        variavelEscopo.variavelLlvm,
+                        "load_operando"
+                    );
+                    return {
+                        valor: valorCarregado,
+                        tipo: tipo
+                    };
+                } else {
+                    return {
+                        valor: variavelEscopo.variavelLlvm,
+                        tipo: tipo
+                    };
+                }
             case 'Instruction':
                 const operandoEsquerdoTipado = operando as llvm.Instruction;
                 const tipoOperandoEsquerdo = operandoEsquerdoTipado.getType();
                 switch (tipoOperandoEsquerdo.constructor.name) {
                     case 'IntegerType':
-                        return { 
-                            valor: operando as llvm.Value, 
-                            tipo: 'inteiro' 
+                        return {
+                            valor: operando as llvm.Value,
+                            tipo: 'inteiro'
                         };
                     default:
-                        return { 
+                        return {
                             valor: this.montador.CreateSIToFP(
-                                operando as llvm.Value, 
-                                llvm.Type.getDoubleTy(this.contexto)), 
-                                tipo: 'número' 
+                                operando as llvm.Value,
+                                llvm.Type.getDoubleTy(this.contexto)),
+                                tipo: 'número'
                             }
                 }
             default:
-                return { 
-                    valor: operando as llvm.Value, 
-                    tipo: tipo 
+                return {
+                    valor: operando as llvm.Value,
+                    tipo: tipo
                 };
         }
     }
@@ -326,6 +429,22 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         }
 
         return Promise.resolve(this.montador.CreateFDiv(operandoEsquerdo.valor, operandoDireito.valor));
+    }
+
+    protected resolverModulo(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateSRem(operandoEsquerdo.valor, operandoDireito.valor));
+        }
+
+        return Promise.resolve(this.montador.CreateFRem(operandoEsquerdo.valor, operandoDireito.valor));
+    }
+
+    protected resolverIgualdade(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
+        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+            return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
+        }
+
+        return Promise.resolve(this.montador.CreateFCmpOEQ(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
     // TODO: Não sei se vai mais precisar.
@@ -372,11 +491,24 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 return this.resolverDivisao(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIVISAO_INTEIRA':
                 return Promise.resolve(this.montador.CreateSDiv((operandoEsquerdo as VariavelEscopo).variavelLlvm, (operandoDireito as VariavelEscopo).variavelLlvm));
+            case 'MODULO':
+                return this.resolverModulo(operandoEsquerdoResolvido, operandoDireitoResolvido);
+            case 'MENOR_IGUAL':
+                if (tipoPrevalente === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateICmpSLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                } else {
+                    return Promise.resolve(this.montador.CreateFCmpOLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                }
+            case 'IGUAL_IGUAL':
+                return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
         }
     }
 
-    visitarExpressaoBloco(declaracao: Bloco): Promise<any> {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoBloco(declaracao: Bloco): Promise<any> {
+        for (const instrucao of declaracao.declaracoes) {
+            await instrucao.aceitar(this);
+        }
+        return Promise.resolve();
     }
 
     visitarExpressaoContinua(declaracao?: Continua): ContinuarQuebra {
@@ -559,8 +691,60 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoUnaria(expressao: Unario): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoUnaria(expressao: Unario): Promise<llvm.Value> {
+        const operandoResolvido = await expressao.operando.aceitar(this);
+
+        let valor: llvm.Value;
+        if (operandoResolvido instanceof VariavelEscopo) {
+            const tipoOperando = this.obterTipoLlvm(expressao.operando.tipo);
+            valor = this.montador.CreateLoad(tipoOperando, operandoResolvido.variavelLlvm, "load_unary");
+        } else {
+            valor = operandoResolvido;
+        }
+
+        switch (expressao.operador.tipo) {
+            case 'SUBTRACAO':
+                if (expressao.operando.tipo === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateNeg(valor));
+                } else {
+                    return Promise.resolve(this.montador.CreateFNeg(valor));
+                }
+
+            case 'INCREMENTAR':
+                let novoValor: llvm.Value;
+                if (expressao.operando.tipo === 'inteiro') {
+                    const um = ConstantInt.get(this.contexto, new APInt(32, 1));
+                    novoValor = this.montador.CreateAdd(valor, um, "inc");
+                } else {
+                    const um = ConstantFP.get(this.montador.getDoubleTy(), new APFloat(1.0));
+                    novoValor = this.montador.CreateFAdd(valor, um, "inc");
+                }
+
+                if (operandoResolvido instanceof VariavelEscopo) {
+                    this.montador.CreateStore(novoValor, operandoResolvido.variavelLlvm);
+                }
+
+                return Promise.resolve(novoValor);
+
+            case 'DECREMENTAR':
+                let valorDecrementado: llvm.Value;
+                if (expressao.operando.tipo === 'inteiro') {
+                    const um = ConstantInt.get(this.contexto, new APInt(32, 1));
+                    valorDecrementado = this.montador.CreateSub(valor, um, "dec");
+                } else {
+                    const um = ConstantFP.get(this.montador.getDoubleTy(), new APFloat(1.0));
+                    valorDecrementado = this.montador.CreateFSub(valor, um, "dec");
+                }
+
+                if (operandoResolvido instanceof VariavelEscopo) {
+                    this.montador.CreateStore(valorDecrementado, operandoResolvido.variavelLlvm);
+                }
+
+                return Promise.resolve(valorDecrementado);
+
+            default:
+                throw new Error(`Operador unário ${expressao.operador.tipo} não implementado.`);
+        }
     }
 
     visitarExpressaoVetor(expressao: Vetor): Promise<any> | void {
