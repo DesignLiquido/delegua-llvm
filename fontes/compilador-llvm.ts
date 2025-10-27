@@ -512,7 +512,23 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
-        const valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+        let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+
+        const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
+        if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
+            valorOuReferenciaVariavel = this.montador.CreateFPToSI(
+                valorOuReferenciaVariavel,
+                this.montador.getInt32Ty(),
+                'double_para_int'
+            );
+        } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
+            valorOuReferenciaVariavel = this.montador.CreateSIToFP(
+                valorOuReferenciaVariavel,
+                this.montador.getDoubleTy(),
+                'int_para_double'
+            );
+        }
+
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
@@ -568,6 +584,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
 
     protected resolverOperando(operando: llvm.Value | VariavelEscopo, tipo: string): OperandoInterface {
         switch (operando.constructor.name) {
+            case 'ConstantFP':
+            case 'SIToFPInst':
+                return {
+                    valor: operando as llvm.Value,
+                    tipo: 'número'
+                };
             case 'VariavelEscopo':
                 const variavelEscopo = operando as VariavelEscopo;
                 const tipoVariavel = variavelEscopo.variavelLlvm.getType();
@@ -677,23 +699,26 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             expressao.direita.aceitar(this)
         ]);
 
-        let operandoEsquerdo: llvm.Value | VariavelEscopo = promises[0],
-            operandoDireito: llvm.Value | VariavelEscopo = promises[1];
+        let operandoEsquerdo: llvm.Value | VariavelEscopo | ConstantFP = promises[0],
+            operandoDireito: llvm.Value | VariavelEscopo | ConstantFP = promises[1];
 
         let tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
         let tipoDireito = this.resolverTipoConstruto(expressao.direita);
 
-        const tipoPrevalente = this.definirTipoPrevalente(tipoEsquerdo, tipoDireito);
-        if (tipoEsquerdo != tipoPrevalente) {
-            operandoEsquerdo = this.montador.CreateSIToFP((operandoEsquerdo as VariavelEscopo).variavelLlvm, llvm.Type.getDoubleTy(this.contexto));
-        }
-
-        if (tipoDireito != tipoPrevalente) {
-            operandoDireito = this.montador.CreateSIToFP((operandoDireito as VariavelEscopo).variavelLlvm, llvm.Type.getDoubleTy(this.contexto));
-        }
-
         const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
         const operandoDireitoResolvido: OperandoInterface = this.resolverOperando(operandoDireito, tipoDireito);
+
+        const tipoPrevalente = this.definirTipoPrevalente(operandoEsquerdoResolvido.tipo, operandoDireitoResolvido.tipo);
+
+        if (operandoEsquerdoResolvido.tipo !== tipoPrevalente) {
+            operandoEsquerdoResolvido.valor = this.montador.CreateSIToFP(operandoEsquerdoResolvido.valor, llvm.Type.getDoubleTy(this.contexto));
+            operandoEsquerdoResolvido.tipo = 'número';
+        }
+
+        if (operandoDireitoResolvido.tipo !== tipoPrevalente) {
+            operandoDireitoResolvido.valor = this.montador.CreateSIToFP(operandoDireitoResolvido.valor, llvm.Type.getDoubleTy(this.contexto));
+            operandoDireitoResolvido.tipo = 'número';
+        }
 
         switch (expressao.operador.tipo) {
             case 'MULTIPLICACAO':
@@ -708,6 +733,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 return Promise.resolve(this.montador.CreateSDiv((operandoEsquerdo as VariavelEscopo).variavelLlvm, (operandoDireito as VariavelEscopo).variavelLlvm));
             case 'MODULO':
                 return this.resolverModulo(operandoEsquerdoResolvido, operandoDireitoResolvido);
+            case 'MENOR':
+                if (tipoPrevalente === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateICmpSLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                } else {
+                    return Promise.resolve(this.montador.CreateFCmpOLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                }
             case 'MENOR_IGUAL':
                 if (tipoPrevalente === 'inteiro') {
                     return Promise.resolve(this.montador.CreateICmpSLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
@@ -734,6 +765,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                 }
             case 'IGUAL_IGUAL':
                 return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
+            case 'DIFERENTE':
+                if (tipoPrevalente === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateICmpNE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                } else {
+                    return Promise.resolve(this.montador.CreateFCmpONE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                }
         }
     }
 
