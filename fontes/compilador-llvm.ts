@@ -35,6 +35,25 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     printFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
     scanfFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
 
+    private readonly NOMES_BLOCOS = {
+        ESCOLHA_APOS: 'escolha_apos',
+        ESCOLHA_CASO: 'escolha_caso',
+        ESCOLHA_CORPO: 'escolha_corpo',
+        ESCOLHA_PADRAO: 'escolha_padrao',
+        SE_ENTAO: 'se_entao',
+        SE_SENAO: 'se_senao',
+        SE_APOS: 'se_apos',
+        PARA_CABECA: 'para_cabeca',
+        PARA_CORPO: 'para_corpo',
+        PARA_INCREMENTO: 'para_incremento',
+        PARA_APOS: 'para_apos',
+        LOAD_ESCOLHA: 'load_escolha',
+        LOAD_CONDICAO_SE: 'load_condicao_se',
+        LOAD_CONDICAO_PARA: 'load_condicao_para',
+        LOAD_OPERANDO: 'load_operando',
+        CASO_OU: 'caso_ou'
+    };
+
     constructor() {
         this.lexador = new Lexador();
         this.avaliadorSintatico = new AvaliadorSintatico();
@@ -89,6 +108,130 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         }
     }
 
+    /**
+     * Carrega um valor se ele for uma variável de escopo do tipo ponteiro.
+     * Se o valor já for um llvm.Value direto, retorna ele mesmo.
+     */
+    protected carregarValorSeNecessario(
+        valor: llvm.Value | VariavelEscopo,
+        tipoDelegua: string,
+        nomeLoad: string
+    ): llvm.Value {
+        if (valor instanceof VariavelEscopo) {
+            const tipoVariavel = valor.variavelLlvm.getType();
+            if (tipoVariavel.constructor.name === 'PointerType') {
+                const tipoLlvm = this.obterTipoLlvm(tipoDelegua);
+                return this.montador.CreateLoad(tipoLlvm, valor.variavelLlvm, nomeLoad);
+            } else {
+                return valor.variavelLlvm;
+            }
+        }
+        return valor as llvm.Value;
+    }
+
+    /**
+     * Processa uma lista de declarações sequencialmente.
+     */
+    protected async processarDeclaracoesBloco(declaracoes: Declaracao[]): Promise<void> {
+        for (const declaracao of declaracoes) {
+            await declaracao.aceitar(this);
+        }
+    }
+
+    /**
+     * Determina o próximo bloco na estrutura de escolha.
+     */
+    protected obterProximoBloco(
+        indiceCasoAtual: number,
+        blocosCasos: llvm.BasicBlock[],
+        blocoPadrao: llvm.BasicBlock | null,
+        blocoApos: llvm.BasicBlock
+    ): llvm.BasicBlock {
+        const proximoIndiceCaso = indiceCasoAtual + 1;
+        if (proximoIndiceCaso < blocosCasos.length) {
+            return blocosCasos[proximoIndiceCaso];
+        }
+        return blocoPadrao || blocoApos;
+    }
+
+    /**
+     * Constrói a comparação OR de todas as condições de um caso.
+     * Retorna um llvm.Value booleano que é true se qualquer condição for satisfeita.
+     */
+    protected async construirComparacaoCaso(
+        valorEscolha: llvm.Value,
+        tipoEscolha: string,
+        condicoes: Construto[]
+    ): Promise<llvm.Value> {
+        let comparacaoFinal: llvm.Value = null;
+
+        for (const condicao of condicoes) {
+            const valorCaso: llvm.Value = await condicao.aceitar(this);
+            const tipoCaso = this.resolverTipoConstruto(condicao);
+
+            const operandoEscolhaResolvido: OperandoInterface =
+                this.resolverOperando(valorEscolha, tipoEscolha);
+            const operandoCasoResolvido: OperandoInterface =
+                this.resolverOperando(valorCaso, tipoCaso);
+
+            const comparacao = await this.resolverIgualdade(
+                operandoEscolhaResolvido,
+                operandoCasoResolvido
+            );
+
+            if (comparacaoFinal === null) {
+                comparacaoFinal = comparacao;
+            } else {
+                comparacaoFinal = this.montador.CreateOr(
+                    comparacaoFinal,
+                    comparacao,
+                    this.NOMES_BLOCOS.CASO_OU
+                );
+            }
+        }
+
+        return comparacaoFinal;
+    }
+
+    /**
+     * Cria todos os blocos básicos necessários para a estrutura de escolha.
+     */
+    protected criarBlocosCasosEscolha(
+        declaracao: Escolha,
+        funcaoAtual: llvm.Function
+    ): {
+        blocosCasos: llvm.BasicBlock[];
+        blocoPadrao: llvm.BasicBlock | null;
+        blocoApos: llvm.BasicBlock;
+    } {
+        const blocoApos = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.ESCOLHA_APOS,
+            funcaoAtual
+        );
+
+        const blocosCasos: llvm.BasicBlock[] = [];
+        for (let indiceCaso = 0; indiceCaso < declaracao.caminhos.length; indiceCaso++) {
+            const blocoCaso = llvm.BasicBlock.Create(
+                this.contexto,
+                `${this.NOMES_BLOCOS.ESCOLHA_CASO}_${indiceCaso}`,
+                funcaoAtual
+            );
+            blocosCasos.push(blocoCaso);
+        }
+
+        let blocoPadrao: llvm.BasicBlock | null = null;
+        if (declaracao.caminhoPadrao) {
+            blocoPadrao = llvm.BasicBlock.Create(
+                this.contexto,
+                this.NOMES_BLOCOS.ESCOLHA_PADRAO,
+                funcaoAtual
+            );
+        }
+
+        return { blocosCasos, blocoPadrao, blocoApos };
+    }
+
     async visitarDeclaracaoDefinicaoFuncao(declaracao: FuncaoDeclaracao): Promise<void> {
         const tipoRetorno = this.obterTipoLlvm(declaracao.funcao.tipoRetorno);
         const tiposParametros: llvm.Type[] = [];
@@ -133,8 +276,75 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarDeclaracaoEscolha(declaracao: Escolha): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    /**
+     * Processa uma declaração de escolha (switch).
+     *
+     * Estrutura gerada:
+     * - Carrega o valor da escolha
+     * - Cria blocos para cada caso, corpo e caminho padrão
+     * - Para cada caso: compara valor com condições (OR)
+     * - Salta para corpo se verdadeiro, próximo caso caso contrário
+     * - Executa corpo e salta para bloco após
+     * - Se nenhum caso satisfeito, executa caminho padrão (se existir)
+     */
+    async visitarDeclaracaoEscolha(declaracao: Escolha): Promise<any> {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+
+        const valorEscolhaRaw = await declaracao.identificadorOuLiteral.aceitar(this);
+        const valorEscolha = this.carregarValorSeNecessario(
+            valorEscolhaRaw,
+            declaracao.identificadorOuLiteral.tipo,
+            this.NOMES_BLOCOS.LOAD_ESCOLHA
+        );
+
+        const { blocosCasos, blocoPadrao, blocoApos } =
+            this.criarBlocosCasosEscolha(declaracao, funcaoAtual);
+
+        const blocoInicial = blocosCasos.length > 0
+            ? blocosCasos[0]
+            : (blocoPadrao || blocoApos);
+        this.montador.CreateBr(blocoInicial);
+
+        const tipoEscolha = this.resolverTipoConstruto(declaracao.identificadorOuLiteral);
+
+        for (let indiceCaso = 0; indiceCaso < declaracao.caminhos.length; indiceCaso++) {
+            this.montador.SetInsertPoint(blocosCasos[indiceCaso]);
+
+            const caso = declaracao.caminhos[indiceCaso];
+            const comparacaoFinal = await this.construirComparacaoCaso(
+                valorEscolha,
+                tipoEscolha,
+                caso.condicoes
+            );
+
+            const blocoCorpo = llvm.BasicBlock.Create(
+                this.contexto,
+                `${this.NOMES_BLOCOS.ESCOLHA_CORPO}_${indiceCaso}`,
+                funcaoAtual
+            );
+
+            const proximoBloco = this.obterProximoBloco(
+                indiceCaso,
+                blocosCasos,
+                blocoPadrao,
+                blocoApos
+            );
+
+            this.montador.CreateCondBr(comparacaoFinal, blocoCorpo, proximoBloco);
+
+            this.montador.SetInsertPoint(blocoCorpo);
+            await this.processarDeclaracoesBloco(caso.declaracoes);
+            this.montador.CreateBr(blocoApos);
+        }
+
+        if (blocoPadrao) {
+            this.montador.SetInsertPoint(blocoPadrao);
+            await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
+            this.montador.CreateBr(blocoApos);
+        }
+
+        this.montador.SetInsertPoint(blocoApos);
+        return Promise.resolve();
     }
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
@@ -188,36 +398,41 @@ export class CompiladorLLVM implements VisitanteComumInterface {
             await inicializador.aceitar(this);
         }
 
-        const blocoCabecaLoop = llvm.BasicBlock.Create(this.contexto, 'para_cabeca', funcaoAtual);
-        const blocoCorpoLoop = llvm.BasicBlock.Create(this.contexto, 'para_corpo', funcaoAtual);
-        const blocoIncremento = llvm.BasicBlock.Create(this.contexto, 'para_incremento', funcaoAtual);
-        const blocoAposLoop = llvm.BasicBlock.Create(this.contexto, 'para_apos', funcaoAtual);
+        const blocoCabecaLoop = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.PARA_CABECA,
+            funcaoAtual
+        );
+        const blocoCorpoLoop = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.PARA_CORPO,
+            funcaoAtual
+        );
+        const blocoIncremento = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.PARA_INCREMENTO,
+            funcaoAtual
+        );
+        const blocoAposLoop = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.PARA_APOS,
+            funcaoAtual
+        );
 
         this.montador.CreateBr(blocoCabecaLoop);
         this.montador.SetInsertPoint(blocoCabecaLoop);
 
-        let condicao: llvm.Value = await declaracao.condicao.aceitar(this);
+        const condicaoRaw = await declaracao.condicao.aceitar(this);
+        const condicao = this.carregarValorSeNecessario(
+            condicaoRaw,
+            declaracao.condicao.tipo,
+            this.NOMES_BLOCOS.LOAD_CONDICAO_PARA
+        );
 
-        if (condicao instanceof VariavelEscopo) {
-            const tipoCondicao = this.obterTipoLlvm(declaracao.condicao.tipo);
-            condicao = this.montador.CreateLoad(
-                tipoCondicao,
-                condicao.variavelLlvm,
-                "load_condicao_para"
-            )
-        }
-
-        this.montador.CreateCondBr(
-            condicao,
-            blocoCorpoLoop,
-            blocoAposLoop
-        )
+        this.montador.CreateCondBr(condicao, blocoCorpoLoop, blocoAposLoop);
 
         this.montador.SetInsertPoint(blocoCorpoLoop);
-
-        for (const instrucao of declaracao.corpo.declaracoes) {
-            await instrucao.aceitar(this);
-        }
+        await this.processarDeclaracoesBloco(declaracao.corpo.declaracoes);
 
         this.montador.CreateBr(blocoIncremento);
         this.montador.SetInsertPoint(blocoIncremento);
@@ -227,7 +442,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         }
 
         this.montador.CreateBr(blocoCabecaLoop);
-
         this.montador.SetInsertPoint(blocoAposLoop);
 
         return Promise.resolve();
@@ -240,27 +454,30 @@ export class CompiladorLLVM implements VisitanteComumInterface {
     async visitarDeclaracaoSe(declaracao: Se): Promise<any> {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
-        let condicao: llvm.Value | VariavelEscopo = await declaracao.condicao.aceitar(this);
+        const condicaoRaw = await declaracao.condicao.aceitar(this);
+        const condicao = this.carregarValorSeNecessario(
+            condicaoRaw,
+            declaracao.condicao.tipo,
+            this.NOMES_BLOCOS.LOAD_CONDICAO_SE
+        );
 
-        if (condicao instanceof VariavelEscopo) {
-            const tipoVariavel = condicao.variavelLlvm.getType();
-            if (tipoVariavel.constructor.name === 'PointerType') {
-                const tipoCondicao = this.obterTipoLlvm(declaracao.condicao.tipo);
-                condicao = this.montador.CreateLoad(
-                    tipoCondicao,
-                    condicao.variavelLlvm,
-                    "load_condicao_se"
-                );
-            } else {
-                condicao = condicao.variavelLlvm;
-            }
-        }
+        const blocoEntao = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.SE_ENTAO,
+            funcaoAtual
+        );
+        const blocoSenao = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.SE_SENAO,
+            funcaoAtual
+        );
+        const blocoApos = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.SE_APOS,
+            funcaoAtual
+        );
 
-        const blocoEntao = llvm.BasicBlock.Create(this.contexto, 'se_entao', funcaoAtual);
-        const blocoSenao = llvm.BasicBlock.Create(this.contexto, 'se_senao', funcaoAtual);
-        const blocoApos = llvm.BasicBlock.Create(this.contexto, 'se_apos', funcaoAtual);
-
-        this.montador.CreateCondBr(condicao as llvm.Value, blocoEntao, blocoSenao);
+        this.montador.CreateCondBr(condicao, blocoEntao, blocoSenao);
 
         this.montador.SetInsertPoint(blocoEntao);
         if (declaracao.caminhoEntao) {
@@ -275,7 +492,6 @@ export class CompiladorLLVM implements VisitanteComumInterface {
         this.montador.CreateBr(blocoApos);
 
         this.montador.SetInsertPoint(blocoApos);
-
         return Promise.resolve();
     }
 
@@ -383,7 +599,7 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                     const valorCarregado = this.montador.CreateLoad(
                         tipoLlvm,
                         variavelEscopo.variavelLlvm,
-                        "load_operando"
+                        this.NOMES_BLOCOS.LOAD_OPERANDO
                     );
                     return {
                         valor: valorCarregado,
@@ -540,6 +756,12 @@ export class CompiladorLLVM implements VisitanteComumInterface {
                     return Promise.resolve(this.montador.CreateICmpSGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                }
+            case 'MENOR':
+                if (tipoPrevalente === 'inteiro') {
+                    return Promise.resolve(this.montador.CreateICmpSLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
+                } else {
+                    return Promise.resolve(this.montador.CreateFCmpOLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'IGUAL_IGUAL':
                 return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
