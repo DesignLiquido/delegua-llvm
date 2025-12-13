@@ -40,9 +40,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoPuts: llvm.Function;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
-        ['inteiro', '%d\n'],
-        ['número', '%g\n'],
-        ['texto', '%s\n'],
+        ['inteiro', '%d'],
+        ['número', '%g'],
+        ['texto', '%s'],
     ]);
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
@@ -51,7 +51,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         ['texto', '%s'],
     ]);
 
-    printFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
     scanfFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
 
     private readonly NOMES_BLOCOS = {
@@ -831,8 +830,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
         const argumentosResolvidos: llvm.Value[] = [];
+
+        const formatosTexto: string[] = []
+
         for (const argumento of declaracao.argumentos) {
             const argumentoResolvido = await argumento.aceitar(this);
+
+            formatosTexto.push(this.printfFormatos.get(argumento.tipo))
 
             // Se for VariavelEscopo, precisa carregar o valor
             if (argumentoResolvido instanceof VariavelEscopo) {
@@ -848,10 +852,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
         }
 
-        const tipoPrimeiroArgumento = declaracao.argumentos[0].tipo;
+        const fmt = this.montador.CreateGlobalStringPtr(
+            formatosTexto.concat("\n").join(" "), // String formatada ex: "%s %i"
+            "fmt",
+            0,
+            this.modulo
+        )
 
-        const formatoPrintf = this.buscarFormatoPrintf(tipoPrimeiroArgumento);
-        argumentosResolvidos.unshift(formatoPrintf);
+        argumentosResolvidos.unshift(fmt)
 
         this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "printf");
         return Promise.resolve();
@@ -1308,27 +1316,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     )
                 ); */
         }
-    }
-
-
-
-
-
-    protected buscarFormatoPrintf(tipoDelegua: string): llvm.Constant {
-        let formatoPrintf = this.printFormatosCarregados.get(tipoDelegua);
-
-        if (!formatoPrintf) {
-            const formatoString = this.printfFormatos.get(tipoDelegua);
-            formatoPrintf = this.montador.CreateGlobalStringPtr(
-                formatoString,
-                `formato_printf_${tipoDelegua}`,
-                0,
-                this.modulo
-            );
-            this.printFormatosCarregados.set(tipoDelegua, formatoPrintf);
-        }
-
-        return formatoPrintf;
     }
 
     protected buscarFormatoScanf(tipoDelegua: string): llvm.Constant {
