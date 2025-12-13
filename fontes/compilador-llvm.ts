@@ -247,7 +247,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const formatoPtr = this.montador.CreateGlobalStringPtr(formato, `formato_printf_${tipoPrimeiroArgumento}_sem_nl`, 0, this.modulo);
 
         argumentosResolvidos.unshift(formatoPtr);
-        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "printf");
+        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "escreva");
         return Promise.resolve();
     }
 
@@ -853,7 +853,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const formatoPrintf = this.buscarFormatoPrintf(tipoPrimeiroArgumento);
         argumentosResolvidos.unshift(formatoPrintf);
 
-        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "printf");
+        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "escreva");
         return Promise.resolve();
     }
 
@@ -1374,7 +1374,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoPrintf = llvm.Function.Create(
             tipoFuncaoPrinter,
             llvm.Function.LinkageTypes.ExternalLinkage,
-            'printf',
+            'escreva',
             this.modulo
         );
     }
@@ -1455,7 +1455,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async compilar(codigo: string[]): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
-        // TODO: Talvez colocar `printf` aqui.
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
 
         this.contexto = new llvm.LLVMContext();

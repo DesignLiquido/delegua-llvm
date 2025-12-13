@@ -11,7 +11,7 @@ describe('Compilador', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123)']);
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%printf = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @\"formato_printf_n\\C3\\BAmero\", i32 0, i32 0), double 1.230000e+02)');
+        expect(resultado).toContain('%escreva = call i32 (i8*, ...) @escreva(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @\"formato_printf_n\\C3\\BAmero\", i32 0, i32 0), double 1.230000e+02)');
     });
 
     describe('Funções', () => {
@@ -177,7 +177,7 @@ describe('Compilador', () => {
             expect(resultado).toBeTruthy();
             expect(resultado).toContain('call i32 @puts');
             expect(resultado).toContain('call i32 (i8*, ...) @scanf');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
     });
 
@@ -199,7 +199,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('se_senao:');
             expect(resultado).toContain('se_apos:');
             expect(resultado).toContain('br i1 %1, label %se_entao, label %se_senao');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
 
         it('Sem senão', async () => {
@@ -217,7 +217,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('se_senao:');
             expect(resultado).toContain('se_apos:');
             expect(resultado).toContain('br i1');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
 
         it('Com senão se', async () => {
@@ -238,7 +238,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('se_entao:');
             expect(resultado).toContain('se_senao:');
             expect(resultado).toContain('se_apos:');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
 
         it('Múltiplos senão se', async () => {
@@ -263,7 +263,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('se_entao:');
             expect(resultado).toContain('se_senao:');
             expect(resultado).toContain('se_apos:');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
 
         it('Operador menor que', async () => {
@@ -404,7 +404,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('br i1 %0, label %para_corpo, label %para_apos');
             expect(resultado).toContain('fadd double');
             expect(resultado).toContain('1.000000e+00');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
 
         it('Laço com condicional', async () => {
@@ -440,7 +440,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('se_senao');
             expect(resultado).toContain('se_apos');
 
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
     });
 
@@ -661,7 +661,7 @@ describe('Compilador', () => {
             expect(resultado).toBeTruthy();
             expect(resultado).toContain('escolha_caso_');
             expect(resultado).toContain('escolha_padrao');
-            expect(resultado).toContain('call i32 (i8*, ...) @printf');
+            expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
     });
 });
