@@ -37,6 +37,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
     funcaoEscreva: llvm.Function;
     funcaoLeia: llvm.Function;
+    funcaoInteiro: llvm.Function;
+    funcaoNumero: llvm.Function;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -410,11 +412,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const tipoLlvm = this.obterTipoLlvm(tipoLeitura);
 
-        const formatoScanf = this.buscarFormatoScanf(tipoLeitura);
+        const formatoLeia = this.buscarFormatoLeia(tipoLeitura);
 
-        const result = this.montador.CreateCall(this.funcaoLeia, [mensagemResolvida, formatoScanf]);
+        const result = this.montador.CreateCall(this.funcaoLeia, [mensagemResolvida, formatoLeia]);
 
-        return this.montador.CreateLoad(tipoLlvm, result, "valor_lido");
+        return result
     }
 
     async visitarExpressaoListaCompreensao(listaCompreensao: ListaCompreensao): Promise<any> {
@@ -578,9 +580,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected obterTipoLlvm(tipoDelegua: string): llvm.Type {
         switch (tipoDelegua) {
             case 'inteiro':
+            case 'função<inteiro>':
                 return this.montador.getInt32Ty();
             case 'numero':
             case 'número':
+            case 'função<numero>':
+            case 'função<número>':
                 return this.montador.getDoubleTy();
             case 'texto':
                 return llvm.Type.getInt8PtrTy(this.contexto);
@@ -985,13 +990,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     resolverTipoConstruto(construto: Construto): string {
         switch (construto.constructor.name) {
-            case 'Binario':
-            case 'Constante':
-            case 'Literal':
-            case 'Variavel':
-                return construto.tipo;
+            case 'Leia':
+                return 'texto';
             case 'Chamada':
                 return (construto as Chamada).entidadeChamada.tipo;
+            default:
+                return construto.tipo;
         }
     }
 
@@ -1222,18 +1226,28 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
         const entidadeChamadaResolvida = await expressao.entidadeChamada.aceitar(this);
         const variavelEscopoCorrespondente = this.pilhaVariaveisEscopo.obterValor((expressao.entidadeChamada as Variavel).simbolo.lexema);
-        const construtoCorrespondente = (variavelEscopoCorrespondente.construtoVariavel as FuncaoDeclaracao).funcao;
-
-        const tiposParametros = [];
-        for (const parametro of construtoCorrespondente.parametros) {
-            tiposParametros.push(parametro.tipoDado);
-        }
-
         const argumentos: llvm.Value[] = [];
-        for (const [indice, argumento] of expressao.argumentos.entries()) {
-            const argumentoAjustado = this.resolverArgumentoChamada(argumento, tiposParametros[indice]);
-            const argumentoResolvido = await argumentoAjustado.aceitar(this);
-            argumentos.push(argumentoResolvido);
+
+        if (variavelEscopoCorrespondente.construtoVariavel) {
+            const construtoCorrespondente = (variavelEscopoCorrespondente.construtoVariavel as FuncaoDeclaracao).funcao;
+
+            const tiposParametros = [];
+            for (const parametro of construtoCorrespondente.parametros) {
+                tiposParametros.push(parametro.tipoDado);
+            }   
+
+            
+            for (const [indice, argumento] of expressao.argumentos.entries()) {
+                const argumentoAjustado = this.resolverArgumentoChamada(argumento, tiposParametros[indice]);
+                const argumentoResolvido = await argumentoAjustado.aceitar(this);
+                argumentos.push(argumentoResolvido);
+            }
+        } else {
+            for (const argumento of expressao.argumentos) {
+                const argumentoAjustado = this.resolverArgumentoChamada(argumento, argumento.tipo || "texto")
+                const argumentoResolvido = await argumentoAjustado.aceitar(this);
+                argumentos.push(argumentoResolvido)
+            }
         }
 
         return this.montador.CreateCall(entidadeChamadaResolvida.variavelLlvm, argumentos);
@@ -1297,14 +1311,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
     }
 
-    protected buscarFormatoScanf(tipoDelegua: string): llvm.Constant {
+    protected buscarFormatoLeia(tipoDelegua: string): llvm.Constant {
         let formatoScanf = this.scanfFormatosCarregados.get(tipoDelegua);
 
         if (!formatoScanf) {
             const formatoString = this.scanfFormatos.get(tipoDelegua);
             formatoScanf = this.montador.CreateGlobalStringPtr(
                 formatoString,
-                `formato_scanf_${tipoDelegua}`,
+                `formato_leia_${tipoDelegua}`,
                 0,
                 this.modulo
             );
@@ -1326,7 +1340,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      *
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
-    protected criarFuncaoNativaEscreva(): void {
+    protected criarFuncoesNativa(): void {
+        // int escreva(const char *fmt, ...)
         const tipoRetornoPrinter = this.montador.getInt32Ty();
         const tipoFuncaoPrinter = llvm.FunctionType.get(
             tipoRetornoPrinter,
@@ -1336,16 +1351,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             true
         );
 
-        // Declara a função como módulo externo.
         this.funcaoEscreva = llvm.Function.Create(
             tipoFuncaoPrinter,
             llvm.Function.LinkageTypes.ExternalLinkage,
             'escreva',
             this.modulo
         );
-    }
 
-    protected criarFuncaoNativaLeia(): void {
         // void* leia(const char* texto, const char *fmt)
         const tipoRetornoLeia = this.montador.getInt8PtrTy();
         const tipoFuncaoLeia = llvm.FunctionType.get(
@@ -1363,8 +1375,42 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             'leia',
             this.modulo
         );
-    }
 
+        // int *inteiro(void *valor)
+
+        const tipoRetornoInteiro = this.montador.getInt32Ty();
+        const tipoFuncaoInteiro = llvm.FunctionType.get(
+            tipoRetornoInteiro,
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        )
+
+        this.funcaoInteiro = llvm.Function.Create(
+            tipoFuncaoInteiro,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'inteiro',
+            this.modulo
+        )
+
+        // double *numero(void *valor)
+        const tipoRetornoNumero = this.montador.getDoubleTy();
+        const tipoFuncaoNumero = llvm.FunctionType.get(
+            tipoRetornoNumero,
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        )
+
+        this.funcaoNumero = llvm.Function.Create(
+            tipoFuncaoNumero,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'numero',
+            this.modulo
+        )
+    }
 
     /**
      * Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas 
@@ -1403,7 +1449,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      */
     async compilar(codigo: string[]): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
-        const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
+        const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>()
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
 
         this.contexto = new llvm.LLVMContext();
@@ -1419,8 +1465,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Deve ser chamado de forma dinâmica assim que é usado algo que dependa dele.
         // Criação das funções nativas aqui.
-        this.criarFuncaoNativaEscreva();
-        this.criarFuncaoNativaLeia();
+        this.criarFuncoesNativa();
+
+        const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha()
+        topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero))
+        topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro))
 
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
