@@ -975,6 +975,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
         
+        // Isso aqui é necessario pois delegua entende numero literal sem . como numero
+        // Ex: var idade: inteiro = 18
+        // O Literal 18 deveria ter tipo inteiro
+        // Então precisamos converter para que a verificação de modulo do llvm
+        // não reclame.
+        const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
+        if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
+            valorOuReferenciaVariavel = this.montador.CreateFPToSI(
+                valorOuReferenciaVariavel,
+                this.montador.getInt32Ty(),
+                'double_para_int'
+            );
+        } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
+            valorOuReferenciaVariavel = this.montador.CreateSIToFP(
+                valorOuReferenciaVariavel,
+                this.montador.getDoubleTy(),
+                'int_para_double'
+            );
+        }
+
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
