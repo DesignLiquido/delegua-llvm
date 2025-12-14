@@ -35,9 +35,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     montador: llvm.IRBuilder;
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
-    funcaoPrintf: llvm.Function;
-    funcaoScanf: llvm.Function;
-    funcaoPuts: llvm.Function;
+    funcaoEscreva: llvm.Function;
+    funcaoLeia: llvm.Function;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d\n'],
@@ -247,7 +246,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const formatoPtr = this.montador.CreateGlobalStringPtr(formato, `formato_printf_${tipoPrimeiroArgumento}_sem_nl`, 0, this.modulo);
 
         argumentosResolvidos.unshift(formatoPtr);
-        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "escreva");
+        this.montador.CreateCall(this.funcaoEscreva, argumentosResolvidos);
         return Promise.resolve();
     }
 
@@ -405,23 +404,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoLeia(expressao: Leia): Promise<llvm.Value> {
-        if (expressao.argumentos && expressao.argumentos.length > 0) {
-            const mensagemPrompt = expressao.argumentos[0];
-            const mensagemResolvida = await mensagemPrompt.aceitar(this);
-            this.montador.CreateCall(this.funcaoPuts, [mensagemResolvida], "puts");
-        }
+        const mensagemPrompt = expressao.argumentos[0];
+        const mensagemResolvida = await mensagemPrompt.aceitar(this);
 
-        const tipoLeitura = "texto";
+        const tipoLeitura = expressao.tipo || "texto";
 
         const tipoLlvm = this.obterTipoLlvm(tipoLeitura);
 
-        const variavelTemporaria = this.montador.CreateAlloca(tipoLlvm, null, "temp_leia");
-
         const formatoScanf = this.buscarFormatoScanf(tipoLeitura);
 
-        this.montador.CreateCall(this.funcaoScanf, [formatoScanf, variavelTemporaria], "scanf");
+        const result = this.montador.CreateCall(this.funcaoLeia, [mensagemResolvida, formatoScanf]);
 
-        return this.montador.CreateLoad(tipoLlvm, variavelTemporaria, "valor_lido");
+        return this.montador.CreateLoad(tipoLlvm, result, "valor_lido");
     }
 
     async visitarExpressaoListaCompreensao(listaCompreensao: ListaCompreensao): Promise<any> {
@@ -853,7 +847,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const formatoPrintf = this.buscarFormatoPrintf(tipoPrimeiroArgumento);
         argumentosResolvidos.unshift(formatoPrintf);
 
-        this.montador.CreateCall(this.funcaoPrintf, argumentosResolvidos, "escreva");
+        this.montador.CreateCall(this.funcaoEscreva, argumentosResolvidos);
         return Promise.resolve();
     }
 
@@ -967,22 +961,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
-
-        const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
-        if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
-            valorOuReferenciaVariavel = this.montador.CreateFPToSI(
-                valorOuReferenciaVariavel,
-                this.montador.getInt32Ty(),
-                'double_para_int'
-            );
-        } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
-            valorOuReferenciaVariavel = this.montador.CreateSIToFP(
-                valorOuReferenciaVariavel,
-                this.montador.getDoubleTy(),
-                'int_para_double'
-            );
-        }
-
+        
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
@@ -1371,7 +1350,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
 
         // Declara a função como módulo externo.
-        this.funcaoPrintf = llvm.Function.Create(
+        this.funcaoEscreva = llvm.Function.Create(
             tipoFuncaoPrinter,
             llvm.Function.LinkageTypes.ExternalLinkage,
             'escreva',
@@ -1380,42 +1359,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected criarFuncaoNativaLeia(): void {
-        const tipoRetornoScanf = this.montador.getInt32Ty();
-        const tipoFuncaoScanf = llvm.FunctionType.get(
-            tipoRetornoScanf,
+        // void* leia(const char* texto, const char *fmt)
+        const tipoRetornoLeia = this.montador.getInt8PtrTy();
+        const tipoFuncaoLeia = llvm.FunctionType.get(
+            tipoRetornoLeia,
             [
-                this.montador.getInt8PtrTy(0)
-            ],
-            true
-        );
-
-        // Declara a função scanf como módulo externo.
-        this.funcaoScanf = llvm.Function.Create(
-            tipoFuncaoScanf,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'scanf',
-            this.modulo
-        );
-    }
-
-    protected criarFuncaoNativaPuts(): void {
-        const tipoRetornoPuts = this.montador.getInt32Ty();
-        const tipoFuncaoPuts = llvm.FunctionType.get(
-            tipoRetornoPuts,
-            [
-                this.montador.getInt8PtrTy(0)
+                this.montador.getInt8PtrTy(),
+                this.montador.getInt8PtrTy()
             ],
             false
         );
 
-        // Declara a função puts como módulo externo.
-        this.funcaoPuts = llvm.Function.Create(
-            tipoFuncaoPuts,
+        this.funcaoLeia = llvm.Function.Create(
+            tipoFuncaoLeia,
             llvm.Function.LinkageTypes.ExternalLinkage,
-            'puts',
+            'leia',
             this.modulo
         );
     }
+
 
     /**
      * Delégua por definição não possui um ponto de entrada, ou seja, uma função `main()`, mas 
@@ -1472,7 +1434,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Criação das funções nativas aqui.
         this.criarFuncaoNativaEscreva();
         this.criarFuncaoNativaLeia();
-        this.criarFuncaoNativaPuts();
 
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
@@ -1484,12 +1445,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => !(d instanceof FuncaoDeclaracao));
         await this.criarPontoEntrada(outrasDeclaracoes);
-
+        console.log(this.modulo.print());
         if (llvm.verifyModule(this.modulo)) {
             console.error('Falha ao verificar módulo.');
             return;
         }
-        console.log(this.modulo.print());
+        
         return this.modulo.print();
     }
 }

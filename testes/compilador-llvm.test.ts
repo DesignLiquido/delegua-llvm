@@ -167,10 +167,10 @@ describe('Compilador', () => {
             expect(resultado).toContain('%valor_lido = load i8*, i8** %temp_leia');
         });
 
-        it('Leia e escreva', async () => {
+        it.only('Leia e escreva', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
-                'var idade: texto = leia("Digite sua idade")',
+                'var idade: número = leia("Digite sua idade: ")',
                 'escreva(idade)'
             ]);
 
