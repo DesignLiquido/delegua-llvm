@@ -11,7 +11,14 @@ describe('Compilador', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123)']);
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%escreva = call i32 (i8*, ...) @escreva(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @\"formato_printf_n\\C3\\BAmero\", i32 0, i32 0), double 1.230000e+02)');
+        expect(resultado).toContain('call i32 (i8*, ...) @escreva(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @fmt, i32 0, i32 0), double 1.230000e+02)');
+    });
+
+    it('Escreva', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar(['escreva(123, "teste")']);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('@fmt = private unnamed_addr constant [8 x i8] c"%g %s')
     });
 
     describe('Funções', () => {
@@ -167,7 +174,7 @@ describe('Compilador', () => {
             expect(resultado).toContain('%valor_lido = load i8*, i8** %temp_leia');
         });
 
-        it.only('Leia e escreva', async () => {
+        it('Leia e escreva', async () => {
             const compilador = new CompiladorLLVM();
             const resultado = await compilador.compilar([
                 'var idade: número = leia("Digite sua idade: ")',
