@@ -666,5 +666,31 @@ describe('Compilador', () => {
             expect(resultado).toContain('call i32 (i8*, ...) @escreva');
         });
     });
+
+    describe('Exceções', () => {
+        it('Trivial', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'tente {  ',
+                '  falhar "falhou"',
+                '  escreva("sucesso")',
+                '} pegue {',
+                '  escreva("Ocorreu uma exceção.")',
+                '} finalmente {',
+                '  escreva("Ocorrendo exceção ou não, eu sempre executo")',
+                '}'
+            ])
+
+            expect(resultado).toBeTruthy()
+            expect(resultado).toContain('tente_corpo');
+            expect(resultado).toContain('falhar_normal');
+            expect(resultado).toContain('tente_apos');
+            expect(resultado).toContain('finalmente_corpo');
+            expect(resultado).toContain('pegue_corpo');
+            expect(resultado).toContain('pegue_landing');
+            expect(resultado).toContain('pegue_corpo');
+            expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        })
+    })
 });
 

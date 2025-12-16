@@ -39,6 +39,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoLeia: llvm.Function;
     funcaoInteiro: llvm.Function;
     funcaoNumero: llvm.Function;
+    funcaoFalhar: llvm.Function;
+    funcaoPersonalidade: llvm.Function;
+    funcaoBeginCatch: llvm.Function;
+    funcaoEndCatch: llvm.Function;
+    pontoPousoAtual: llvm.BasicBlock | null = null;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -70,7 +75,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         LOAD_CONDICAO_SE: 'load_condicao_se',
         LOAD_CONDICAO_PARA: 'load_condicao_para',
         LOAD_OPERANDO: 'load_operando',
-        CASO_OU: 'caso_ou'
+        CASO_OU: 'caso_ou',
+        TENTE_CORPO: 'tente_corpo',
+        TENTE_APOS: 'tente_apos',
+        PEGUE_LANDING: 'pegue_landing',
+        PEGUE_CORPO: 'pegue_corpo',
+        FINALMENTE_CORPO: 'finalmente_corpo',
+        TENTE_APOS_FINAL: 'tente_apos_final'
     };
 
     constructor() {
@@ -278,8 +289,174 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    visitarDeclaracaoTente(declaracao: Tente): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarDeclaracaoTente(declaracao: Tente): Promise<any> {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+        const blocoAtual = this.montador.GetInsertBlock();
+        
+        const tipoPontoPouso = llvm.StructType.get(
+            this.contexto,
+            [
+                this.montador.getInt8PtrTy(),
+                this.montador.getInt32Ty()
+            ]
+        );
+        
+        const blocoFinalmenteCorpo = declaracao.caminhoFinalmente
+            ? llvm.BasicBlock.Create(
+                this.contexto,
+                this.NOMES_BLOCOS.FINALMENTE_CORPO,
+                funcaoAtual
+            )
+            : null;
+        const blocoPegueCorpo = declaracao.caminhoPegue
+            ? llvm.BasicBlock.Create(
+                this.contexto,
+                this.NOMES_BLOCOS.PEGUE_CORPO,
+                funcaoAtual
+            )
+            : null;
+        
+        const alocPontoPouso = blocoFinalmenteCorpo && !blocoPegueCorpo
+            ? this.montador.CreateAlloca(tipoPontoPouso, null, 'ponto_pouso_temp')
+            : null;
+        
+        // Criar todos os blocos necessários
+        const blocoTenteCorpo = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.TENTE_CORPO,
+            funcaoAtual
+        );
+        const blocoTenteApos = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.TENTE_APOS,
+            funcaoAtual
+        );
+        const blocoPegueLanding = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.PEGUE_LANDING,
+            funcaoAtual
+        );
+        const blocoTenteAposFinal = llvm.BasicBlock.Create(
+            this.contexto,
+            this.NOMES_BLOCOS.TENTE_APOS_FINAL,
+            funcaoAtual
+        );
+        
+        const blocoRelancarExcecao = blocoFinalmenteCorpo && !blocoPegueCorpo
+            ? llvm.BasicBlock.Create(
+                this.contexto,
+                'relancar_excecao',
+                funcaoAtual
+            )
+            : null;
+
+        const pontoPousoAnterior = this.pontoPousoAtual;
+        this.pontoPousoAtual = blocoPegueLanding;
+
+        this.montador.CreateBr(blocoTenteCorpo);
+        this.montador.SetInsertPoint(blocoTenteCorpo);
+        if ((declaracao.caminhoTente as any).aceitar) {
+            await (declaracao.caminhoTente as any).aceitar(this);
+        } else if ((declaracao.caminhoTente as any).declaracoes) {
+            await this.aceitarListaDeclaracoes((declaracao.caminhoTente as any).declaracoes);
+        } else {
+            await this.aceitarListaDeclaracoes(declaracao.caminhoTente as any);
+        }
+        this.montador.CreateBr(blocoTenteApos);
+
+        this.montador.SetInsertPoint(blocoPegueLanding);
+        
+        funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);
+
+        const pontoPouso = this.montador.CreateLandingPad(
+            tipoPontoPouso,
+            1,
+            'landingpad'
+        );
+        
+        const nullPtr = llvm.Constant.getNullValue(this.montador.getInt8PtrTy());
+        pontoPouso.addClause(nullPtr);
+        
+        if (alocPontoPouso) {
+            this.montador.CreateStore(pontoPouso, alocPontoPouso);
+        }
+
+        if (blocoPegueCorpo && declaracao.caminhoPegue) {
+            this.montador.CreateBr(blocoPegueCorpo);
+            this.montador.SetInsertPoint(blocoPegueCorpo);
+            
+            if ((declaracao as any).parametroPegue) {
+                const ponteiroCabeçalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
+                const ponteiroExcecao = this.montador.CreateCall(this.funcaoBeginCatch, [ponteiroCabeçalho], 'exception_data');
+                
+                const tipoTexto = this.obterTipoLlvm('texto');
+                const alocErro = this.montador.CreateAlloca(tipoTexto, null, (declaracao as any).parametroPegue.lexema);
+                this.montador.CreateStore(ponteiroExcecao, alocErro);
+                
+                const topo = this.pilhaVariaveisEscopo.topoDaPilha();
+                const variavelEscopo = new VariavelEscopo(alocErro);
+                topo.set((declaracao as any).parametroPegue.lexema, variavelEscopo);
+            } else {
+                const ponteiroCabeçalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
+                this.montador.CreateCall(this.funcaoBeginCatch, [ponteiroCabeçalho]);
+            }
+            
+            if ((declaracao.caminhoPegue as any).aceitar) {
+                await (declaracao.caminhoPegue as any).aceitar(this);
+            } else if ((declaracao.caminhoPegue as any).declaracoes) {
+                await this.aceitarListaDeclaracoes((declaracao.caminhoPegue as any).declaracoes);
+            } else {
+                await this.aceitarListaDeclaracoes(declaracao.caminhoPegue as any);
+            }
+            
+            this.montador.CreateCall(this.funcaoEndCatch, []);
+            
+            if (blocoFinalmenteCorpo) {
+                this.montador.CreateBr(blocoFinalmenteCorpo);
+            } else {
+                this.montador.CreateBr(blocoTenteAposFinal);
+            }
+        } else {
+            if (blocoFinalmenteCorpo && declaracao.caminhoFinalmente) {
+                this.montador.CreateBr(blocoFinalmenteCorpo);
+            } else {
+                this.montador.CreateResume(pontoPouso);
+            }
+        }
+        
+        if (blocoRelancarExcecao) {
+            this.montador.SetInsertPoint(blocoRelancarExcecao);
+            const pontoPousoCarregado = this.montador.CreateLoad(tipoPontoPouso, alocPontoPouso, 'load_ponto_pouso');
+            this.montador.CreateResume(pontoPousoCarregado);
+        }
+
+        if (blocoFinalmenteCorpo && declaracao.caminhoFinalmente) {
+            this.montador.SetInsertPoint(blocoTenteApos);
+            this.montador.CreateBr(blocoFinalmenteCorpo);
+            
+            this.montador.SetInsertPoint(blocoFinalmenteCorpo);
+            if ((declaracao.caminhoFinalmente as any).aceitar) {
+                await (declaracao.caminhoFinalmente as any).aceitar(this);
+            } else if ((declaracao.caminhoFinalmente as any).declaracoes) {
+                await this.aceitarListaDeclaracoes((declaracao.caminhoFinalmente as any).declaracoes);
+            } else {
+                await this.aceitarListaDeclaracoes(declaracao.caminhoFinalmente as any);
+            }
+            
+            if (blocoPegueCorpo && declaracao.caminhoPegue) {
+                this.montador.CreateBr(blocoTenteAposFinal);
+            } else if (blocoRelancarExcecao) {
+                this.montador.CreateBr(blocoRelancarExcecao);
+            }
+        } else {
+            this.montador.SetInsertPoint(blocoTenteApos);
+            this.montador.CreateBr(blocoTenteAposFinal);
+        }
+
+        this.pontoPousoAtual = pontoPousoAnterior;
+
+        this.montador.SetInsertPoint(blocoTenteAposFinal);
+        return Promise.resolve();
     }
 
     visitarDeclaracaoVarMultiplo(declaracao: VarMultiplo): Promise<any> | void {
@@ -369,8 +546,37 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve(new RegExp(expressao.valor));
     }
 
-    visitarExpressaoFalhar(expressao: Falhar): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoFalhar(expressao: Falhar): Promise<any> {
+        const mensagemExpr = (expressao as any).explicacao;
+        if (!mensagemExpr) {
+            throw new Error('Falhar precisa de uma mensagem');
+        }
+        const mensagemResolvida = await mensagemExpr.aceitar(this);
+        let mensagem: llvm.Value;
+        
+        if (mensagemResolvida instanceof VariavelEscopo) {
+            const tipoMensagem = this.obterTipoLlvm('texto');
+            mensagem = this.montador.CreateLoad(tipoMensagem, mensagemResolvida.variavelLlvm, 'load_falhar_msg');
+        } else {
+            mensagem = mensagemResolvida as llvm.Value;
+        }
+
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+        
+        if (this.pontoPousoAtual) {
+            const blocoSucesso = llvm.BasicBlock.Create(this.contexto, 'falhar_normal', funcaoAtual);
+            this.montador.CreateInvoke(
+                this.funcaoFalhar,
+                blocoSucesso,
+                this.pontoPousoAtual,
+                [mensagem]
+            );
+            this.montador.SetInsertPoint(blocoSucesso);
+            return Promise.resolve();
+        } else {
+            this.montador.CreateCall(this.funcaoFalhar, [mensagem]);
+            return Promise.resolve();
+        }
     }
 
     async visitarExpressaoFazer(expressao: FazerComoConstruto): Promise<any> {
@@ -1430,6 +1636,70 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             'numero',
             this.modulo
         )
+
+        // void falhar(const char *msg)
+        const tipoRetornoFalhar = llvm.Type.getVoidTy(this.contexto);
+        const tipoFuncaoFalhar = llvm.FunctionType.get(
+            tipoRetornoFalhar,
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoFalhar = llvm.Function.Create(
+            tipoFuncaoFalhar,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'falhar',
+            this.modulo
+        );
+
+        const tipoPersonalidade = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                llvm.Type.getInt64Ty(this.contexto),
+                this.montador.getInt8PtrTy(),
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoPersonalidade = llvm.Function.Create(
+            tipoPersonalidade,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__gxx_personality_v0',
+            this.modulo
+        );
+
+        const tipoBeginCatch = llvm.FunctionType.get(
+            this.montador.getInt8PtrTy(),
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoBeginCatch = llvm.Function.Create(
+            tipoBeginCatch,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__cxa_begin_catch',
+            this.modulo
+        );
+
+        const tipoEndCatch = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [],
+            false
+        );
+
+        this.funcaoEndCatch = llvm.Function.Create(
+            tipoEndCatch,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__cxa_end_catch',
+            this.modulo
+        );
     }
 
     /**
