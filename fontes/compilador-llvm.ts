@@ -198,7 +198,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateStore(valor, aloc);
 
         const topo = this.pilhaVariaveisEscopo.topoDaPilha();
-        const variavelEscopo = new VariavelEscopo(aloc, declaracao);
+        const variavelEscopo = new VariavelEscopo(aloc, declaracao, tipoVariavel, true);
         topo.set(declaracao.simbolo.lexema, variavelEscopo);
         return Promise.resolve();
     }
@@ -470,6 +470,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const alvoResolvido = await expressao.alvo.aceitar(this);
         if (alvoResolvido instanceof VariavelEscopo) {
+            if (alvoResolvido.ehConstante) {
+                const nomeConstante = (expressao.alvo as Variavel).simbolo?.lexema || 'desconhecida';
+                throw new Error(`Não é possível reatribuir a constante '${nomeConstante}'.`);
+            }
             this.armazenarEmVariavel(alvoResolvido, valorResolvido as llvm.Value, expressao.alvo.tipo, tipoValor);
             return Promise.resolve(valorResolvido);
         }
