@@ -728,9 +728,6 @@ describe('Compilador', () => {
             expect(resultado).toContain('pegue_landing');
             expect(resultado).toContain('call i8* @__cxa_begin_catch');
             expect(resultado).toContain('call void @__cxa_end_catch');
-            // Nota: O parser pode não estar passando o parâmetro do catch ainda
-            // Se o parâmetro estiver sendo processado, deve haver uma alocação
-            // Caso contrário, o código ainda deve funcionar sem o parâmetro
             expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
         })
 
@@ -754,9 +751,6 @@ describe('Compilador', () => {
             expect(resultado).toContain('tente_apos');
             expect(resultado).toContain('call i8* @__cxa_begin_catch');
             expect(resultado).toContain('call void @__cxa_end_catch');
-            // Nota: O parser pode não estar passando o parâmetro do catch ainda
-            // Se o parâmetro estiver sendo processado, deve haver uma alocação
-            // Caso contrário, o código ainda deve funcionar sem o parâmetro
             expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
         })
 
@@ -775,10 +769,9 @@ describe('Compilador', () => {
             expect(resultado).toContain('finalmente_corpo');
             expect(resultado).toContain('tente_apos');
             expect(resultado).not.toContain('pegue_corpo');
-            // Quando há finally sem catch, ainda é necessário pegue_landing para capturar exceções
-            // e executar o finally antes de relançar
             expect(resultado).toContain('pegue_landing');
             expect(resultado).toContain('relancar_excecao');
+
         })
 
         it('Try com sucesso (sem exceção)', async () => {

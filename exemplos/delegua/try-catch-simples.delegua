@@ -1,0 +1,7 @@
+tente {
+  falhar "Deu erro!"
+  escreva("Isso não vai aparecer")
+} pegue {
+  escreva("Exceção capturada")
+}
+

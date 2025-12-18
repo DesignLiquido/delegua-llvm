@@ -1,20 +1,4 @@
 #include "./padrao.h"
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stddef.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void* __cxa_allocate_exception(size_t thrown_size);
-void  __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*));
-
-#ifdef __cplusplus
-}
-#endif
 
 // Utilidades
 
@@ -112,6 +96,5 @@ void falhar(const char *msg) {
   size_t tamanho = strlen(msg) + 1;
   void* exc = __cxa_allocate_exception(tamanho);
   memcpy(exc, msg, tamanho);
-  __cxa_throw(exc, NULL, NULL);
-  abort();
+  __cxa_throw(exc, &_ZTIPc, NULL);
 }

@@ -9,7 +9,8 @@
     "delegua"
   ],
   "scripts": {
-    "testes-unitarios": "jest --coverage"
+    "testes-unitarios": "jest --coverage",
+    "executar": "ts-node main.ts"
   },
   "dependencies": {
     "@designliquido/delegua": "^0.57.0",

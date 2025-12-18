@@ -1,0 +1,4 @@
+escreva("Antes do erro")
+falhar "mensagem de erro"
+escreva("Depois do erro - não vai aparecer")
+
