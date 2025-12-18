@@ -1,0 +1,8 @@
+tente {
+  falhar "Erro ocorrido"
+} pegue (erro) {
+  escreva(erro)
+} finalmente {
+  escreva("Sempre executa")
+}
+

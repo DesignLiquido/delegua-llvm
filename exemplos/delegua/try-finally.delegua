@@ -1,0 +1,6 @@
+tente {
+  escreva("Tentando...")
+} finalmente {
+  escreva("Sempre executa")
+}
+

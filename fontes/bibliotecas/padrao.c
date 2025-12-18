@@ -1,8 +1,4 @@
 #include "./padrao.h"
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
 
 // Utilidades
 
@@ -94,4 +90,11 @@ double numero(void *valor) {
   char *s = (char*) valor;
 
   return strtod(s, NULL);
+}
+
+void falhar(const char *msg) {
+  size_t tamanho = strlen(msg) + 1;
+  void* exc = __cxa_allocate_exception(tamanho);
+  memcpy(exc, msg, tamanho);
+  __cxa_throw(exc, &_ZTIPc, NULL);
 }

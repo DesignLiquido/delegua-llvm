@@ -39,6 +39,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoLeia: llvm.Function;
     funcaoInteiro: llvm.Function;
     funcaoNumero: llvm.Function;
+    funcaoFalhar: llvm.Function;
+    funcaoPersonalidade: llvm.Function;
+    funcaoBeginCatch: llvm.Function;
+    funcaoEndCatch: llvm.Function;
+    pontoPousoAtual: llvm.BasicBlock | null = null;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -70,7 +75,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         LOAD_CONDICAO_SE: 'load_condicao_se',
         LOAD_CONDICAO_PARA: 'load_condicao_para',
         LOAD_OPERANDO: 'load_operando',
-        CASO_OU: 'caso_ou'
+        CASO_OU: 'caso_ou',
+        TENTE_CORPO: 'tente_corpo',
+        TENTE_APOS: 'tente_apos',
+        PEGUE_LANDING: 'pegue_landing',
+        PEGUE_CORPO: 'pegue_corpo',
+        FINALMENTE_CORPO: 'finalmente_corpo',
+        TENTE_APOS_FINAL: 'tente_apos_final'
     };
 
     constructor() {
@@ -278,8 +289,174 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    visitarDeclaracaoTente(declaracao: Tente): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarDeclaracaoTente(declaracao: Tente): Promise<any> {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+        
+        const tipoPontoPouso = llvm.StructType.get(
+            this.contexto,
+            [
+                this.montador.getInt8PtrTy(),
+                this.montador.getInt32Ty()
+            ]
+        );
+
+        const temFinally = declaracao.caminhoFinalmente && 
+            (Array.isArray(declaracao.caminhoFinalmente) ? declaracao.caminhoFinalmente.length > 0 : true);
+        const temCatch = declaracao.caminhoPegue && 
+            (Array.isArray(declaracao.caminhoPegue) ? declaracao.caminhoPegue.length > 0 : true);
+        
+        const blocoTenteCorpo = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_CORPO, funcaoAtual);
+        const blocoTenteApos = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_APOS, funcaoAtual);
+        const blocoPegueLanding = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_LANDING, funcaoAtual);
+        const blocoTenteAposFinal = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_APOS_FINAL, funcaoAtual);
+
+        const blocoPegueCorpo = temCatch 
+            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_CORPO, funcaoAtual) 
+            : null;
+        const blocoFinalmenteCorpo = temFinally 
+            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.FINALMENTE_CORPO, funcaoAtual) 
+            : null;
+        const blocoFinalmenteSucesso = temFinally && !temCatch
+            ? llvm.BasicBlock.Create(this.contexto, 'finalmente_sucesso', funcaoAtual)
+            : null;
+        const blocoRelancarExcecao = temFinally && !temCatch
+            ? llvm.BasicBlock.Create(this.contexto, 'relancar_excecao', funcaoAtual)
+            : null;
+
+        let alocPontoPouso: llvm.AllocaInst | null = null;
+        if (blocoRelancarExcecao) {
+            alocPontoPouso = this.montador.CreateAlloca(tipoPontoPouso, null, 'ponto_pouso_temp');
+        }
+
+        const pontoPousoAnterior = this.pontoPousoAtual;
+        this.pontoPousoAtual = blocoPegueLanding;
+
+        this.montador.CreateBr(blocoTenteCorpo);
+        this.montador.SetInsertPoint(blocoTenteCorpo);
+        
+        await this.processarCaminhoTente(declaracao.caminhoTente);
+        this.montador.CreateBr(blocoTenteApos);
+
+        this.montador.SetInsertPoint(blocoPegueLanding);
+        funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);
+
+        const pontoPouso = this.montador.CreateLandingPad(tipoPontoPouso, 1, 'landingpad');
+        const nullPtr = llvm.Constant.getNullValue(this.montador.getInt8PtrTy());
+        pontoPouso.addClause(nullPtr);
+
+        if (blocoPegueCorpo && temCatch) {
+            this.montador.CreateBr(blocoPegueCorpo);
+            this.montador.SetInsertPoint(blocoPegueCorpo);
+
+            const ponteiroCabecalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
+            const ponteiroExcecao = this.montador.CreateCall(this.funcaoBeginCatch, [ponteiroCabecalho], 'exception_data');
+
+            const parametroEncontrado = this.extrairParametroPegue(declaracao.caminhoPegue);
+            if (parametroEncontrado) {
+                const nomeParametro = parametroEncontrado.lexema || parametroEncontrado.nome || 'erro';
+                const tipoTexto = this.obterTipoLlvm('texto');
+                const alocErro = this.montador.CreateAlloca(tipoTexto, null, nomeParametro);
+                this.montador.CreateStore(ponteiroExcecao, alocErro);
+                
+                const topo = this.pilhaVariaveisEscopo.topoDaPilha();
+                topo.set(nomeParametro, new VariavelEscopo(alocErro, null, 'texto'));
+            }
+
+            await this.processarCaminhoPegue(declaracao.caminhoPegue);
+            this.montador.CreateCall(this.funcaoEndCatch, []);
+
+            if (blocoFinalmenteCorpo) {
+                this.montador.CreateBr(blocoFinalmenteCorpo);
+            } else {
+                this.montador.CreateBr(blocoTenteAposFinal);
+            }
+        } else if (blocoFinalmenteCorpo && !temCatch) {
+            if (alocPontoPouso) {
+                this.montador.CreateStore(pontoPouso, alocPontoPouso);
+            }
+            this.montador.CreateBr(blocoFinalmenteCorpo);
+        } else {
+            this.montador.CreateResume(pontoPouso);
+        }
+
+        this.montador.SetInsertPoint(blocoTenteApos);
+        if (blocoFinalmenteSucesso) {
+            this.montador.CreateBr(blocoFinalmenteSucesso);
+        } else if (blocoFinalmenteCorpo) {
+            this.montador.CreateBr(blocoFinalmenteCorpo);
+        } else {
+            this.montador.CreateBr(blocoTenteAposFinal);
+        }
+
+        if (blocoFinalmenteSucesso) {
+            this.montador.SetInsertPoint(blocoFinalmenteSucesso);
+            await this.processarCaminhoFinalmente(declaracao.caminhoFinalmente);
+            this.montador.CreateBr(blocoTenteAposFinal);
+        }
+
+        if (blocoFinalmenteCorpo) {
+            this.montador.SetInsertPoint(blocoFinalmenteCorpo);
+            await this.processarCaminhoFinalmente(declaracao.caminhoFinalmente);
+            
+            if (temCatch) {
+                this.montador.CreateBr(blocoTenteAposFinal);
+            } else if (blocoRelancarExcecao) {
+                this.montador.CreateBr(blocoRelancarExcecao);
+            }
+        }
+
+        if (blocoRelancarExcecao && alocPontoPouso) {
+            this.montador.SetInsertPoint(blocoRelancarExcecao);
+            const pontoPousoCarregado = this.montador.CreateLoad(tipoPontoPouso, alocPontoPouso, 'load_ponto_pouso');
+            this.montador.CreateResume(pontoPousoCarregado);
+        }
+
+        this.pontoPousoAtual = pontoPousoAnterior;
+        this.montador.SetInsertPoint(blocoTenteAposFinal);
+        return Promise.resolve();
+    }
+
+    private extrairParametroPegue(caminhoPegue: any): any {
+        if (!caminhoPegue) return null;
+        
+        if (caminhoPegue.parametros?.length > 0) {
+            return caminhoPegue.parametros[0].nome;
+        }
+        
+        return null;
+    }
+
+    private async processarCaminhoTente(caminhoTente: any): Promise<void> {
+        if (!caminhoTente) return;
+        if (caminhoTente.aceitar) {
+            await caminhoTente.aceitar(this);
+        } else if (caminhoTente.declaracoes) {
+            await this.aceitarListaDeclaracoes(caminhoTente.declaracoes);
+        } else if (Array.isArray(caminhoTente)) {
+            await this.aceitarListaDeclaracoes(caminhoTente);
+        }
+    }
+
+    private async processarCaminhoPegue(caminhoPegue: any): Promise<void> {
+        if (!caminhoPegue) return;
+        if (caminhoPegue.corpo) {
+            await this.aceitarListaDeclaracoes(caminhoPegue.corpo);
+        } else if (caminhoPegue.declaracoes) {
+            await this.aceitarListaDeclaracoes(caminhoPegue.declaracoes);
+        } else if (Array.isArray(caminhoPegue)) {
+            await this.aceitarListaDeclaracoes(caminhoPegue);
+        }
+    }
+
+    private async processarCaminhoFinalmente(caminhoFinalmente: any): Promise<void> {
+        if (!caminhoFinalmente) return;
+        if (caminhoFinalmente.aceitar) {
+            await caminhoFinalmente.aceitar(this);
+        } else if (caminhoFinalmente.declaracoes) {
+            await this.aceitarListaDeclaracoes(caminhoFinalmente.declaracoes);
+        } else if (Array.isArray(caminhoFinalmente)) {
+            await this.aceitarListaDeclaracoes(caminhoFinalmente);
+        }
     }
 
     visitarDeclaracaoVarMultiplo(declaracao: VarMultiplo): Promise<any> | void {
@@ -369,8 +546,37 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve(new RegExp(expressao.valor));
     }
 
-    visitarExpressaoFalhar(expressao: Falhar): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoFalhar(expressao: Falhar): Promise<any> {
+        const mensagemExpr = (expressao as any).explicacao;
+        if (!mensagemExpr) {
+            throw new Error('Falhar precisa de uma mensagem');
+        }
+        const mensagemResolvida = await mensagemExpr.aceitar(this);
+        let mensagem: llvm.Value;
+        
+        if (mensagemResolvida instanceof VariavelEscopo) {
+            const tipoMensagem = this.obterTipoLlvm('texto');
+            mensagem = this.montador.CreateLoad(tipoMensagem, mensagemResolvida.variavelLlvm, 'load_falhar_msg');
+        } else {
+            mensagem = mensagemResolvida as llvm.Value;
+        }
+
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+        
+        if (this.pontoPousoAtual) {
+            const blocoSucesso = llvm.BasicBlock.Create(this.contexto, 'falhar_normal', funcaoAtual);
+            this.montador.CreateInvoke(
+                this.funcaoFalhar,
+                blocoSucesso,
+                this.pontoPousoAtual,
+                [mensagem]
+            );
+            this.montador.SetInsertPoint(blocoSucesso);
+            return Promise.resolve();
+        } else {
+            this.montador.CreateCall(this.funcaoFalhar, [mensagem]);
+            return Promise.resolve();
+        }
     }
 
     async visitarExpressaoFazer(expressao: FazerComoConstruto): Promise<any> {
@@ -835,18 +1041,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         for (const argumento of declaracao.argumentos) {
             const argumentoResolvido = await argumento.aceitar(this);
 
-            formatosTexto.push(this.printfFormatos.get(argumento.tipo))
-
-            // Se for VariavelEscopo, precisa carregar o valor
             if (argumentoResolvido instanceof VariavelEscopo) {
-                const tipoArgumento = this.obterTipoLlvm(argumento.tipo);
+                const tipoArgumento = argumentoResolvido.tipo || argumento.tipo;
+                formatosTexto.push(this.printfFormatos.get(tipoArgumento));
+                const tipoLlvm = this.obterTipoLlvm(tipoArgumento);
                 const valorCarregado = this.montador.CreateLoad(
-                    tipoArgumento,
+                    tipoLlvm,
                     argumentoResolvido.variavelLlvm,
                     "load_var"
                 );
                 argumentosResolvidos.push(valorCarregado);
             } else {
+                formatosTexto.push(this.printfFormatos.get(argumento.tipo));
                 argumentosResolvidos.push(argumentoResolvido);
             }
         }
@@ -1430,6 +1636,70 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             'numero',
             this.modulo
         )
+
+        // void falhar(const char *msg)
+        const tipoRetornoFalhar = llvm.Type.getVoidTy(this.contexto);
+        const tipoFuncaoFalhar = llvm.FunctionType.get(
+            tipoRetornoFalhar,
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoFalhar = llvm.Function.Create(
+            tipoFuncaoFalhar,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'falhar',
+            this.modulo
+        );
+
+        const tipoPersonalidade = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                llvm.Type.getInt64Ty(this.contexto),
+                this.montador.getInt8PtrTy(),
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoPersonalidade = llvm.Function.Create(
+            tipoPersonalidade,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__gxx_personality_v0',
+            this.modulo
+        );
+
+        const tipoBeginCatch = llvm.FunctionType.get(
+            this.montador.getInt8PtrTy(),
+            [
+                this.montador.getInt8PtrTy()
+            ],
+            false
+        );
+
+        this.funcaoBeginCatch = llvm.Function.Create(
+            tipoBeginCatch,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__cxa_begin_catch',
+            this.modulo
+        );
+
+        const tipoEndCatch = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [],
+            false
+        );
+
+        this.funcaoEndCatch = llvm.Function.Create(
+            tipoEndCatch,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            '__cxa_end_catch',
+            this.modulo
+        );
     }
 
     /**
@@ -1446,6 +1716,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             'main',
             this.modulo
         );
+
+        funcaoInicio.setPersonalityFn(this.funcaoPersonalidade);
 
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
@@ -1501,7 +1773,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => !(d instanceof FuncaoDeclaracao));
         await this.criarPontoEntrada(outrasDeclaracoes);
-        console.log(this.modulo.print());
+        // console.log(this.modulo.print());
         if (llvm.verifyModule(this.modulo)) {
             console.error('Falha ao verificar módulo.');
             return;
