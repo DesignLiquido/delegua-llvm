@@ -178,6 +178,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoComentario(declaracao: Comentario): Promise<any> {
+        // Comentários não são tratados no LLVM.
         return Promise.resolve();
     }
 
