@@ -320,7 +320,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ? this.montador.CreateAlloca(tipoPontoPouso, null, 'ponto_pouso_temp')
             : null;
         
-        // Criar todos os blocos necessários
         const blocoTenteCorpo = llvm.BasicBlock.Create(
             this.contexto,
             this.NOMES_BLOCOS.TENTE_CORPO,
@@ -384,18 +383,44 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (blocoPegueCorpo && declaracao.caminhoPegue) {
             this.montador.CreateBr(blocoPegueCorpo);
             this.montador.SetInsertPoint(blocoPegueCorpo);
+
+            const parametroPegue = (declaracao as any).parametroPegue || 
+                                   (declaracao as any).simboloPegue ||
+                                   (declaracao.caminhoPegue as any)?.parametro ||
+                                   (declaracao.caminhoPegue as any)?.simbolo ||
+                                   (declaracao.caminhoPegue as any)?.identificador ||
+                                   ((declaracao.caminhoPegue as any)?.declaracoes && 
+                                    (declaracao.caminhoPegue as any).declaracoes.length > 0 &&
+                                    (declaracao.caminhoPegue as any).declaracoes[0]?.simbolo);
             
-            if ((declaracao as any).parametroPegue) {
+            let parametroEncontrado = parametroPegue;
+            if (!parametroEncontrado && (declaracao.caminhoPegue as any)?.constructor?.name === 'Bloco') {
+                const bloco = declaracao.caminhoPegue as any;
+                parametroEncontrado = bloco.parametro || bloco.simbolo || bloco.identificador;
+            }
+            
+            if (!parametroEncontrado && (declaracao as any).caminhoPegue) {
+                const caminhoPegue = declaracao.caminhoPegue as any;
+                parametroEncontrado = caminhoPegue.parametro || 
+                                     caminhoPegue.simbolo || 
+                                     caminhoPegue.identificador ||
+                                     (caminhoPegue.aceitar && caminhoPegue.aceitar.toString().includes('erro') ? { lexema: 'erro' } : null);
+            }
+            
+            if (parametroEncontrado) {
                 const ponteiroCabeçalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
                 const ponteiroExcecao = this.montador.CreateCall(this.funcaoBeginCatch, [ponteiroCabeçalho], 'exception_data');
                 
                 const tipoTexto = this.obterTipoLlvm('texto');
-                const alocErro = this.montador.CreateAlloca(tipoTexto, null, (declaracao as any).parametroPegue.lexema);
+                const nomeParametro = parametroEncontrado.lexema || 
+                                     parametroEncontrado.nome || 
+                                     (typeof parametroEncontrado === 'string' ? parametroEncontrado : 'erro');
+                const alocErro = this.montador.CreateAlloca(tipoTexto, null, nomeParametro);
                 this.montador.CreateStore(ponteiroExcecao, alocErro);
                 
                 const topo = this.pilhaVariaveisEscopo.topoDaPilha();
                 const variavelEscopo = new VariavelEscopo(alocErro);
-                topo.set((declaracao as any).parametroPegue.lexema, variavelEscopo);
+                topo.set(nomeParametro, variavelEscopo);
             } else {
                 const ponteiroCabeçalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
                 this.montador.CreateCall(this.funcaoBeginCatch, [ponteiroCabeçalho]);
