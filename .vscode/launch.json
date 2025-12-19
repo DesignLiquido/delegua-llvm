@@ -1,5 +1,13 @@
 {
   "version": "0.2.0",
+  "inputs": [
+    {
+      "id": "arquivoDelegua",
+      "description": "Caminho do arquivo .delegua para compilar",
+      "default": "exemplos/delegua/try-catch-simples.delegua",
+      "type": "promptString"
+    }
+  ],
   "configurations": [
     {
       "name": "Delegua > Testes",
@@ -13,6 +21,24 @@
       ],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Delegua > Executar",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "ts-node",
+      "runtimeArgs": [
+        "--inspect-brk"
+      ],
+      "program": "${workspaceFolder}/main.ts",
+      "args": [
+        "${input:arquivoDelegua}"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
     }
   ]
 }

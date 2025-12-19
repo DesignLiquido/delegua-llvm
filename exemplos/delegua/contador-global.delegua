@@ -1,0 +1,9 @@
+var contador = 0;
+
+função incrementar() {
+  contador = contador + 1;
+}
+
+incrementar();
+
+escreva(contador);
