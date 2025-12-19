@@ -1,9 +1,12 @@
 var contador = 0;
+const valor = 1;
 
 função incrementar() {
-  contador = contador + 1;
+  contador = contador + valor;
 }
 
-incrementar();
+para (var i = 0; i < 5; i = i + 1) {
+  incrementar();
+}
 
 escreva(contador);

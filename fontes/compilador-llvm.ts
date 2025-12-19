@@ -786,6 +786,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         for (const construtoInstrucao of funcaoConstruto.corpo) {
             await construtoInstrucao.aceitar(this);
         }
+        
+        // Adicionar retorno padrão se o bloco não tiver terminador
+        const blocoAtual = this.montador.GetInsertBlock();
+        if (blocoAtual && !blocoAtual.getTerminator()) {
+            const tipoRetorno = objetoLlvmFuncao.getReturnType();
+            if (tipoRetorno.isVoidTy()) {
+                this.montador.CreateRetVoid();
+            } else {
+                // Retornar valor padrão baseado no tipo
+                if (tipoRetorno.isIntegerTy()) {
+                    this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
+                } else if (tipoRetorno.isFloatingPointTy()) {
+                    this.montador.CreateRet(ConstantFP.get(tipoRetorno, new APFloat(0.0)));
+                } else {
+                    // Para outros tipos, retornar null/undef
+                    this.montador.CreateRet(llvm.UndefValue.get(tipoRetorno));
+                }
+            }
+        }
     }
 
     protected obterTipoLlvm(tipoDelegua: string): llvm.Type {
@@ -1179,7 +1198,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    async visitarDeclaracaoVar(declaracao: Var): Promise<any> {
+    async visitarDeclaracaoVar(declaracao: Var, ehGlobal: boolean = false): Promise<any> {
         // Se a variável não tem tipo, o tipo do inicializador deve ser verificado.
         let tipoVariavel = declaracao.tipo;
         if (tipoVariavel === 'qualquer') {
@@ -1187,34 +1206,84 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
-        const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
-        let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
         
-        // Isso aqui é necessario pois delegua entende numero literal sem . como numero
-        // Ex: var idade: inteiro = 18
-        // O Literal 18 deveria ter tipo inteiro
-        // Então precisamos converter para que a verificação de modulo do llvm
-        // não reclame.
-        const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
-        if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
-            valorOuReferenciaVariavel = this.montador.CreateFPToSI(
-                valorOuReferenciaVariavel,
-                this.montador.getInt32Ty(),
-                'double_para_int'
+        let inicializacaoVariavel: llvm.Value;
+        let valorOuReferenciaVariavel: llvm.Value;
+        
+        if (ehGlobal) {
+            // Para variáveis globais, criar uma variável global do LLVM
+            // Usar valor padrão inicial e depois inicializar na função main
+            let valorInicialPadrao: llvm.Constant;
+            if (tipoLlvm.isIntegerTy()) {
+                valorInicialPadrao = ConstantInt.get(this.contexto, new APInt(32, 0));
+            } else if (tipoLlvm.isFloatingPointTy()) {
+                valorInicialPadrao = ConstantFP.get(tipoLlvm, new APFloat(0.0));
+            } else {
+                valorInicialPadrao = llvm.UndefValue.get(tipoLlvm) as llvm.Constant;
+            }
+            
+            inicializacaoVariavel = new llvm.GlobalVariable(
+                this.modulo,
+                tipoLlvm,
+                false, // não é constante
+                llvm.GlobalValue.LinkageTypes.InternalLinkage,
+                valorInicialPadrao,
+                declaracao.simbolo.lexema
             );
-        } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
-            valorOuReferenciaVariavel = this.montador.CreateSIToFP(
-                valorOuReferenciaVariavel,
-                this.montador.getDoubleTy(),
-                'int_para_double'
-            );
-        }
+            
+            // Avaliar o inicializador para usar na função main
+            valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+        } else {
+            // Para variáveis locais, usar CreateAlloca como antes
+            inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
+            valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+            
+            // Isso aqui é necessario pois delegua entende numero literal sem . como numero
+            // Ex: var idade: inteiro = 18
+            // O Literal 18 deveria ter tipo inteiro
+            // Então precisamos converter para que a verificação de modulo do llvm
+            // não reclame.
+            const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
+            if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
+                valorOuReferenciaVariavel = this.montador.CreateFPToSI(
+                    valorOuReferenciaVariavel,
+                    this.montador.getInt32Ty(),
+                    'double_para_int'
+                );
+            } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
+                valorOuReferenciaVariavel = this.montador.CreateSIToFP(
+                    valorOuReferenciaVariavel,
+                    this.montador.getDoubleTy(),
+                    'int_para_double'
+                );
+            }
 
-        this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+            this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+        }
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
         const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopo);
+        
+        // Se for global e o valor inicial não era constante, armazenar na função main
+        if (ehGlobal && valorOuReferenciaVariavel !== null) {
+            const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
+            let valorConvertido = valorOuReferenciaVariavel;
+            if (tipoVariavel === 'inteiro' && tipoInicializador === 'número') {
+                valorConvertido = this.montador.CreateFPToSI(
+                    valorOuReferenciaVariavel,
+                    this.montador.getInt32Ty(),
+                    'double_para_int'
+                );
+            } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
+                valorConvertido = this.montador.CreateSIToFP(
+                    valorOuReferenciaVariavel,
+                    this.montador.getDoubleTy(),
+                    'int_para_double'
+                );
+            }
+            this.montador.CreateStore(valorConvertido, inicializacaoVariavel);
+        }
 
         return Promise.resolve();
     }
@@ -1489,13 +1558,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoDeVariavel(expressao: Variavel | Constante): Promise<VariavelEscopo> {
-        const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha();
-        const valorOuReferenciaVariavel = topoDaPilhaDeVariaveis.get(expressao.simbolo.lexema);
-        if (!valorOuReferenciaVariavel) {
-            throw new Error(`Variável ${expressao.simbolo.lexema} não existe neste escopo.`);
-        }
-
-        return Promise.resolve(valorOuReferenciaVariavel);
+        // Usar obterValor para procurar em todos os escopos da pilha (incluindo escopo global)
+        return Promise.resolve(this.pilhaVariaveisEscopo.obterValor(expressao.simbolo.lexema));
     }
 
     visitarExpressaoLiteral(expressao: Literal): Promise<llvm.Value> {
@@ -1772,16 +1836,62 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero))
         topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro))
 
+        // Separar declarações em três grupos: variáveis, funções e outras
+        const declaracoesVariaveis = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Var || d instanceof Const);
+        const declaracoesFuncoes = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof FuncaoDeclaracao);
+        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => 
+            !(d instanceof Var) && !(d instanceof FuncaoDeclaracao)
+        );
+
+        // Criar o ponto de entrada primeiro (necessário para CreateAlloca funcionar)
+        const tipoRetorno = this.montador.getInt32Ty();
+        const tipoFuncao = llvm.FunctionType.get(tipoRetorno, [], false);
+        const funcaoInicio = llvm.Function.Create(
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            'main',
+            this.modulo
+        );
+
+        funcaoInicio.setPersonalityFn(this.funcaoPersonalidade);
+
+        const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
+        this.montador.SetInsertPoint(blocoEscopo);
+
+        // Processar variáveis globais primeiro para adicioná-las ao escopo
+        // Passar ehGlobal=true para criar variáveis globais do LLVM
+        for (const declaracao of declaracoesVariaveis) {
+            if (declaracao instanceof Var) {
+                await this.visitarDeclaracaoVar(declaracao, true);
+            } else if (declaracao instanceof Const) {
+                await this.visitarDeclaracaoConst(declaracao);
+            }
+        }
+
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
         // reclama se fizermos isso no ponto de entrada.
-        const declaracoesFuncoes = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof FuncaoDeclaracao);
+        // Agora as funções podem referenciar variáveis globais que já foram declaradas.
+        // Salvar o ponto de inserção atual antes de processar funções
+        const blocoMainAnterior = this.montador.GetInsertBlock();
         for (const declaracao of declaracoesFuncoes) {
             await declaracao.aceitar(this);
         }
+        // Restaurar o ponto de inserção para o bloco da função main
+        this.montador.SetInsertPoint(blocoMainAnterior);
 
-        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => !(d instanceof FuncaoDeclaracao));
-        await this.criarPontoEntrada(outrasDeclaracoes);
+        // Processar outras declarações no ponto de entrada
+        for (const declaracao of outrasDeclaracoes) {
+            await declaracao.aceitar(this);
+        }
+
+        // Finalizar o ponto de entrada
+        this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
+
+        if (llvm.verifyFunction(funcaoInicio)) {
+            console.error('Falha ao verificar função de início.');
+            return;
+        }
         // console.log(this.modulo.print());
         if (llvm.verifyModule(this.modulo)) {
             console.error('Falha ao verificar módulo.');
