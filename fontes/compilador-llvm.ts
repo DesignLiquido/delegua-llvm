@@ -800,6 +800,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.getDoubleTy();
             case 'texto':
                 return llvm.Type.getInt8PtrTy(this.contexto);
+            case 'vazio':
+            case 'qualquer':
+            default:
+                return this.montador.getVoidTy()
         }
     }
 

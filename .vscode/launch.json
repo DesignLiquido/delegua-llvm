@@ -26,11 +26,12 @@
       "name": "Delegua > Executar",
       "type": "node",
       "request": "launch",
-      "runtimeExecutable": "ts-node",
+      "runtimeExecutable": "node",
       "runtimeArgs": [
-        "--inspect-brk"
+        "--inspect-brk",
+        "${workspaceFolder}/node_modules/.bin/ts-node",
+        "${workspaceFolder}/main.ts"
       ],
-      "program": "${workspaceFolder}/main.ts",
       "args": [
         "${input:arquivoDelegua}"
       ],
@@ -38,7 +39,11 @@
       "internalConsoleOptions": "neverOpen",
       "skipFiles": [
         "<node_internals>/**"
-      ]
+      ],
+      "env": {
+        "NODE_ENV": "development",
+        "DELEGUA_DEBUG": "true"
+      }
     }
   ]
 }
