@@ -10,10 +10,10 @@
   ],
   "scripts": {
     "testes-unitarios": "jest --coverage",
-    "executar": "ts-node main.ts"
+    "executar": "ts-node fontes/ilc.ts"
   },
   "dependencies": {
-    "@designliquido/delegua": "^0.57.0",
+    "@designliquido/delegua": "^1.13.0",
     "commander": "^12.1.0",
     "llvm-bindings": "^0.4.2"
   },

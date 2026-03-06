@@ -16,7 +16,15 @@ import {
     ListaCompreensao,
     ParaCadaComoConstruto,
     ParaComoConstruto,
-    SeTernario
+    SeTernario,
+    AcessoIntervaloVariavel,
+    TuplaN,
+    AjudaComoConstruto,
+    ComentarioComoConstruto,
+    TextoDocumentacao,
+    Ajuda,
+    Extensao,
+    InterfaceDeclaracao
 } from '@designliquido/delegua';
 import { VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
@@ -47,12 +55,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
+        ['longo', '%ld'],
         ['número', '%g'],
         ['texto', '%s'],
     ]);
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
+        ['longo', '%ld'],
         ['número', '%lf'],
         ['texto', '%s'],
     ]);
@@ -199,7 +209,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateStore(valor, aloc);
 
         const topo = this.pilhaVariaveisEscopo.topoDaPilha();
-        const variavelEscopo = new VariavelEscopo(aloc, declaracao, tipoVariavel, true);
+        const variavelEscopo = new VariavelEscopo(aloc, declaracao as any, tipoVariavel, true);
         topo.set(declaracao.simbolo.lexema, variavelEscopo);
         return Promise.resolve();
     }
@@ -267,8 +277,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         throw new Error('Método não implementado.');
     }
 
+    async visitarDeclaracaoAjuda(declaracao: Ajuda): Promise<any> {
+        // Sistema de ajuda em tempo de execução não tem mapeamento em IR.
+        return Promise.resolve();
+    }
+
+    async visitarDeclaracaoExtensao(declaracao: Extensao): Promise<any> {
+        // Extensões de classe são metadados de tipo; sem geração de IR neste compilador.
+        if ((declaracao as any).membros) {
+            await this.aceitarListaDeclaracoes((declaracao as any).membros);
+        }
+        return Promise.resolve();
+    }
+
     async visitarDeclaracaoImportar(declaracao: Importar): Promise<any> {
         // Import não tem efeito direto no IR neste contexto minimal.
+        return Promise.resolve();
+    }
+
+    async visitarDeclaracaoInterface(declaracao: InterfaceDeclaracao): Promise<any> {
+        // Declarações de interface são apenas metadados de tipo; sem geração de IR.
         return Promise.resolve();
     }
 
@@ -281,6 +309,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Implementação simples: aceita expressão iterável e corpo.
         // Implementar iteração real depende do tipo do iterável; aqui apenas percorre o corpo.
         await this.aceitarListaDeclaracoes(declaracao.corpo.declaracoes);
+        return Promise.resolve();
+    }
+
+    async visitarDeclaracaoTextoDocumentacao(declaracao: TextoDocumentacao): Promise<any> {
+        // Docstrings não geram IR.
         return Promise.resolve();
     }
 
@@ -529,6 +562,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         throw new Error('Método não implementado.');
     }
 
+    async visitarExpressaoAcessoIntervaloVariavel(expressao: AcessoIntervaloVariavel): Promise<any> {
+        // Fatiamento (slicing) não tem geração de IR neste compilador.
+        return Promise.resolve();
+    }
+
+    async visitarExpressaoAjuda(expressao: AjudaComoConstruto): Promise<any> {
+        // Sistema de ajuda em tempo de execução não tem mapeamento em IR.
+        return Promise.resolve();
+    }
+
     async visitarExpressaoElvis(expressao: Elvis): Promise<any> {
         // Operador Elvis (a ?: b): avalia a, se nulo/false usa b. Aqui realiza avaliação simples sem GEP.
         const left = await expressao.esquerda.aceitar(this);
@@ -716,6 +759,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         throw new Error('Método não implementado.');
     }
 
+    async visitarExpressaoTuplaN(expressao: TuplaN): Promise<any> {
+        // Tuplas sem limite de tamanho não têm geração de IR neste compilador.
+        return Promise.resolve();
+    }
+
     visitarExpressaoTipoDe(expressao: TipoDe): Promise<any> | void {
         throw new Error('Método não implementado.');
     }
@@ -793,6 +841,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'inteiro':
             case 'função<inteiro>':
                 return this.montador.getInt32Ty();
+            case 'longo':
+            case 'função<longo>':
+                return llvm.Type.getInt64Ty(this.contexto);
             case 'numero':
             case 'número':
             case 'função<numero>':
@@ -963,7 +1014,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.pilhaVariaveisEscopo.removerUltimo();
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
-        const variavelEscopoObjetoLlvmFuncao = new VariavelEscopo(objetoLlvmFuncao, declaracao);
+        const variavelEscopoObjetoLlvmFuncao = new VariavelEscopo(objetoLlvmFuncao, declaracao as any);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopoObjetoLlvmFuncao);
     }
 
@@ -1209,7 +1260,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
-        const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao);
+        const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao as any);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopo);
 
         return Promise.resolve();
@@ -1429,7 +1480,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    visitarExpressaoComentario(declaracao: Comentario): Promise<any> | void {
+    visitarExpressaoComentario(expressao: ComentarioComoConstruto): Promise<any> | void {
         return Promise.resolve();
     }
 
@@ -1460,7 +1511,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const argumentos: llvm.Value[] = [];
 
         if (variavelEscopoCorrespondente.construtoVariavel) {
-            const construtoCorrespondente = (variavelEscopoCorrespondente.construtoVariavel as FuncaoDeclaracao).funcao;
+            const construtoCorrespondente = (variavelEscopoCorrespondente.construtoVariavel as unknown as FuncaoDeclaracao).funcao;
 
             const tiposParametros = [];
             for (const parametro of construtoCorrespondente.parametros) {
@@ -1502,14 +1553,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return Promise.resolve(
                     ConstantInt.get(
                         this.contexto,
-                        new APInt(32, expressao.valor)
+                        new APInt(32, expressao.valor as number)
+                    )
+                );
+            case 'longo':
+                return Promise.resolve(
+                    ConstantInt.get(
+                        this.contexto,
+                        new APInt(64, expressao.valor as number)
                     )
                 );
             case 'número':
                 return Promise.resolve(
                     ConstantFP.get(
                         this.montador.getDoubleTy(),
-                        new APFloat(expressao.valor)
+                        new APFloat(expressao.valor as number)
                     )
                 );
             case 'texto':
@@ -1754,7 +1812,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador = new llvm.IRBuilder(this.contexto);
 
         const resultadoLexador = this.lexador.mapear(codigo, -1);
-        const resultadoAvaliadorSintatico = this.avaliadorSintatico.analisar(resultadoLexador, -1);
+        const resultadoAvaliadorSintatico = await this.avaliadorSintatico.analisar(resultadoLexador, -1);
 
         if (resultadoAvaliadorSintatico.erros.length > 0) {
             throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);

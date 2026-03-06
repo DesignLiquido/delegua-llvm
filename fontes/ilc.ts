@@ -1,4 +1,4 @@
-import { CompiladorLLVM } from './fontes/compilador-llvm';
+import { CompiladorLLVM } from './compilador-llvm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
@@ -86,14 +86,14 @@ function limparArquivosTemporarios(arquivos: string[]) {
     }
 }
 
-async function main() {
+async function principal() {
     console.log(CORES.magenta + LOGO + CORES.reset);
 
     const args = process.argv.slice(2);
     
     if (args.length === 0) {
         log('Uso:', CORES.amarelo);
-        log('  npx ts-node main.ts <arquivo.delegua>', CORES.reset);
+        log('  npx ts-node ilc.ts <arquivo.delegua>', CORES.reset);
         log('  yarn executar <arquivo.delegua>', CORES.reset);
         console.log('');
         log('Opções:', CORES.amarelo);
@@ -198,4 +198,4 @@ async function main() {
     }
 }
 
-main();
+principal();
