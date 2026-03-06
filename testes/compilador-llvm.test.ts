@@ -1221,5 +1221,45 @@ describe('Compilador', () => {
             expect(resultado).toContain('ret i32');
         });
     });
+
+    describe('Erros', () => {
+        it('Acesso a propriedade inexistente deve lançar erro', async () => {
+            const compilador = new CompiladorLLVM();
+
+            await expect(compilador.compilar([
+                'classe Pessoa {',
+                '    nome: texto',
+                '    construtor(nome: texto) {',
+                '        isto.nome = nome',
+                '    }',
+                '}',
+                'var p = Pessoa("Delegua")',
+                'escreva(p.idade)'
+            ])).rejects.toThrow("Propriedade 'idade' não encontrada na classe 'Pessoa'.");
+        });
+
+        it('Chamada de método inexistente deve lançar erro', async () => {
+            const compilador = new CompiladorLLVM();
+
+            await expect(compilador.compilar([
+                'classe Pessoa {',
+                '    nome: texto',
+                '    construtor(nome: texto) {',
+                '        isto.nome = nome',
+                '    }',
+                '}',
+                'var p = Pessoa("Delegua")',
+                'p.falar()'
+            ])).rejects.toThrow("Método 'falar' não encontrado na classe 'Pessoa'.");
+        });
+
+        it('Variável inexistente deve lançar erro', async () => {
+            const compilador = new CompiladorLLVM();
+
+            await expect(compilador.compilar([
+                'escreva(naoDeclarada)'
+            ])).rejects.toThrow('Erros ao executar código:');
+        });
+    });
 });
 

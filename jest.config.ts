@@ -7,6 +7,14 @@ export default async (): Promise<Config.InitialOptions> => {
         preset: 'ts-jest',
         testEnvironment: 'node',
         coverageReporters: ['json-summary', 'lcov', 'text', 'text-summary'],
-        coveragePathIgnorePatterns: []
+        coveragePathIgnorePatterns: [],
+        coverageThreshold: {
+            global: {
+                branches: 63,
+                functions: 90,
+                lines: 82,
+                statements: 82,
+            },
+        },
     };
 };
