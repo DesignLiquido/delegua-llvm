@@ -53,6 +53,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoEndCatch: llvm.Function;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
+    private registroClasses: Map<string, llvm.StructType> = new Map();
+    private indicesPropriedades: Map<string, Map<string, number>> = new Map();
+    private tiposPropriedades: Map<string, Map<string, string>> = new Map();
+    private metodosClasse: Map<string, Map<string, string>> = new Map();
+    private pilhaIsto: llvm.Value[] = [];
+    private classesComMarcadorTipo: Set<string> = new Set();
+
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
         ['longo', '%ld'],
@@ -179,11 +186,94 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
-        // Suporte a classes não implementado neste compilador minimal.
-        // Apenas percorre possíveis membros (se existirem) para que erros sejam detectados.
-        if ((declaracao as any).membros) {
-            await this.aceitarListaDeclaracoes((declaracao as any).membros);
+        const nomeClasse = declaracao.simbolo.lexema;
+
+        // 1. Coletar tipos LLVM das propriedades e construir o struct
+        const tiposPropsLlvm: llvm.Type[] = [];
+        const mapaIndices: Map<string, number> = new Map();
+        const mapaTipos: Map<string, string> = new Map();
+
+        for (const [indice, propriedade] of declaracao.propriedades.entries()) {
+            const tipoProp = propriedade.tipo || 'número';
+            tiposPropsLlvm.push(this.obterTipoLlvm(tipoProp));
+            mapaIndices.set(propriedade.nome.lexema, indice);
+            mapaTipos.set(propriedade.nome.lexema, tipoProp);
         }
+
+        const tipoStruct = llvm.StructType.create(this.contexto, nomeClasse);
+        tipoStruct.setBody(tiposPropsLlvm);
+
+        this.registroClasses.set(nomeClasse, tipoStruct);
+        this.indicesPropriedades.set(nomeClasse, mapaIndices);
+        this.tiposPropriedades.set(nomeClasse, mapaTipos);
+
+        if (!this.classesComMarcadorTipo.has(nomeClasse)) {
+            const tipoFuncaoMarcador = llvm.FunctionType.get(
+                llvm.Type.getVoidTy(this.contexto),
+                [llvm.PointerType.get(tipoStruct, 0)],
+                false
+            );
+            llvm.Function.Create(
+                tipoFuncaoMarcador,
+                llvm.Function.LinkageTypes.ExternalLinkage,
+                `__delegua_tipo_${nomeClasse}`,
+                this.modulo
+            );
+            this.classesComMarcadorTipo.add(nomeClasse);
+        }
+
+        // 2. Compilar cada método como função LLVM com %NomeClasse* como primeiro parâmetro
+        const tipoSelf = llvm.PointerType.get(tipoStruct, 0);
+        if (!this.metodosClasse.has(nomeClasse)) {
+            this.metodosClasse.set(nomeClasse, new Map());
+        }
+
+        for (const metodo of declaracao.metodos) {
+            const ehConstrutor = metodo.simbolo.lexema === 'construtor';
+            const nomeFuncaoLlvm = `${nomeClasse}_${metodo.simbolo.lexema}`;
+
+            const tiposParametros: llvm.Type[] = [tipoSelf];
+            for (const parametro of metodo.funcao.parametros) {
+                tiposParametros.push(this.obterTipoLlvm(parametro.tipoDado));
+            }
+
+            const tipoRetorno = ehConstrutor
+                ? llvm.Type.getVoidTy(this.contexto)
+                : this.obterTipoLlvm(metodo.funcao.tipo);
+
+            const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParametros, false);
+            const objetoLlvmFuncao = llvm.Function.Create(
+                tipoFuncao,
+                llvm.Function.LinkageTypes.ExternalLinkage,
+                nomeFuncaoLlvm,
+                this.modulo
+            );
+
+            // Escopo do método: arg 0 = %self (isto), restantes = parâmetros
+            const mapaVariaveis: Map<string, VariavelEscopo> = new Map();
+            const selfArg = objetoLlvmFuncao.getArg(0);
+            mapaVariaveis.set('isto', new VariavelEscopo(selfArg, undefined, nomeClasse));
+
+            for (const [indice, parametro] of metodo.funcao.parametros.entries()) {
+                const argLlvm = objetoLlvmFuncao.getArg(indice + 1);
+                mapaVariaveis.set(parametro.nome.lexema, new VariavelEscopo(argLlvm, undefined, parametro.tipoDado));
+            }
+
+            this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
+            this.pilhaIsto.push(selfArg);
+            await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
+            if (ehConstrutor) {
+                this.montador.CreateRetVoid();
+            }
+            this.pilhaIsto.pop();
+            this.pilhaVariaveisEscopo.removerUltimo();
+
+            this.metodosClasse.get(nomeClasse).set(
+                metodo.simbolo.lexema,
+                ehConstrutor ? 'vazio' : metodo.funcao.tipo
+            );
+        }
+
         return Promise.resolve();
     }
 
@@ -204,6 +294,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
         } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
             valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
+        } else if (tipoVariavel === 'longo' && tipoInicializador === 'inteiro') {
+            valor = this.montador.CreateSExt(valor, llvm.Type.getInt64Ty(this.contexto), 'int_para_longo');
+        } else if (tipoVariavel === 'longo' && tipoInicializador === 'número') {
+            valor = this.montador.CreateFPToSI(valor, llvm.Type.getInt64Ty(this.contexto), 'double_para_longo');
         }
 
         this.montador.CreateStore(valor, aloc);
@@ -528,12 +622,85 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoAcessoMetodoOuPropriedade(expressao: AcessoMetodoOuPropriedade): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoAcessoMetodoOuPropriedade(expressao: AcessoMetodoOuPropriedade): Promise<any> {
+        const objetoResolvido = await expressao.objeto.aceitar(this);
+        let objetoPtr: llvm.Value;
+        let nomeClasse: string;
+
+        if (objetoResolvido instanceof VariavelEscopo) {
+            objetoPtr = objetoResolvido.variavelLlvm;
+            nomeClasse = objetoResolvido.tipo;
+        } else {
+            objetoPtr = objetoResolvido as llvm.Value;
+        }
+
+        if (!nomeClasse && expressao.objeto.constructor.name === 'Variavel') {
+            nomeClasse = this.pilhaVariaveisEscopo.obterValor((expressao.objeto as Variavel).simbolo.lexema)?.tipo;
+        }
+
+        const nomeMembro = expressao.simbolo.lexema;
+        const mapaIndices = this.indicesPropriedades.get(nomeClasse);
+        const mapaTipos = this.tiposPropriedades.get(nomeClasse);
+        const indice = mapaIndices?.get(nomeMembro);
+        const tipoProp = mapaTipos?.get(nomeMembro);
+
+        if (indice === undefined || !tipoProp) {
+            throw new Error(`Propriedade '${nomeMembro}' não encontrada na classe '${nomeClasse}'.`);
+        }
+
+        const tipoStruct = this.registroClasses.get(nomeClasse);
+        const tipoLlvm = this.obterTipoLlvm(tipoProp);
+        const gepPtr = this.montador.CreateInBoundsGEP(
+            tipoStruct,
+            objetoPtr,
+            [
+                ConstantInt.get(this.contexto, new APInt(32, 0)),
+                ConstantInt.get(this.contexto, new APInt(32, indice))
+            ],
+            `${nomeMembro}_ptr`
+        );
+
+        return this.montador.CreateLoad(tipoLlvm, gepPtr, nomeMembro);
     }
 
-    visitarExpressaoAcessoPropriedade(expressao: AcessoPropriedade): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoAcessoPropriedade(expressao: AcessoPropriedade): Promise<any> {
+        const objetoResolvido = await expressao.objeto.aceitar(this);
+        let objetoPtr: llvm.Value;
+        let nomeClasse: string;
+
+        if (objetoResolvido instanceof VariavelEscopo) {
+            objetoPtr = objetoResolvido.variavelLlvm;
+            nomeClasse = objetoResolvido.tipo;
+        } else {
+            objetoPtr = objetoResolvido as llvm.Value;
+        }
+
+        if (!nomeClasse && expressao.objeto.constructor.name === 'Variavel') {
+            nomeClasse = this.pilhaVariaveisEscopo.obterValor((expressao.objeto as Variavel).simbolo.lexema)?.tipo;
+        }
+
+        const mapaIndices = this.indicesPropriedades.get(nomeClasse);
+        const mapaTipos = this.tiposPropriedades.get(nomeClasse);
+        const indice = mapaIndices?.get(expressao.nomePropriedade);
+        const tipoProp = mapaTipos?.get(expressao.nomePropriedade);
+
+        if (indice === undefined || !tipoProp) {
+            throw new Error(`Propriedade '${expressao.nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+        }
+
+        const tipoStruct = this.registroClasses.get(nomeClasse);
+        const tipoLlvm = this.obterTipoLlvm(tipoProp);
+        const gepPtr = this.montador.CreateInBoundsGEP(
+            tipoStruct,
+            objetoPtr,
+            [
+                ConstantInt.get(this.contexto, new APInt(32, 0)),
+                ConstantInt.get(this.contexto, new APInt(32, indice))
+            ],
+            `${expressao.nomePropriedade}_ptr`
+        );
+
+        return this.montador.CreateLoad(tipoLlvm, gepPtr, expressao.nomePropriedade);
     }
 
     visitarExpressaoArgumentoReferenciaFuncao(expressao: ArgumentoReferenciaFuncao): Promise<any> | void {
@@ -548,8 +715,54 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         throw new Error('Método não implementado.');
     }
 
-    visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> | void {
-        throw new Error('Método não implementado.');
+    async visitarExpressaoDefinirValor(expressao: DefinirValor): Promise<any> {
+        const objetoResolvido = await expressao.objeto.aceitar(this);
+        let objetoPtr: llvm.Value;
+        let nomeClasse: string;
+
+        if (objetoResolvido instanceof VariavelEscopo) {
+            objetoPtr = objetoResolvido.variavelLlvm;
+            nomeClasse = objetoResolvido.tipo;
+        } else {
+            objetoPtr = objetoResolvido as llvm.Value;
+        }
+
+        if (!nomeClasse) {
+            if (expressao.objeto.constructor.name === 'Variavel') {
+                nomeClasse = this.pilhaVariaveisEscopo.obterValor((expressao.objeto as Variavel).simbolo.lexema)?.tipo;
+            } else if (expressao.objeto.constructor.name === 'Isto') {
+                nomeClasse = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo;
+            }
+        }
+
+        const nomePropriedade = expressao.nome.lexema;
+        const mapaIndices = this.indicesPropriedades.get(nomeClasse);
+        const mapaTipos = this.tiposPropriedades.get(nomeClasse);
+        const indice = mapaIndices?.get(nomePropriedade);
+        const tipoProp = mapaTipos?.get(nomePropriedade);
+
+        if (indice === undefined || !tipoProp) {
+            throw new Error(`Propriedade '${nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+        }
+
+        const tipoStruct = this.registroClasses.get(nomeClasse);
+        const gepPtr = this.montador.CreateInBoundsGEP(
+            tipoStruct,
+            objetoPtr,
+            [
+                ConstantInt.get(this.contexto, new APInt(32, 0)),
+                ConstantInt.get(this.contexto, new APInt(32, indice))
+            ],
+            `${nomePropriedade}_ptr`
+        );
+
+        const novoValor = await expressao.valor.aceitar(this);
+        const novoValorLlvm = novoValor instanceof VariavelEscopo
+            ? this.carregarValorSeNecessario(novoValor, tipoProp, 'load_val')
+            : novoValor as llvm.Value;
+
+        this.montador.CreateStore(novoValorLlvm, gepPtr);
+        return Promise.resolve();
     }
 
     // TODO: Verificar se está correto.
@@ -652,10 +865,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    // TODO: Verificar se está correto.
     async visitarExpressaoIsto(expressao: Isto): Promise<any> {
-        // 'isto' refere-se ao contexto da classe/objeto; não suportado aqui.
-        return Promise.resolve(null);
+        const istoEscopo = this.pilhaVariaveisEscopo.obterValor('isto');
+        return Promise.resolve(istoEscopo ?? null);
     }
 
     async visitarExpressaoLeia(expressao: Leia): Promise<llvm.Value> {
@@ -720,9 +932,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoRetornar(declaracao: Retorna): Promise<any> {
-        // Já implementado mais abaixo; deixar aqui para coerência: resolve valor e retorna instrução de retorno.
-        const valorResolvido: llvm.Instruction = await declaracao.valor.aceitar(this);
-        this.montador.CreateRet(valorResolvido);
+        if (!declaracao.valor) {
+            this.montador.CreateRetVoid();
+            return Promise.resolve();
+        }
+
+        const valorResolvido = await declaracao.valor.aceitar(this);
+
+        if (valorResolvido instanceof VariavelEscopo) {
+            const tipoRetorno = declaracao.valor.tipo || valorResolvido.tipo || 'número';
+            if (this.tipoEhPonteiro(valorResolvido.variavelLlvm.getType())) {
+                const tipoLlvmRetorno = this.obterTipoLlvm(tipoRetorno);
+                const valorCarregado = this.montador.CreateLoad(tipoLlvmRetorno, valorResolvido.variavelLlvm, 'load_retorno');
+                this.montador.CreateRet(valorCarregado);
+            } else {
+                this.montador.CreateRet(valorResolvido.variavelLlvm);
+            }
+            return Promise.resolve();
+        }
+
+        this.montador.CreateRet(valorResolvido as llvm.Value);
         return Promise.resolve();
     }
 
@@ -851,6 +1080,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.getDoubleTy();
             case 'texto':
                 return llvm.Type.getInt8PtrTy(this.contexto);
+            default:
+                if (this.registroClasses.has(tipoDelegua)) {
+                    return llvm.PointerType.get(this.registroClasses.get(tipoDelegua), 0);
+                }
         }
     }
 
@@ -1233,9 +1466,31 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
 
+        // Instanciação de classe: var p = Ponto(...)
+        if (this.registroClasses.has(tipoVariavel)) {
+            const objetoPtr = await declaracao.inicializador.aceitar(this) as llvm.Value;
+            const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
+            topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(objetoPtr, undefined, tipoVariavel));
+            return Promise.resolve();
+        }
+
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
+
+        if (valorOuReferenciaVariavel instanceof VariavelEscopo) {
+            const tipoOrigem = valorOuReferenciaVariavel.tipo || this.resolverTipoConstruto(declaracao.inicializador) || tipoVariavel;
+            if (this.tipoEhPonteiro(valorOuReferenciaVariavel.variavelLlvm.getType())) {
+                const tipoLlvmOrigem = this.obterTipoLlvm(tipoOrigem);
+                valorOuReferenciaVariavel = this.montador.CreateLoad(
+                    tipoLlvmOrigem,
+                    valorOuReferenciaVariavel.variavelLlvm,
+                    'load_inicializador_var'
+                );
+            } else {
+                valorOuReferenciaVariavel = valorOuReferenciaVariavel.variavelLlvm;
+            }
+        }
         
         // Isso aqui é necessario pois delegua entende numero literal sem . como numero
         // Ex: var idade: inteiro = 18
@@ -1249,18 +1504,42 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 this.montador.getInt32Ty(),
                 'double_para_int'
             );
+        } else if (tipoVariavel === 'inteiro' && tipoInicializador === 'longo') {
+            valorOuReferenciaVariavel = this.montador.CreateTrunc(
+                valorOuReferenciaVariavel,
+                this.montador.getInt32Ty(),
+                'longo_para_int'
+            );
         } else if (tipoVariavel === 'número' && tipoInicializador === 'inteiro') {
             valorOuReferenciaVariavel = this.montador.CreateSIToFP(
                 valorOuReferenciaVariavel,
                 this.montador.getDoubleTy(),
                 'int_para_double'
             );
+        } else if (tipoVariavel === 'número' && tipoInicializador === 'longo') {
+            valorOuReferenciaVariavel = this.montador.CreateSIToFP(
+                valorOuReferenciaVariavel,
+                this.montador.getDoubleTy(),
+                'longo_para_double'
+            );
+        } else if (tipoVariavel === 'longo' && tipoInicializador === 'inteiro') {
+            valorOuReferenciaVariavel = this.montador.CreateSExt(
+                valorOuReferenciaVariavel,
+                llvm.Type.getInt64Ty(this.contexto),
+                'int_para_longo'
+            );
+        } else if (tipoVariavel === 'longo' && tipoInicializador === 'número') {
+            valorOuReferenciaVariavel = this.montador.CreateFPToSI(
+                valorOuReferenciaVariavel,
+                llvm.Type.getInt64Ty(this.contexto),
+                'double_para_longo'
+            );
         }
 
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
-        const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao as any);
+        const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao as any, tipoVariavel);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopo);
 
         return Promise.resolve();
@@ -1274,8 +1553,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         switch (construto.constructor.name) {
             case 'Leia':
                 return 'texto';
-            case 'Chamada':
-                return (construto as Chamada).entidadeChamada.tipo;
+            case 'Chamada': {
+                const chamada = construto as Chamada;
+                if (chamada.entidadeChamada.constructor.name === 'Variavel') {
+                    const nomeCallee = (chamada.entidadeChamada as Variavel).simbolo.lexema;
+                    if (this.registroClasses.has(nomeCallee)) {
+                        return nomeCallee;
+                    }
+                }
+                return chamada.entidadeChamada.tipo;
+            }
             default:
                 return construto.tipo;
         }
@@ -1336,7 +1623,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverMultiplicacao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateMul(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1344,7 +1631,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverAdicao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateAdd(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1352,7 +1639,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverSubtracao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateSub(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1360,7 +1647,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverDivisao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateSDiv(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1368,7 +1655,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverModulo(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateSRem(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1376,7 +1663,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverIgualdade(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
-        if (operandoEsquerdo.tipo === 'inteiro' && operandoDireito.tipo === 'inteiro') {
+        if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
@@ -1384,9 +1671,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     // TODO: Não sei se vai mais precisar.
+    protected tipoEhInteiroDelegua(tipo: string): boolean {
+        return tipo === 'inteiro' || tipo === 'longo';
+    }
+
     protected definirTipoPrevalente(tipo1: string, tipo2: string) {
         if (tipo1 === 'número' || tipo2 === 'número') {
             return 'número';
+        }
+
+        if (tipo1 === 'longo' || tipo2 === 'longo') {
+            return 'longo';
         }
 
         return 'inteiro';
@@ -1409,12 +1704,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const tipoPrevalente = this.definirTipoPrevalente(operandoEsquerdoResolvido.tipo, operandoDireitoResolvido.tipo);
 
-        if (operandoEsquerdoResolvido.tipo !== tipoPrevalente) {
+        if (tipoPrevalente === 'número' && operandoEsquerdoResolvido.tipo !== tipoPrevalente) {
             operandoEsquerdoResolvido.valor = this.montador.CreateSIToFP(operandoEsquerdoResolvido.valor, llvm.Type.getDoubleTy(this.contexto));
             operandoEsquerdoResolvido.tipo = 'número';
         }
 
-        if (operandoDireitoResolvido.tipo !== tipoPrevalente) {
+        if (tipoPrevalente === 'número' && operandoDireitoResolvido.tipo !== tipoPrevalente) {
             operandoDireitoResolvido.valor = this.montador.CreateSIToFP(operandoDireitoResolvido.valor, llvm.Type.getDoubleTy(this.contexto));
             operandoDireitoResolvido.tipo = 'número';
         }
@@ -1433,25 +1728,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'MODULO':
                 return this.resolverModulo(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'MENOR':
-                if (tipoPrevalente === 'inteiro') {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
                     return Promise.resolve(this.montador.CreateICmpSLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MENOR_IGUAL':
-                if (tipoPrevalente === 'inteiro') {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
                     return Promise.resolve(this.montador.CreateICmpSLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MAIOR':
-                if (tipoPrevalente === 'inteiro') {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
                     return Promise.resolve(this.montador.CreateICmpSGT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MAIOR_IGUAL':
-                if (tipoPrevalente === 'inteiro') {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
                     return Promise.resolve(this.montador.CreateICmpSGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
@@ -1465,7 +1760,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'IGUAL_IGUAL':
                 return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIFERENTE':
-                if (tipoPrevalente === 'inteiro') {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
                     return Promise.resolve(this.montador.CreateICmpNE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpONE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
@@ -1500,12 +1795,82 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 argumento.tipo = 'inteiro';
                 argumento.valor = Math.trunc(argumento.valor);
             }
+        } else if (tipoParametro === 'longo') {
+            if (tipoArgumento === 'número') {
+                argumento.tipo = 'longo';
+                argumento.valor = Math.trunc(argumento.valor);
+            } else if (tipoArgumento === 'inteiro') {
+                argumento.tipo = 'longo';
+            }
         }
 
         return argumento;
     }
 
+    private async instanciarClasse(nomeClasse: string, argumentos: Construto[]): Promise<llvm.Value> {
+        const tipoStruct = this.registroClasses.get(nomeClasse);
+        const objetoAlloc = this.montador.CreateAlloca(tipoStruct, null, `obj_${nomeClasse}`);
+
+        const funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
+        if (funcaoConstrutor) {
+            const args: llvm.Value[] = [objetoAlloc];
+            for (const argumento of argumentos) {
+                const argResolvido = await argumento.aceitar(this);
+                args.push(argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : argResolvido as llvm.Value);
+            }
+            this.montador.CreateCall(funcaoConstrutor, args);
+        }
+
+        return objetoAlloc;
+    }
+
+    private async chamarMetodoInstancia(acesso: AcessoMetodo | AcessoMetodoOuPropriedade, argumentos: Construto[]): Promise<llvm.Value> {
+        const objetoResolvido = await acesso.objeto.aceitar(this);
+        let objetoPtr: llvm.Value;
+        let nomeClasse: string;
+
+        if (objetoResolvido instanceof VariavelEscopo) {
+            objetoPtr = objetoResolvido.variavelLlvm;
+            nomeClasse = objetoResolvido.tipo;
+        } else {
+            objetoPtr = objetoResolvido as llvm.Value;
+            if (acesso.objeto.constructor.name === 'Variavel') {
+                nomeClasse = this.pilhaVariaveisEscopo.obterValor((acesso.objeto as Variavel).simbolo.lexema)?.tipo;
+            }
+        }
+
+        // AcessoMetodo usa .nomeMetodo; AcessoMetodoOuPropriedade usa .simbolo.lexema
+        const nomeMetodo = (acesso as AcessoMetodo).nomeMetodo ?? (acesso as AcessoMetodoOuPropriedade).simbolo.lexema;
+        const nomeFuncao = `${nomeClasse}_${nomeMetodo}`;
+        const funcaoLlvm = this.modulo.getFunction(nomeFuncao);
+        if (!funcaoLlvm) {
+            throw new Error(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
+        }
+
+        const args: llvm.Value[] = [objetoPtr];
+        for (const argumento of argumentos) {
+            const argResolvido = await argumento.aceitar(this);
+            args.push(argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : argResolvido as llvm.Value);
+        }
+
+        return this.montador.CreateCall(funcaoLlvm, args);
+    }
+
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
+        // Instanciação de classe: Ponto(...)
+        if (expressao.entidadeChamada.constructor.name === 'Variavel') {
+            const nomeCallee = (expressao.entidadeChamada as Variavel).simbolo.lexema;
+            if (this.registroClasses.has(nomeCallee)) {
+                return await this.instanciarClasse(nomeCallee, expressao.argumentos);
+            }
+        }
+
+        // Chamada de método: p.distancia() — Delégua usa AcessoMetodoOuPropriedade na maioria dos casos
+        if (expressao.entidadeChamada.constructor.name === 'AcessoMetodo' ||
+            expressao.entidadeChamada.constructor.name === 'AcessoMetodoOuPropriedade') {
+            return await this.chamarMetodoInstancia(expressao.entidadeChamada as AcessoMetodo, expressao.argumentos);
+        }
+
         const entidadeChamadaResolvida = await expressao.entidadeChamada.aceitar(this);
         const variavelEscopoCorrespondente = this.pilhaVariaveisEscopo.obterValor((expressao.entidadeChamada as Variavel).simbolo.lexema);
         const argumentos: llvm.Value[] = [];
@@ -1804,12 +2169,43 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      */
     async compilar(codigo: string[]): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
+        this.registroClasses = new Map();
+        this.indicesPropriedades = new Map();
+        this.tiposPropriedades = new Map();
+        this.metodosClasse = new Map();
+        this.pilhaIsto = [];
+        this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>()
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
 
         this.contexto = new llvm.LLVMContext();
         this.modulo = new llvm.Module('demo', this.contexto);
         this.montador = new llvm.IRBuilder(this.contexto);
+
+        const avaliadorSintaticoComTipagem = this.avaliadorSintatico as any;
+        if (!avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas) {
+            avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas = {};
+        }
+
+        if (!avaliadorSintaticoComTipagem.__ajusteInferenciaMembroAplicado) {
+            const inferenciaOriginal = avaliadorSintaticoComTipagem.logicaComumInferenciaTiposAcessoMetodoOuPropriedade?.bind(avaliadorSintaticoComTipagem);
+            if (inferenciaOriginal) {
+                avaliadorSintaticoComTipagem.logicaComumInferenciaTiposAcessoMetodoOuPropriedade = (entidadeChamada: any) => {
+                    try {
+                        return inferenciaOriginal(entidadeChamada);
+                    } catch (erro) {
+                        const nomeTipoObjeto = entidadeChamada?.objeto?.tipo;
+                        if (typeof nomeTipoObjeto === 'string' && nomeTipoObjeto.match(/^[A-Z]/)) {
+                            return 'qualquer';
+                        }
+
+                        throw erro;
+                    }
+                };
+            }
+
+            avaliadorSintaticoComTipagem.__ajusteInferenciaMembroAplicado = true;
+        }
 
         const resultadoLexador = this.lexador.mapear(codigo, -1);
         const resultadoAvaliadorSintatico = await this.avaliadorSintatico.analisar(resultadoLexador, -1);
@@ -1826,6 +2222,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero))
         topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro))
 
+        // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
+        const declaracoesClasses = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Classe);
+        for (const declaracao of declaracoesClasses) {
+            await declaracao.aceitar(this);
+        }
+
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
         // reclama se fizermos isso no ponto de entrada.
@@ -1834,7 +2236,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             await declaracao.aceitar(this);
         }
 
-        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(d => !(d instanceof FuncaoDeclaracao));
+        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(
+            d => !(d instanceof FuncaoDeclaracao) && !(d instanceof Classe)
+        );
         await this.criarPontoEntrada(outrasDeclaracoes);
         // console.log(this.modulo.print());
         if (llvm.verifyModule(this.modulo)) {
