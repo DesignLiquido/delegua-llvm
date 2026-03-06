@@ -2014,12 +2014,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
-            case 'MENOR':
-                if (tipoPrevalente === 'inteiro') {
-                    return Promise.resolve(this.montador.CreateICmpSLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
-                } else {
-                    return Promise.resolve(this.montador.CreateFCmpOLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
-                }
             case 'IGUAL_IGUAL':
                 return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIFERENTE':

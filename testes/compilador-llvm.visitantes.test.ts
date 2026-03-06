@@ -1,5 +1,6 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 import llvm from 'llvm-bindings';
+import { VariavelEscopo } from '../fontes/variavel-escopo';
 
 describe('Compilador LLVM - visitantes', () => {
     let compilador: CompiladorLLVM;
@@ -454,6 +455,253 @@ describe('Compilador LLVM - visitantes', () => {
             expect(r3.tipo).toBe('longo');
             expect(r3.valor).toBe(10);
         });
+
+        it('Binaria DIFERENTE com tipo inteiro usa comparação inteira', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).tipoEhInteiroDelegua = jest.fn().mockReturnValue(true);
+            (compiladorLocal as any).montador = {
+                CreateICmpNE: jest.fn().mockReturnValue('icmp_ne'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'DIFERENTE' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateICmpNE).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('icmp_ne');
+        });
+
+        it('Binaria MENOR com tipo inteiro usa comparação inteira', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).tipoEhInteiroDelegua = jest.fn().mockReturnValue(true);
+            (compiladorLocal as any).montador = {
+                CreateICmpSLT: jest.fn().mockReturnValue('icmp_slt'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MENOR' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateICmpSLT).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('icmp_slt');
+        });
+
+        it('Binaria MENOR_IGUAL com tipo inteiro usa comparação inteira', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).tipoEhInteiroDelegua = jest.fn().mockReturnValue(true);
+            (compiladorLocal as any).montador = {
+                CreateICmpSLE: jest.fn().mockReturnValue('icmp_sle'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MENOR_IGUAL' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateICmpSLE).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('icmp_sle');
+        });
+
+        it('Binaria MAIOR com tipo inteiro usa comparação inteira', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).tipoEhInteiroDelegua = jest.fn().mockReturnValue(true);
+            (compiladorLocal as any).montador = {
+                CreateICmpSGT: jest.fn().mockReturnValue('icmp_sgt'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MAIOR' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateICmpSGT).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('icmp_sgt');
+        });
+
+        it('Binaria MODULO com tipo número usa módulo de ponto flutuante', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'número' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'número' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).montador = {
+                CreateFRem: jest.fn().mockReturnValue('frem'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MODULO' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateFRem).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('frem');
+        });
+
+        it('Binaria IGUAL_IGUAL com tipo número usa comparação de ponto flutuante', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'número' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'número' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).montador = {
+                CreateFCmpOEQ: jest.fn().mockReturnValue('fcmp_oeq'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'IGUAL_IGUAL' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateFCmpOEQ).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('fcmp_oeq');
+        });
+
+        it('Binaria MAIOR_IGUAL com tipo número usa comparação de ponto flutuante', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'número' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'número' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('número');
+            (compiladorLocal as any).tipoEhInteiroDelegua = jest.fn().mockReturnValue(false);
+            (compiladorLocal as any).montador = {
+                CreateFCmpOGE: jest.fn().mockReturnValue('fcmp_oge'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MAIOR_IGUAL' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateFCmpOGE).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('fcmp_oge');
+        });
+
+        it('Binaria MODULO com tipo inteiro usa módulo inteiro', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).montador = {
+                CreateSRem: jest.fn().mockReturnValue('srem'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'MODULO' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateSRem).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('srem');
+        });
+
+        it('Binaria IGUAL_IGUAL com tipo inteiro usa comparação inteira', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).montador = {
+                CreateICmpEQ: jest.fn().mockReturnValue('icmp_eq'),
+            };
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'IGUAL_IGUAL' },
+            } as any);
+
+            expect((compiladorLocal as any).montador.CreateICmpEQ).toHaveBeenCalledWith('esquerdo', 'direito');
+            expect(resultado).toBe('icmp_eq');
+        });
+
+        it('Binaria DIVISAO despacha para resolverDivisao', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).resolverTipoConstruto = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverOperando = jest
+                .fn()
+                .mockReturnValueOnce({ valor: 'esquerdo', tipo: 'inteiro' })
+                .mockReturnValueOnce({ valor: 'direito', tipo: 'inteiro' });
+            (compiladorLocal as any).definirTipoPrevalente = jest.fn().mockReturnValue('inteiro');
+            (compiladorLocal as any).resolverDivisao = jest.fn().mockResolvedValue('resultado_divisao');
+
+            const resultado = await compiladorLocal.visitarExpressaoBinaria({
+                esquerda: { aceitar: jest.fn().mockResolvedValue('valor_esquerdo') },
+                direita: { aceitar: jest.fn().mockResolvedValue('valor_direito') },
+                operador: { tipo: 'DIVISAO' },
+            } as any);
+
+            expect((compiladorLocal as any).resolverDivisao).toHaveBeenCalledWith(
+                { valor: 'esquerdo', tipo: 'inteiro' },
+                { valor: 'direito', tipo: 'inteiro' }
+            );
+            expect(resultado).toBe('resultado_divisao');
+        });
+
+        it('VisitarExpressaoDeVariavel lança erro quando símbolo não existe', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+            compiladorLocal.pilhaVariaveisEscopo.empilhar(new Map());
+
+            await expect(
+                compiladorLocal.visitarExpressaoDeVariavel({
+                    simbolo: { lexema: 'naoExiste' },
+                } as any)
+            ).rejects.toThrow('Variável naoExiste não existe neste escopo.');
+        });
     });
 
     describe('Compilar - caminhos internos', () => {
@@ -525,6 +773,110 @@ describe('Compilador LLVM - visitantes', () => {
 
             spyVerifyModule.mockRestore();
             spyConsoleError.mockRestore();
+        });
+
+        it('Compilar registra erro quando verifyFunction falha no ponto de entrada', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).lexador = {
+                mapear: jest.fn().mockReturnValue({}),
+            };
+
+            (compiladorLocal as any).avaliadorSintatico = {
+                analisar: jest.fn().mockResolvedValue({ erros: [], declaracoes: [] }),
+            };
+
+            const spyVerifyFunction = jest.spyOn(llvm as any, 'verifyFunction').mockReturnValue(true);
+            const spyVerifyModule = jest.spyOn(llvm as any, 'verifyModule').mockReturnValue(false);
+            const spyConsoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+            const resultado = await compiladorLocal.compilar([]);
+
+            expect(resultado).toBeTruthy();
+            expect(spyConsoleError).toHaveBeenCalledWith('Falha ao verificar função de início.');
+
+            spyVerifyFunction.mockRestore();
+            spyVerifyModule.mockRestore();
+            spyConsoleError.mockRestore();
+        });
+
+        it('Compilar não reconfigura inferência quando ajuste já foi aplicado', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            (compiladorLocal as any).lexador = {
+                mapear: jest.fn().mockReturnValue({}),
+            };
+
+            const inferenciaOriginal = jest.fn().mockReturnValue('inteiro');
+            const avaliador = {
+                __ajusteInferenciaMembroAplicado: true,
+                tiposDefinidosPorBibliotecas: {},
+                logicaComumInferenciaTiposAcessoMetodoOuPropriedade: inferenciaOriginal,
+                analisar: jest.fn().mockResolvedValue({ erros: [], declaracoes: [] }),
+            };
+            (compiladorLocal as any).avaliadorSintatico = avaliador;
+
+            await expect(compiladorLocal.compilar([])).resolves.toBeTruthy();
+            expect((compiladorLocal as any).avaliadorSintatico.logicaComumInferenciaTiposAcessoMetodoOuPropriedade).toBe(inferenciaOriginal);
+        });
+
+        it('ChamarMetodoInstancia usa tipo do objeto quando VariavelEscopo', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+            const ponteiroObjeto = { id: 'objeto' } as any;
+            const ponteiroArgumento = { id: 'argumento' } as any;
+
+            (compiladorLocal as any).modulo = {
+                getFunction: jest.fn().mockReturnValue('funcao_llvM'),
+            };
+            (compiladorLocal as any).montador = {
+                CreateCall: jest.fn().mockReturnValue('resultado_call'),
+            };
+
+            const objetoResolvido = new VariavelEscopo(ponteiroObjeto, undefined, 'Pessoa');
+            const argumentoResolvido = new VariavelEscopo(ponteiroArgumento, undefined, 'texto');
+
+            const resultado = await (compiladorLocal as any).chamarMetodoInstancia(
+                {
+                    objeto: { aceitar: jest.fn().mockResolvedValue(objetoResolvido) },
+                    nomeMetodo: 'falar',
+                },
+                [{ aceitar: jest.fn().mockResolvedValue(argumentoResolvido) }]
+            );
+
+            expect((compiladorLocal as any).modulo.getFunction).toHaveBeenCalledWith('Pessoa_falar');
+            expect((compiladorLocal as any).montador.CreateCall).toHaveBeenCalledWith('funcao_llvM', [ponteiroObjeto, ponteiroArgumento]);
+            expect(resultado).toBe('resultado_call');
+        });
+
+        it('ChamarMetodoInstancia resolve classe via variável quando objeto não é VariavelEscopo', async () => {
+            const compiladorLocal = new CompiladorLLVM();
+
+            compiladorLocal.pilhaVariaveisEscopo.empilhar(new Map());
+            compiladorLocal.pilhaVariaveisEscopo.topoDaPilha().set('p', new VariavelEscopo({ id: 'slot' } as any, undefined, 'Pessoa'));
+
+            (compiladorLocal as any).modulo = {
+                getFunction: jest.fn().mockReturnValue('funcao_llvM'),
+            };
+            (compiladorLocal as any).montador = {
+                CreateCall: jest.fn().mockReturnValue('resultado_call'),
+            };
+
+            const objetoVariavel = {
+                simbolo: { lexema: 'p' },
+                aceitar: jest.fn().mockResolvedValue({ id: 'objeto_direto' }),
+                constructor: { name: 'Variavel' },
+            };
+
+            await (compiladorLocal as any).chamarMetodoInstancia(
+                {
+                    objeto: objetoVariavel,
+                    nomeMetodo: 'falar',
+                },
+                []
+            );
+
+            expect((compiladorLocal as any).modulo.getFunction).toHaveBeenCalledWith('Pessoa_falar');
+            expect((compiladorLocal as any).montador.CreateCall).toHaveBeenCalledWith('funcao_llvM', [{ id: 'objeto_direto' }]);
         });
     });
 
