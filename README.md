@@ -27,7 +27,7 @@ O script de instalação abaixo supõe uma distribuição Linux compatível com 
 # Descarregar o script de instalação do LLVM
 wget https://apt.llvm.org/llvm.sh
 sudo chmod +x llvm.sh
-sudo ./llvm.sh 14
+sudo ./llvm.sh 15
 
 # Instalar bibliotecas dependentes
 sudo apt-get install cmake zlib1g-dev
@@ -41,10 +41,10 @@ yarn
 ```sh
 # O comando abaixo supõe que o Homebrew está instalado.
 # Se você não sabe o que é o Homebrew, acesse: https://brew.sh/
-brew install cmake llvm@14
+brew install cmake llvm@15
 
 # O Homebrew deve pedir para executar os comandos abaixo:
-echo 'export PATH="/opt/homebrew/opt/llvm@14/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="/opt/homebrew/opt/llvm@15/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 
 # Após clonar este projeto, navegar para o diretório raiz e usar o comando
