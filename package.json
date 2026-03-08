@@ -12,6 +12,14 @@
     "testes-unitarios": "jest --coverage",
     "executar": "ts-node fontes/ilc.ts"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DesignLiquido/delegua-llvm.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "dependencies": {
     "@designliquido/delegua": "^1.13.0",
     "@designliquido/llvm-bindings": "^0.1.0",
