@@ -53,11 +53,17 @@ yarn
 
 ### Instalação para Windows
 
-A biblioteca [llvm-bindings](https://github.com/ApsarasX/llvm-bindings), parte essencial deste projeto, funciona até a versão 14 do LLVM. [A versão 14.0.6](https://github.com/llvm/llvm-project/releases/tag/llvmorg-14.0.6) compila sem problemas. 
+Temos dois outros projetos, [`llvm-bindings`](https://github.com/DesignLiquido/llvm-bindings) e [`llvm-windows`](https://github.com/DesignLiquido/llvm-windows), justamente para suportar essa instalação para Windows. Todo lançamento de versão em `llvm-windows` é feito a partir de uma versão do LLVM compilada no GitHub, e o `llvm-bindings` é atualizado para suportar essa versão. Por isso, é importante [seguir a paridade de versões entre os dois projetos](https://github.com/DesignLiquido/llvm-bindings?tab=readme-ov-file#compatibility). Toda versão maior deste projeto segue a mesma versão maior do `llvm-bindings`, e toda versão menor deste projeto segue a mesma versão menor do `llvm-bindings`.
 
-Você precisará baixar os fontes do projeto ([link direto aqui](https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-14.0.6.zip)), o instalador do CMake, que [pode ser a versão mais recente](https://cmake.org/download/) com todas as opções padrão marcadas no instalador, e algum Visual Studio versões 2019 ou mais recente. [Há uma versão Community que é gratuita](https://visualstudio.microsoft.com/vs/community/). Ao executar o instalador do Visual Studio, marque a opção "Desenvolvimento em Desktop com C++" (ou, em inglês, _"Desktop Development with C++"_). 
+Como exemplo, digamos que você quer instalar a versão 1 deste pacote, cuja paridade com `llvm-bindings` também é a versão 1. `llvm-bindings` na versão 1 utiliza o LLVM 15. A versão correspondente do `llvm-windows` é a versão 15.0.7, [listada aqui](https://github.com/DesignLiquido/llvm-windows/releases). Baixe o arquivo zip correspondente e descompacte o arquivo em um diretório qualquer (por exemplo, `C:\Estudos`). No exemplo do LLVM 15, o diretório descompactado deve ser `C:\Estudos\LLVM-15.0.7-win64`. Dentro deste diretório, deve haver um subdiretório `bin`, ou seja, `C:\Estudos\LLVM-15.0.7-win64\bin`, que contém os arquivos executáveis do LLVM, como `clang.exe` e `opt.exe`.
 
-Baixados os fontes do projeto, descompacte o arquivo em um diretório qualquer (por exemplo, `C:\Estudos`). Feito isso, abra um prompt de comando (ou uma janela do PowerShell), navegue até o diretório descompactado do LLVM (por exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6`) e dentro deve haver um diretório `llvm`, ou seja, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm`. Neste diretório, execute os seguintes comandos:
+Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando o diretório do `llvm-windows` que baixamos, estes arquivos vivem dentro do subdiretório `lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\LLVM-15.0.7-win64\lib\cmake\llvm`.
+
+#### Alternativa: compilando fontes do LLVM
+
+Você precisará baixar os fontes do projeto ([link direto aqui](https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-15.0.7.zip)), o instalador do CMake, que [pode ser a versão mais recente](https://cmake.org/download/) com todas as opções padrão marcadas no instalador, e algum Visual Studio versões 2022 ou mais recente. [Há uma versão Community que é gratuita](https://visualstudio.microsoft.com/vs/community/). Ao executar o instalador do Visual Studio, marque a opção "Desenvolvimento em Desktop com C++" (ou, em inglês, _"Desktop Development with C++"_). 
+
+Baixado o LLVM e instalados Visual Studio Code e CMake, abra um prompt de comando (ou uma janela do PowerShell), navegue até o diretório descompactado do LLVM (por exemplo, `C:\Estudos\llvm-project-llvmorg-15.0.7`) e dentro deve haver um diretório `llvm`, ou seja, `C:\Estudos\llvm-project-llvmorg-15.0.7\llvm`. Neste diretório, execute os seguintes comandos:
 
 ```powershell
 mkdir build
@@ -67,18 +73,27 @@ cmake -Thost=x64 -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_INCLUDE_TESTS=OFF ..
 cmake --build . --config Release
 ```
 
-Após esses comandos, uma versão funcional do LLVM estará no diretório `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\Release\bin`. 
+Após esses comandos, uma versão funcional do LLVM estará no diretório `C:\Estudos\llvm-project-llvmorg-15.0.7\llvm\build\Release\bin`. 
 
-Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando os fontes do LLVM que baixamos, estes arquivos vivem dentro do subdiretório `llvm\build\lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\llvm-project-llvmorg-14.0.6\llvm\build\lib\cmake\llvm`. 
+Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra variável de ambiente chamada `CMAKE_PREFIX_PATH`. Esta variável guarda o diretório que contém os arquivos `.cmake` necessários para que `llvm-bindings` saiba como construir o pacote no ambiente local. Considerando os fontes do LLVM que baixamos, estes arquivos vivem dentro do subdiretório `llvm\build\lib\cmake\llvm`. No nosso exemplo, `C:\Estudos\llvm-project-llvmorg-15.0.7\llvm\build\lib\cmake\llvm`. 
 
-Finalmente, execute:
+#### Verificando a instalação
+
+Seja qual for a forma que você escolheu para instalar o LLVM, é importante verificar se a instalação foi bem-sucedida. Para isso, abra um terminal (Prompt de Comando ou PowerShell) e execute os seguintes comandos:
+
+```powershell
+clang --version
+opt --version
+```
+
+Se ambos imprimirem informações sobre a versão do LLVM, então a instalação foi bem-sucedida e o `PATH` do sistema está configurado corretamente.
+
+O `cmake-js` precisa estar instalado globalmente e visível no `PATH` do sistema para que o CMake consiga localizá-lo durante a construção do pacote nativo (`llvm-bindings.node`). Após instalar com `yarn global add cmake-js`, certifique-se de que o diretório de binários globais do Yarn (ex.: `%LOCALAPPDATA%\Yarn\bin`) esteja no `PATH` do sistema.
 
 ```powershell
 yarn global add cmake-js
 yarn
 ```
-
-O `cmake-js` precisa estar instalado globalmente e visível no `PATH` do sistema para que o CMake consiga localizá-lo durante a construção do pacote nativo (`llvm-bindings.node`). Após instalar com `yarn global add cmake-js`, certifique-se de que o diretório de binários globais do Yarn (ex.: `%LOCALAPPDATA%\Yarn\bin`) esteja no `PATH` do sistema.
 
 A instalação e construção de pacotes deve ocorrer sem erros.
 
