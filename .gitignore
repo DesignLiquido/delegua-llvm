@@ -1,6 +1,7 @@
 *.ll
 
 coverage/
+dist/
 node_modules/
 
 .claude/
