@@ -74,8 +74,11 @@ Adicione o diretório na sua variável de ambiente `PATH`, e crie uma outra vari
 Finalmente, execute:
 
 ```powershell
+yarn global add cmake-js
 yarn
 ```
+
+O `cmake-js` precisa estar instalado globalmente e visível no `PATH` do sistema para que o CMake consiga localizá-lo durante a construção do pacote nativo (`llvm-bindings.node`). Após instalar com `yarn global add cmake-js`, certifique-se de que o diretório de binários globais do Yarn (ex.: `%LOCALAPPDATA%\Yarn\bin`) esteja no `PATH` do sistema.
 
 A instalação e construção de pacotes deve ocorrer sem erros.
 
@@ -100,6 +103,11 @@ Todo o código gerado por esta biblioteca _não é otimizado_, e nem precisa ser
 ```sh
 opt -S meu_programa.ll > meu_programa.otimizado.ll
 ```
+
+## Contribuindo
+
+- Nomes de variáveis, comentários e documentação devem estar em português, pois o projeto é em português.
+- Utilize o Yarn como gerenciador de pacotes. Não utilize o `npm` diretamente.
 
 ## Inspiração
 

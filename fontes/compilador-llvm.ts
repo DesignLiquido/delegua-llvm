@@ -28,7 +28,7 @@ import {
 } from '@designliquido/delegua';
 import { VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
-import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from 'llvm-bindings';
+import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from '@designliquido/llvm-bindings';
 
 import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 import { VariavelEscopo } from './variavel-escopo';

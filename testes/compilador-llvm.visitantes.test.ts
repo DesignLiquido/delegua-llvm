@@ -1,5 +1,5 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
-import llvm from 'llvm-bindings';
+import llvm from '@designliquido/llvm-bindings';
 import { VariavelEscopo } from '../fontes/variavel-escopo';
 
 describe('Compilador LLVM - visitantes', () => {
