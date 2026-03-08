@@ -11,7 +11,7 @@ describe('Compilador - Base', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123)']);
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @fmt, i32 0, i32 0), double 1.230000e+02)');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva(ptr @fmt, double 1.230000e+02)');
     });
 
     it('Escreva com texto', async () => {

@@ -22,7 +22,7 @@ describe('Compilador - Exceções', () => {
         expect(resultado).toContain('pegue_corpo');
         expect(resultado).toContain('pegue_landing');
         expect(resultado).toContain('pegue_corpo');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Try-catch simples (sem finally)', async () => {
@@ -42,7 +42,7 @@ describe('Compilador - Exceções', () => {
         expect(resultado).toContain('pegue_landing');
         expect(resultado).toContain('tente_apos');
         expect(resultado).not.toContain('finalmente_corpo');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Try-catch com parâmetro de erro', async () => {
@@ -59,9 +59,9 @@ describe('Compilador - Exceções', () => {
         expect(resultado).toContain('tente_corpo');
         expect(resultado).toContain('pegue_corpo');
         expect(resultado).toContain('pegue_landing');
-        expect(resultado).toContain('call i8* @__cxa_begin_catch');
+        expect(resultado).toContain('call ptr @__cxa_begin_catch');
         expect(resultado).toContain('call void @__cxa_end_catch');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Try-catch-finally com parâmetro de erro', async () => {
@@ -82,9 +82,9 @@ describe('Compilador - Exceções', () => {
         expect(resultado).toContain('pegue_landing');
         expect(resultado).toContain('finalmente_corpo');
         expect(resultado).toContain('tente_apos');
-        expect(resultado).toContain('call i8* @__cxa_begin_catch');
+        expect(resultado).toContain('call ptr @__cxa_begin_catch');
         expect(resultado).toContain('call void @__cxa_end_catch');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Try apenas com finally (sem catch)', async () => {
@@ -121,8 +121,8 @@ describe('Compilador - Exceções', () => {
         expect(resultado).toContain('tente_apos');
         expect(resultado).toContain('pegue_corpo');
         expect(resultado).toContain('pegue_landing');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Try aninhado', async () => {
@@ -145,7 +145,7 @@ describe('Compilador - Exceções', () => {
         expect(matchesTenteCorpo).toBeGreaterThanOrEqual(2);
         expect(matchesPegueLanding).toBeGreaterThanOrEqual(2);
         expect(resultado).toContain('pegue_corpo');
-        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, i8*, i8*)');
+        expect(resultado).toContain('declare i32 @__gxx_personality_v0(i32, i32, i64, ptr, ptr)');
     });
 
     it('Falhar sem try-catch', async () => {

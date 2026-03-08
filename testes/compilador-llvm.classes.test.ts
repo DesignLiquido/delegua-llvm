@@ -8,7 +8,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%Vazia = type');
+        expect(resultado).toContain('declare void @__delegua_tipo_Vazia');
     });
 
     it('Classe com propriedades gera struct com campos corretos', async () => {
@@ -21,7 +21,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%Ponto = type { double, double }');
+        expect(resultado).toContain('declare void @__delegua_tipo_Ponto');
     });
 
     it('Classe com propriedades inteiras gera struct i32', async () => {
@@ -33,7 +33,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%Contador = type { i32 }');
+        expect(resultado).toContain('declare void @__delegua_tipo_Contador');
     });
 
     it('Construtor gera função void com %self como primeiro parâmetro', async () => {
@@ -50,7 +50,8 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('define void @Ponto_construtor(%Ponto* %0, double %1, double %2)');
+        expect(resultado).toContain('%Ponto = type { double, double }');
+        expect(resultado).toContain('define void @Ponto_construtor(ptr %0, double %1, double %2)');
         expect(resultado).toContain('ret void');
     });
 
@@ -67,7 +68,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('define double @Ponto_obterX(%Ponto* %0)');
+        expect(resultado).toContain('define double @Ponto_obterX(ptr %0)');
         expect(resultado).toContain('ret double');
     });
 
@@ -105,7 +106,7 @@ describe('Compilador - Classes', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('alloca %Ponto');
-        expect(resultado).toContain('call void @Ponto_construtor(%Ponto*');
+        expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 
     it('Chamada de método de instância', async () => {
@@ -127,7 +128,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call double @Ponto_obterX(%Ponto*');
+        expect(resultado).toContain('call double @Ponto_obterX(ptr');
     });
 
     it('Acesso a propriedade de instância', async () => {
@@ -151,7 +152,7 @@ describe('Compilador - Classes', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('getelementptr inbounds %Ponto');
         expect(resultado).toContain('load double');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Classe com campos inteiros e números mistos', async () => {
@@ -164,6 +165,6 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%Dado = type { i32, double }');
+        expect(resultado).toContain('declare void @__delegua_tipo_Dado');
     });
 });

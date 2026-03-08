@@ -22,7 +22,7 @@ describe('Compilador - Longo', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%x = alloca i64');
         expect(resultado).toContain('%ld');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Função com parâmetro e retorno longo', async () => {
@@ -92,6 +92,6 @@ describe('Compilador - Longo', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%max = alloca i64');
         expect(resultado).toContain('store i64');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 });

@@ -8,8 +8,8 @@ describe('Compilador - Leia', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call i8* @leia');
-        expect(resultado).toContain('store i8* %0, i8** %nome, align 8');
+        expect(resultado).toContain('call ptr @leia');
+        expect(resultado).toContain('store ptr %0, ptr %nome, align 8');
     });
 
     it('Leia e escreva', async () => {
@@ -20,9 +20,9 @@ describe('Compilador - Leia', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call i8* @leia');
-        expect(resultado).toContain('call double @numero(i8* %0)');
-        expect(resultado).toContain('store double %1, double* %idade, align 8');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call ptr @leia');
+        expect(resultado).toContain('call double @numero(ptr %0)');
+        expect(resultado).toContain('store double %1, ptr %idade, align 8');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 });

@@ -11,7 +11,7 @@ describe('Compilador - Comentários', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%x = alloca i32, align 4');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Comentário entre declarações não interfere na compilação', async () => {
@@ -26,7 +26,7 @@ describe('Compilador - Comentários', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%a = alloca i32, align 4');
         expect(resultado).toContain('%b = alloca i32, align 4');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Comentário dentro de função não interfere na compilação', async () => {

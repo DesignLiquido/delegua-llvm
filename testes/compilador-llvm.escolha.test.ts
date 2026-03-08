@@ -217,6 +217,6 @@ describe('Compilador - Escolha', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('escolha_caso_');
         expect(resultado).toContain('escolha_padrao');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 });

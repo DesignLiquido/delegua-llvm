@@ -11,7 +11,7 @@ describe('Compilador - Constantes', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%pi = alloca double, align 8');
         expect(resultado).toContain('store double');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Declaração de constante com tipo explícito inteiro', async () => {
@@ -24,7 +24,7 @@ describe('Compilador - Constantes', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%idade = alloca i32, align 4');
         expect(resultado).toContain('store i32');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Declaração de constante com tipo explícito texto', async () => {
@@ -35,9 +35,9 @@ describe('Compilador - Constantes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%nome = alloca i8*, align 8');
-        expect(resultado).toContain('store i8*');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('%nome = alloca ptr, align 8');
+        expect(resultado).toContain('store ptr');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Reatribuição de constante deve lançar erro', async () => {

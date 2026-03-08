@@ -18,7 +18,7 @@ describe('Compilador - Se', () => {
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
         expect(resultado).toContain('br i1 %1, label %se_entao, label %se_senao');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Sem senão', async () => {
@@ -36,7 +36,7 @@ describe('Compilador - Se', () => {
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
         expect(resultado).toContain('br i1');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Com senão se', async () => {
@@ -57,7 +57,7 @@ describe('Compilador - Se', () => {
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Múltiplos senão se', async () => {
@@ -82,7 +82,7 @@ describe('Compilador - Se', () => {
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Operador menor que', async () => {

@@ -119,7 +119,7 @@ describe('Compilador - Funções', () => {
         expect(resultado).toContain('  ret i32 %2');
         expect(resultado).toContain('  %c = alloca i32, align 4');
         expect(resultado).toContain('  %0 = call i32 @soma(i32 1, i32 2)');
-        expect(resultado).toContain('  store i32 %0, i32* %c, align 4');
+        expect(resultado).toContain('  store i32 %0, ptr %c, align 4');
     });
 
     it('Chamada de função, número', async () => {

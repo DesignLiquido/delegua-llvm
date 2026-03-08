@@ -11,7 +11,7 @@ describe('Compilador - Para', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%i = alloca double, align 8');
-        expect(resultado).toContain('store double 1.000000e+00, double* %i, align 8');
+        expect(resultado).toContain('store double 1.000000e+00, ptr %i, align 8');
         expect(resultado).toContain('br label %para_cabeca');
         expect(resultado).toContain('para_cabeca:');
         expect(resultado).toContain('para_corpo:');
@@ -22,7 +22,7 @@ describe('Compilador - Para', () => {
         expect(resultado).toContain('br i1 %0, label %para_corpo, label %para_apos');
         expect(resultado).toContain('fadd double');
         expect(resultado).toContain('1.000000e+00');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
     it('Laço com condicional', async () => {
@@ -39,7 +39,7 @@ describe('Compilador - Para', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%i = alloca double, align 8');
-        expect(resultado).toContain('store double 1.000000e+00, double* %i, align 8');
+        expect(resultado).toContain('store double 1.000000e+00, ptr %i, align 8');
         expect(resultado).toContain('br label %para_cabeca');
         expect(resultado).toContain('para_cabeca:');
         expect(resultado).toContain('para_corpo:');
@@ -54,6 +54,6 @@ describe('Compilador - Para', () => {
         expect(resultado).toContain('se_entao');
         expect(resultado).toContain('se_senao');
         expect(resultado).toContain('se_apos');
-        expect(resultado).toContain('call i32 (i8*, ...) @escreva');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 });
