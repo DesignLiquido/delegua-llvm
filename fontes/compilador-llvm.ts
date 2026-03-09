@@ -210,7 +210,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!this.classesComMarcadorTipo.has(nomeClasse)) {
             const tipoFuncaoMarcador = llvm.FunctionType.get(
                 llvm.Type.getVoidTy(this.contexto),
-                [llvm.PointerType.get(tipoStruct, 0)],
+                [llvm.PointerType.get(this.contexto, 0)],
                 false
             );
             llvm.Function.Create(
@@ -223,7 +223,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         // 2. Compilar cada método como função LLVM com %NomeClasse* como primeiro parâmetro
-        const tipoSelf = llvm.PointerType.get(tipoStruct, 0);
+        const tipoSelf = llvm.PointerType.get(this.contexto, 0);
         if (!this.metodosClasse.has(nomeClasse)) {
             this.metodosClasse.set(nomeClasse, new Map());
         }
@@ -465,7 +465,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoPontoPouso = llvm.StructType.get(
             this.contexto,
             [
-                this.montador.getInt8PtrTy(),
+                this.montador.getPtrTy(),
                 this.montador.getInt32Ty()
             ]
         );
@@ -511,7 +511,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);
 
         const pontoPouso = this.montador.CreateLandingPad(tipoPontoPouso, 1, 'landingpad');
-        const nullPtr = llvm.Constant.getNullValue(this.montador.getInt8PtrTy());
+        const nullPtr = llvm.Constant.getNullValue(this.montador.getPtrTy());
         pontoPouso.addClause(nullPtr);
 
         if (blocoPegueCorpo && temCatch) {
@@ -1342,10 +1342,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'função<número>':
                 return this.montador.getDoubleTy();
             case 'texto':
-                return llvm.Type.getInt8PtrTy(this.contexto);
+                return this.montador.getPtrTy();
             default:
                 if (this.registroClasses.has(tipoDelegua)) {
-                    return llvm.PointerType.get(this.registroClasses.get(tipoDelegua), 0);
+                    return llvm.PointerType.get(this.contexto, 0);
                 }
         }
     }
@@ -2257,7 +2257,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoFuncaoPrinter = llvm.FunctionType.get(
             tipoRetornoPrinter,
             [
-                this.montador.getInt8PtrTy(0)
+                this.montador.getPtrTy()
             ],
             true
         );
@@ -2270,12 +2270,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
 
         // void* leia(const char* texto, const char *fmt)
-        const tipoRetornoLeia = this.montador.getInt8PtrTy();
+        const tipoRetornoLeia = this.montador.getPtrTy();
         const tipoFuncaoLeia = llvm.FunctionType.get(
             tipoRetornoLeia,
             [
-                this.montador.getInt8PtrTy(),
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy(),
+                this.montador.getPtrTy()
             ],
             false
         );
@@ -2293,7 +2293,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoFuncaoInteiro = llvm.FunctionType.get(
             tipoRetornoInteiro,
             [
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy()
             ],
             false
         )
@@ -2310,7 +2310,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoFuncaoNumero = llvm.FunctionType.get(
             tipoRetornoNumero,
             [
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy()
             ],
             false
         )
@@ -2327,7 +2327,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoFuncaoFalhar = llvm.FunctionType.get(
             tipoRetornoFalhar,
             [
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy()
             ],
             false
         );
@@ -2345,8 +2345,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 this.montador.getInt32Ty(),
                 this.montador.getInt32Ty(),
                 llvm.Type.getInt64Ty(this.contexto),
-                this.montador.getInt8PtrTy(),
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy(),
+                this.montador.getPtrTy()
             ],
             false
         );
@@ -2359,9 +2359,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
 
         const tipoBeginCatch = llvm.FunctionType.get(
-            this.montador.getInt8PtrTy(),
+            this.montador.getPtrTy(),
             [
-                this.montador.getInt8PtrTy()
+                this.montador.getPtrTy()
             ],
             false
         );
