@@ -61,6 +61,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private classesComMarcadorTipo: Set<string> = new Set();
     private contadoresNaoNegativos: Set<string> = new Set();
     private tipoEstruturaVetor: llvm.StructType = null;
+    private pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock }> = [];
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -393,7 +394,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateCondBr(cond, blocoCorpo, blocoApos);
 
         this.montador.SetInsertPoint(blocoCorpo);
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCond });
         await this.aceitarListaDeclaracoes(declaracao.corpo.declaracoes);
+        this.pilhaBlocosLoop.pop();
         this.montador.CreateBr(blocoCond);
 
         this.montador.SetInsertPoint(blocoApos);
@@ -1280,10 +1283,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve(null);
     }
 
-    // TODO: Verificar se está correto.
     visitarExpressaoSustar(declaracao?: Sustar): SustarQuebra | void {
-        // Controle de fluxo (suspender) não mapeado aqui.
-        return;
+        if (this.montador && this.pilhaBlocosLoop.length > 0) {
+            const { blocoSaida } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            this.montador.CreateBr(blocoSaida);
+            // Cria bloco morto para absorver instruções subsequentes no mesmo bloco (nunca alcançado).
+            const funcaoAtual = this.montador.GetInsertBlock().getParent();
+            const blocoMorto = llvm.BasicBlock.Create(this.contexto, 'sustar_morto', funcaoAtual);
+            this.montador.SetInsertPoint(blocoMorto);
+        }
     }
 
     async visitarExpressaoTupla(expressao: Tupla): Promise<any> {
@@ -1828,7 +1836,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateCondBr(condicao, blocoCorpoLoop, blocoAposLoop);
 
         this.montador.SetInsertPoint(blocoCorpoLoop);
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoAposLoop, blocoRetorno: blocoIncremento });
         await this.processarDeclaracoesBloco(declaracao.corpo.declaracoes);
+        this.pilhaBlocosLoop.pop();
 
         this.montador.CreateBr(blocoIncremento);
         this.montador.SetInsertPoint(blocoIncremento);
@@ -2225,6 +2235,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     visitarExpressaoContinua(declaracao?: Continua): ContinuarQuebra {
+        if (this.montador && this.pilhaBlocosLoop.length > 0) {
+            const { blocoRetorno } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            this.montador.CreateBr(blocoRetorno);
+            // Cria bloco morto para absorver instruções subsequentes no mesmo bloco (nunca alcançado).
+            const funcaoAtual = this.montador.GetInsertBlock().getParent();
+            const blocoMorto = llvm.BasicBlock.Create(this.contexto, 'continua_morto', funcaoAtual);
+            this.montador.SetInsertPoint(blocoMorto);
+        }
         return new ContinuarQuebra();
     }
 
@@ -2234,11 +2252,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return argumento;
         }
 
-        // TODO: Terminar.
         if (tipoParametro === 'inteiro') {
             if (tipoArgumento === 'número') {
                 argumento.tipo = 'inteiro';
                 argumento.valor = Math.trunc(argumento.valor);
+            } else if (tipoArgumento === 'lógico') {
+                argumento.tipo = 'inteiro';
+                argumento.valor = argumento.valor ? 1 : 0;
             }
         } else if (tipoParametro === 'longo') {
             if (tipoArgumento === 'número') {
@@ -2246,6 +2266,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 argumento.valor = Math.trunc(argumento.valor);
             } else if (tipoArgumento === 'inteiro') {
                 argumento.tipo = 'longo';
+            }
+        } else if (tipoParametro === 'número') {
+            if (tipoArgumento === 'inteiro' || tipoArgumento === 'longo') {
+                argumento.tipo = 'número';
             }
         }
 
@@ -2380,6 +2404,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         new APFloat(expressao.valor as number)
                     )
                 );
+            case 'lógico':
+                return Promise.resolve(
+                    ConstantInt.get(
+                        this.contexto,
+                        new APInt(1, expressao.valor ? 1 : 0)
+                    )
+                );
             case 'texto':
                 return Promise.resolve(
                     this.montador.CreateGlobalStringPtr(
@@ -2389,24 +2420,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         this.modulo
                     )
                 );
-            /* case 'inteiro':
-                return Promise.resolve(
-                    this.montador.CreateRet(
-                        ConstantInt.get(
-                            this.contexto,
-                            new APInt(32, expressao.valor)
-                        )
-                    )
-                );
-            case 'número':
-                return Promise.resolve(
-                    this.montador.CreateRet(
-                        ConstantFP.get(
-                            this.montador.getFloatTy(),
-                            new APFloat(expressao.valor)
-                        )
-                    )
-                ); */
         }
     }
 

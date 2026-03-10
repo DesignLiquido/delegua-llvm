@@ -1,6 +1,7 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 import llvm from '@designliquido/llvm-bindings';
 import { VariavelEscopo } from '../fontes/variavel-escopo';
+import { PilhaVariaveisEscopo } from '../fontes/pilha-variaveis-escopo';
 
 describe('Compilador LLVM - visitantes', () => {
     let compilador: CompiladorLLVM;
@@ -456,6 +457,81 @@ describe('Compilador LLVM - visitantes', () => {
             expect(r3.valor).toBe(10);
         });
 
+        it('Resolver argumento de chamada converte lógico para inteiro', () => {
+            (compilador as any).resolverTipoConstruto = jest
+                .fn()
+                .mockReturnValueOnce('lógico')
+                .mockReturnValueOnce('lógico');
+
+            const verdadeiro = { tipo: 'lógico', valor: true };
+            const falso = { tipo: 'lógico', valor: false };
+
+            const r1 = (compilador as any).resolverArgumentoChamada(verdadeiro, 'inteiro');
+            const r2 = (compilador as any).resolverArgumentoChamada(falso, 'inteiro');
+
+            expect(r1.tipo).toBe('inteiro');
+            expect(r1.valor).toBe(1);
+            expect(r2.tipo).toBe('inteiro');
+            expect(r2.valor).toBe(0);
+        });
+
+        it('Resolver argumento de chamada amplia inteiro e longo para número', () => {
+            (compilador as any).resolverTipoConstruto = jest
+                .fn()
+                .mockReturnValueOnce('inteiro')
+                .mockReturnValueOnce('longo');
+
+            const deInteiro = { tipo: 'inteiro', valor: 5 };
+            const deLongo = { tipo: 'longo', valor: 10 };
+
+            const r1 = (compilador as any).resolverArgumentoChamada(deInteiro, 'número');
+            const r2 = (compilador as any).resolverArgumentoChamada(deLongo, 'número');
+
+            expect(r1.tipo).toBe('número');
+            expect(r1.valor).toBe(5);
+            expect(r2.tipo).toBe('número');
+            expect(r2.valor).toBe(10);
+        });
+
+        it('tipoElementoVetor extrai tipo de vetor<T> e T[]', () => {
+            expect((compilador as any).tipoElementoVetor('inteiro[]')).toBe('inteiro');
+            expect((compilador as any).tipoElementoVetor('vetor<número>')).toBe('número');
+            expect((compilador as any).tipoElementoVetor('vetor')).toBe('inteiro');
+        });
+
+        it('incrementoEhPositivo retorna falso para incremento não-unário', () => {
+            expect((compilador as any).incrementoEhPositivo(null, 'i')).toBe(false);
+            expect((compilador as any).incrementoEhPositivo({ tipo: 'outro' }, 'i')).toBe(false);
+        });
+
+        it('armazenarEmVariavel converte inteiro para número e vice-versa', () => {
+            const compiladorLocal = new CompiladorLLVM();
+            const ponteiro = { id: 'ptr', getType: jest.fn().mockReturnValue({ constructor: { name: 'PointerType' } }) } as any;
+            const destino = new VariavelEscopo(ponteiro, undefined, 'número');
+
+            const createSIToFP = jest.fn().mockReturnValue({ id: 'converted' });
+            const createFPToSI = jest.fn().mockReturnValue({ id: 'converted2' });
+            const createStore = jest.fn();
+
+            (compiladorLocal as any).montador = {
+                CreateSIToFP: createSIToFP,
+                CreateFPToSI: createFPToSI,
+                CreateStore: createStore,
+                getInt32Ty: jest.fn().mockReturnValue({}),
+                getDoubleTy: jest.fn().mockReturnValue({}),
+            };
+
+            const valorInteiro = { id: 'val_int' } as any;
+            const valorNumero = { id: 'val_num' } as any;
+
+            (compiladorLocal as any).armazenarEmVariavel(destino, valorInteiro, 'número', 'inteiro');
+            expect(createSIToFP).toHaveBeenCalledWith(valorInteiro, expect.anything(), 'int_para_double');
+
+            const destinoInteiro = new VariavelEscopo(ponteiro, undefined, 'inteiro');
+            (compiladorLocal as any).armazenarEmVariavel(destinoInteiro, valorNumero, 'inteiro', 'número');
+            expect(createFPToSI).toHaveBeenCalledWith(valorNumero, expect.anything(), 'double_para_int');
+        });
+
         it('Binaria DIFERENTE com tipo inteiro usa comparação inteira', async () => {
             const compiladorLocal = new CompiladorLLVM();
 
@@ -846,6 +922,22 @@ describe('Compilador LLVM - visitantes', () => {
             expect((compiladorLocal as any).modulo.getFunction).toHaveBeenCalledWith('Pessoa_falar');
             expect((compiladorLocal as any).montador.CreateCall).toHaveBeenCalledWith('funcao_llvM', [ponteiroObjeto, ponteiroArgumento]);
             expect(resultado).toBe('resultado_call');
+        });
+
+        it('PilhaVariaveisEscopo lança erro em topoDaPilha quando vazia', () => {
+            const pilha = new PilhaVariaveisEscopo();
+            expect(() => pilha.topoDaPilha()).toThrow('Pilha vazia.');
+        });
+
+        it('PilhaVariaveisEscopo lança erro em removerUltimo quando vazia', () => {
+            const pilha = new PilhaVariaveisEscopo();
+            expect(() => pilha.removerUltimo()).toThrow('Pilha vazia.');
+        });
+
+        it('PilhaVariaveisEscopo lança erro em obterValor quando variável não encontrada', () => {
+            const pilha = new PilhaVariaveisEscopo();
+            pilha.empilhar(new Map());
+            expect(() => pilha.obterValor('naoExiste')).toThrow("Variável não definida: 'naoExiste'.");
         });
 
         it('ChamarMetodoInstancia resolve classe via variável quando objeto não é VariavelEscopo', async () => {
