@@ -97,11 +97,59 @@ yarn
 
 A instalação e construção de pacotes deve ocorrer sem erros.
 
-## Compilando seu programa para código de máquina
+## Uso
 
-Para compilar seu código para código de máquina, utilizamos o [Clang](https://clang.llvm.org/), que é o compilador do LLVM para C e C++.
+Com todos os pré-requisitos instalados, o compilador pode ser usado diretamente via `npx`, sem necessidade de instalação global:
 
-O comando para compilar seu programa Delégua já convertido para LLVM é:
+```sh
+npx @designliquido/delegua-llvm <arquivo.delegua>
+```
+
+O compilador executa todo o pipeline automaticamente:
+
+1. Lê o código-fonte Delégua
+2. Gera a representação intermediária LLVM (arquivo `.ll`)
+3. Compila as bibliotecas nativas
+4. Linka tudo e gera o binário executável
+5. Remove os arquivos temporários
+
+O binário gerado ficará no mesmo diretório do arquivo de entrada, com o mesmo nome (sem extensão).
+
+### Opções
+
+| Opção | Descrição |
+|-------|-----------|
+| `-o <nome>` | Define o nome do binário de saída |
+
+Exemplo com nome de saída personalizado:
+
+```sh
+npx @designliquido/delegua-llvm meu_programa.delegua -o saida
+```
+
+### Variáveis de ambiente
+
+| Variável | Valor | Descrição |
+|----------|-------|-----------|
+| `DELEGUA_DEBUG` | `true` | Exibe o LLVM IR gerado no console antes de compilar |
+
+Exemplo:
+
+```sh
+DELEGUA_DEBUG=true npx @designliquido/delegua-llvm meu_programa.delegua
+```
+
+### Executando o binário gerado
+
+Após a compilação, execute o binário gerado diretamente:
+
+```sh
+./meu_programa
+```
+
+## Compilação manual (avançado)
+
+Caso queira compilar manualmente a partir de um arquivo `.ll` já gerado, utilize o [Clang](https://clang.llvm.org/):
 
 ```sh
 clang meu_programa.ll -o meu_programa

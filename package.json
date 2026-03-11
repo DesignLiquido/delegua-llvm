@@ -4,6 +4,9 @@
   "description": "Biblioteca de conversão de código Delégua na representação intermediária de código LLVM.",
   "main": "index.js",
   "types": "index.d.ts",
+  "bin": {
+    "delegua-llvm": "./dist/ilc.js"
+  },
   "author": "Leonel Sanches da Silva",
   "license": "MIT",
   "homepage": "https://github.com/DesignLiquido/delegua-llvm#readme",
@@ -25,7 +28,7 @@
   },
   "dependencies": {
     "@designliquido/delegua": "^1.13.0",
-    "@designliquido/llvm-bindings": "^8.0.0",
+    "@designliquido/llvm-bindings": "^9.0.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {

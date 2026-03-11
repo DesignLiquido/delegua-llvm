@@ -1,7 +1,9 @@
-import { CompiladorLLVM } from './compilador-llvm';
+#!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+
+import { CompiladorLLVM } from './compilador-llvm';
 
 const LOGO = `
 ╔══════════════════════════════════════════════════════════════════╗
@@ -21,7 +23,7 @@ const LOGO = `
 ║                    ╚══════╝╚══════╝ ╚═══╝  ╚═╝     ╚═╝           ║
 ║                                                                  ║
 ║              Compilador Delégua → LLVM → Nativo                  ║
-║                         v0.1.0                                   ║
+║                         v9.0.0                                   ║
 ╚══════════════════════════════════════════════════════════════════╝
 `;
 
@@ -93,8 +95,7 @@ async function principal() {
     
     if (args.length === 0) {
         log('Uso:', CORES.amarelo);
-        log('  npx ts-node ilc.ts <arquivo.delegua>', CORES.reset);
-        log('  yarn executar <arquivo.delegua>', CORES.reset);
+        log('  npx @designliquido/delegua-llvm <arquivo.delegua>', CORES.reset);
         console.log('');
         log('Opções:', CORES.amarelo);
         log('  -o <nome>    Nome do binário de saída', CORES.reset);
