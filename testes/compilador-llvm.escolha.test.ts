@@ -219,4 +219,53 @@ describe('Compilador - Escolha', () => {
         expect(resultado).toContain('escolha_padrao');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
+
+    it('Escolha com discriminante inteiro usa instrução switch nativa do LLVM', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao classificar(n: inteiro): inteiro {',
+            '    var resultado: inteiro = 0',
+            '    escolha (n) {',
+            '        caso 1:',
+            '            resultado = 10',
+            '        caso 2:',
+            '            resultado = 20',
+            '        caso 3:',
+            '            resultado = 30',
+            '    }',
+            '    retorna resultado',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        // Instrução switch nativa: sem blocos de comparação icmp.
+        expect(resultado).toContain('switch i32');
+        expect(resultado).toContain('escolha_corpo_');
+        expect(resultado).toContain('escolha_apos');
+        expect(resultado).not.toContain('escolha_caso_');
+    });
+
+    it('Escolha com discriminante inteiro e caso padrão usa switch nativa com destino padrão', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao rotulo(n: inteiro): inteiro {',
+            '    var r: inteiro = 0',
+            '    escolha (n) {',
+            '        caso 1:',
+            '            r = 1',
+            '        caso 2:',
+            '            r = 2',
+            '        padrao:',
+            '            r = 99',
+            '    }',
+            '    retorna r',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('switch i32');
+        expect(resultado).toContain('escolha_padrao');
+        expect(resultado).toContain('escolha_apos');
+        expect(resultado).not.toContain('escolha_caso_');
+    });
 });

@@ -1,5 +1,40 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
+describe('Compilador - Fazer', () => {
+    it('Laço fazer enquanto executa corpo ao menos uma vez', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var i: inteiro = 0',
+            'fazer {',
+            '    i = i + 1',
+            '} enquanto (i < 5)'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('fazer_corpo:');
+        expect(resultado).toContain('fazer_cond:');
+        expect(resultado).toContain('fazer_apos:');
+        // Corpo deve ser alcançado antes da condição (estrutura do-while).
+        expect(resultado).toContain('br label %fazer_corpo');
+    });
+
+    it('Laço fazer enquanto com escreva no corpo', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var n: inteiro = 3',
+            'fazer {',
+            '    escreva(n)',
+            '    n = n + 1',
+            '} enquanto (n < 10)'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('fazer_corpo:');
+        expect(resultado).toContain('fazer_cond:');
+        expect(resultado).toContain('call i32 (ptr, ...) @escreva');
+    });
+});
+
 describe('Compilador - Enquanto', () => {
     it('Laço simples enquanto', async () => {
         const compilador = new CompiladorLLVM();

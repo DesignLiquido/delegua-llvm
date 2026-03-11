@@ -35,7 +35,7 @@ describe('Compilador - Longo', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i64 @dobro(i64 %0)');
-        expect(resultado).toContain('add i64');
+        expect(resultado).toContain('add nsw i64');
         expect(resultado).toContain('ret i64');
     });
 
@@ -49,7 +49,7 @@ describe('Compilador - Longo', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i64 @soma(i64 %0, i64 %1)');
-        expect(resultado).toContain('  %2 = add i64 %0, %1');
+        expect(resultado).toContain('  %2 = add nsw i64 %0, %1');
         expect(resultado).toContain('  ret i64 %2');
     });
 
@@ -63,7 +63,7 @@ describe('Compilador - Longo', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i64 @diferenca(i64 %0, i64 %1)');
-        expect(resultado).toContain('sub i64');
+        expect(resultado).toContain('sub nsw i64');
         expect(resultado).toContain('ret i64');
     });
 

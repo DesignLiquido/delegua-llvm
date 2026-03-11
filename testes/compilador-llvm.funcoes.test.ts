@@ -25,7 +25,7 @@ describe('Compilador - Funções', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i32 @soma(i32 %0, i32 %1)');
-        expect(resultado).toContain('  %2 = add i32 %0, %1');
+        expect(resultado).toContain('  %2 = add nsw i32 %0, %1');
         expect(resultado).toContain('  ret i32 %2');
     });
 
@@ -54,7 +54,7 @@ describe('Compilador - Funções', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i32 @subtracao(i32 %0, i32 %1)');
-        expect(resultado).toContain('  %2 = sub i32 %0, %1');
+        expect(resultado).toContain('  %2 = sub nsw i32 %0, %1');
         expect(resultado).toContain('  ret i32 %2');
     });
 
@@ -82,8 +82,8 @@ describe('Compilador - Funções', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i32 @encadeadas(i32 %0, i32 %1, i32 %2)');
-        expect(resultado).toContain('  %3 = add i32 %0, %1');
-        expect(resultado).toContain('  %4 = add i32 %3, %2');
+        expect(resultado).toContain('  %3 = add nsw i32 %0, %1');
+        expect(resultado).toContain('  %4 = add nsw i32 %3, %2');
         expect(resultado).toContain('  ret i32 %4');
     });
 
@@ -115,7 +115,7 @@ describe('Compilador - Funções', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i32 @soma(i32 %0, i32 %1)');
-        expect(resultado).toContain('  %2 = add i32 %0, %1');
+        expect(resultado).toContain('  %2 = add nsw i32 %0, %1');
         expect(resultado).toContain('  ret i32 %2');
         expect(resultado).toContain('  %c = alloca i32, align 4');
         expect(resultado).toContain('  %0 = call i32 @soma(i32 1, i32 2)');

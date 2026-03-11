@@ -40,7 +40,7 @@ describe('Compilador - Comentários', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('define i32 @quadrado(i32 %0)');
-        expect(resultado).toContain('mul i32');
+        expect(resultado).toContain('mul nsw i32');
         expect(resultado).toContain('ret i32');
     });
 });

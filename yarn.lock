@@ -287,10 +287,10 @@
     esprima "^4.0.1"
     lodash.clonedeep "^4.5.0"
 
-"@designliquido/llvm-bindings@^7.0.0":
-  version "7.0.0"
-  resolved "https://registry.yarnpkg.com/@designliquido/llvm-bindings/-/llvm-bindings-7.0.0.tgz#2e91ed98d83ea3d1ffd0b10369e67adad57895f2"
-  integrity sha512-JS2NYPL/cyCuiBVWDfkHnhdKGujYrbyJwBMB9SgtChl9MqaeQTcUfmB9k07yocbgKeOyEjNwU/YclfpwaNVUcA==
+"@designliquido/llvm-bindings@^8.0.0":
+  version "8.0.0"
+  resolved "https://registry.yarnpkg.com/@designliquido/llvm-bindings/-/llvm-bindings-8.0.0.tgz#81d189d2cbb574d96e7b57ca2a7f01a7f9e661bf"
+  integrity sha512-n7upiAEI3UJ0gP4ljMYq7FG3h9dWB5sfG8ZfZEMDRxR7HNG56XOYWDI8xPAWT3TG83l5gPFc8ODeGqMqtGrgHA==
   dependencies:
     bindings "^1.5.0"
     cmake-js "^8.0.0"

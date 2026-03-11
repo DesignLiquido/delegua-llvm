@@ -43,14 +43,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     montador: llvm.IRBuilder;
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
-    funcaoEscreva: llvm.Function;
-    funcaoLeia: llvm.Function;
-    funcaoInteiro: llvm.Function;
-    funcaoNumero: llvm.Function;
-    funcaoFalhar: llvm.Function;
+    funcaoEscreva: llvm.FunctionCallee;
+    funcaoLeia: llvm.FunctionCallee;
+    funcaoInteiro: llvm.FunctionCallee;
+    funcaoNumero: llvm.FunctionCallee;
+    funcaoFalhar: llvm.FunctionCallee;
     funcaoPersonalidade: llvm.Function;
-    funcaoBeginCatch: llvm.Function;
-    funcaoEndCatch: llvm.Function;
+    funcaoBeginCatch: llvm.FunctionCallee;
+    funcaoEndCatch: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -62,6 +62,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private contadoresNaoNegativos: Set<string> = new Set();
     private tipoEstruturaVetor: llvm.StructType = null;
     private pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock }> = [];
+    private contemExcecoes: boolean = false;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -144,8 +145,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     // Verifica se um llvm.Type é um ponteiro (PointerType).
+    // Usa constructor.name em vez de isPointerTy() porque o binding LLVM só registra
+    // isPointerTy() na classe Type base; chamá-la em subclasses como IntegerType via
+    // herança de protótipo falha com "Illegal invocation" no runtime do Node.js.
     protected tipoEhPonteiro(tipo: llvm.Type): boolean {
-        return tipo && tipo.constructor && tipo.constructor.name === 'PointerType';
+        return tipo?.constructor?.name === 'PointerType';
     }
 
     // Guarda um valor em uma VariavelEscopo (ou faz nothing se o destino não for ponteiro).
@@ -431,19 +435,64 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarDeclaracaoFazer(declaracao: Fazer): Promise<any> {
         const declaracaoTipada = declaracao as any;
 
-        // Implementação conservadora: processa corpo e condição sem emitir CFG dedicado.
+        // Guard: se o compilador não estiver inicializado (sem montador ativo),
+        // percorre corpo e condição sem emitir CFG — compatível com testes de visitantes isolados.
+        if (!this.montador) {
+            await this.aceitarListaDeclaracoes(
+                declaracaoTipada.caminhoFazer?.declaracoes ??
+                declaracaoTipada.corpo?.declaracoes ??
+                declaracaoTipada.caminho?.declaracoes
+            );
+            if (declaracaoTipada.condicaoEnquanto?.aceitar) {
+                await declaracaoTipada.condicaoEnquanto.aceitar(this);
+            } else if (declaracaoTipada.condicao?.aceitar) {
+                await declaracaoTipada.condicao.aceitar(this);
+            }
+            return Promise.resolve();
+        }
+
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+
+        const blocoCorpo = llvm.BasicBlock.Create(this.contexto, 'fazer_corpo', funcaoAtual);
+        const blocoCondicao = llvm.BasicBlock.Create(this.contexto, 'fazer_cond', funcaoAtual);
+        const blocoApos = llvm.BasicBlock.Create(this.contexto, 'fazer_apos', funcaoAtual);
+
+        // Salta incondicionalmente para o corpo (executa pelo menos uma vez).
+        this.montador.CreateBr(blocoCorpo);
+
+        // Corpo do laço.
+        this.montador.SetInsertPoint(blocoCorpo);
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCondicao });
         await this.aceitarListaDeclaracoes(
             declaracaoTipada.caminhoFazer?.declaracoes ??
             declaracaoTipada.corpo?.declaracoes ??
             declaracaoTipada.caminho?.declaracoes
         );
+        this.pilhaBlocosLoop.pop();
+        this.montador.CreateBr(blocoCondicao);
 
-        if (declaracaoTipada.condicaoEnquanto?.aceitar) {
-            await declaracaoTipada.condicaoEnquanto.aceitar(this);
-        } else if (declaracaoTipada.condicao?.aceitar) {
-            await declaracaoTipada.condicao.aceitar(this);
+        // Avaliação da condição de continuação.
+        this.montador.SetInsertPoint(blocoCondicao);
+        const condicaoBruta =
+            declaracaoTipada.condicaoEnquanto?.aceitar
+                ? await declaracaoTipada.condicaoEnquanto.aceitar(this)
+                : declaracaoTipada.condicao?.aceitar
+                    ? await declaracaoTipada.condicao.aceitar(this)
+                    : null;
+
+        if (condicaoBruta !== null) {
+            const tipoCond =
+                declaracaoTipada.condicaoEnquanto?.tipo ??
+                declaracaoTipada.condicao?.tipo ??
+                'lógico';
+            const condicao = this.carregarValorSeNecessario(condicaoBruta, tipoCond, 'fazer_load_cond');
+            this.montador.CreateCondBr(condicao, blocoCorpo, blocoApos);
+        } else {
+            // Condição ausente: laço infinito (improvável em Delégua, mas seguro).
+            this.montador.CreateBr(blocoCorpo);
         }
 
+        this.montador.SetInsertPoint(blocoApos);
         return Promise.resolve();
     }
 
@@ -494,6 +543,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoTente(declaracao: Tente): Promise<any> {
+        this.contemExcecoes = true;
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
         
         const tipoPontoPouso = llvm.StructType.get(
@@ -1362,7 +1412,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 let novoValor: llvm.Value;
                 if (expressao.operando.tipo === 'inteiro') {
                     const um = ConstantInt.get(this.contexto, new APInt(32, 1));
-                    novoValor = this.montador.CreateAdd(valor, um, "inc");
+                    novoValor = this.montador.CreateNSWAdd(valor, um, "inc");
                 } else {
                     const um = ConstantFP.get(this.montador.getDoubleTy(), new APFloat(1.0));
                     novoValor = this.montador.CreateFAdd(valor, um, "inc");
@@ -1378,7 +1428,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 let valorDecrementado: llvm.Value;
                 if (expressao.operando.tipo === 'inteiro') {
                     const um = ConstantInt.get(this.contexto, new APInt(32, 1));
-                    valorDecrementado = this.montador.CreateSub(valor, um, "dec");
+                    valorDecrementado = this.montador.CreateNSWSub(valor, um, "dec");
                 } else {
                     const um = ConstantFP.get(this.montador.getDoubleTy(), new APFloat(1.0));
                     valorDecrementado = this.montador.CreateFSub(valor, um, "dec");
@@ -1521,7 +1571,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     ): llvm.Value {
         if (valor instanceof VariavelEscopo) {
             const tipoVariavel = valor.variavelLlvm.getType();
-            if (tipoVariavel.constructor.name === 'PointerType') {
+            if (this.tipoEhPonteiro(tipoVariavel)) {
                 const tipoLlvm = this.obterTipoLlvm(tipoDelegua);
                 return this.montador.CreateLoad(tipoLlvm, valor.variavelLlvm, nomeLoad);
             } else {
@@ -1675,15 +1725,34 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     /**
+     * Retorna verdadeiro quando todos os casos de uma escolha contêm exatamente uma
+     * condição que é um literal inteiro sem casas decimais. Nesse caso é possível
+     * emitir a instrução nativa `switch` do LLVM em vez de uma cadeia de `icmp`.
+     */
+    private escolhaPodeUsarSwitchNativo(declaracao: Escolha): boolean {
+        const tipoEscolha = this.resolverTipoConstruto(declaracao.identificadorOuLiteral);
+        if (!this.tipoEhInteiroDelegua(tipoEscolha)) {
+            return false;
+        }
+
+        return declaracao.caminhos.every(caso =>
+            caso.condicoes.length === 1 &&
+            caso.condicoes[0] instanceof Literal &&
+            typeof (caso.condicoes[0] as Literal).valor === 'number' &&
+            Number.isInteger((caso.condicoes[0] as Literal).valor)
+        );
+    }
+
+    /**
      * Processa uma declaração de escolha (switch).
      *
-     * Estrutura gerada:
-     * - Carrega o valor da escolha
-     * - Cria blocos para cada caso, corpo e caminho padrão
-     * - Para cada caso: compara valor com condições (OR)
-     * - Salta para corpo se verdadeiro, próximo caso caso contrário
-     * - Executa corpo e salta para bloco após
-     * - Se nenhum caso satisfeito, executa caminho padrão (se existir)
+     * Quando o valor discriminado é inteiro e todos os casos são literais inteiros
+     * emite a instrução `switch` nativa do LLVM, que o backend transforma em tabela
+     * de salto ou árvore de decisão binária — ambas mais eficientes que uma cadeia
+     * linear de `icmp` + `cond_br`.
+     *
+     * Nos demais casos (tipo texto, condições compostas com OR, etc.) mantém a
+     * implementação original por cadeia de comparações.
      */
     async visitarDeclaracaoEscolha(declaracao: Escolha): Promise<any> {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
@@ -1695,53 +1764,95 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.NOMES_BLOCOS.LOAD_ESCOLHA
         );
 
-        const { blocosCasos, blocoPadrao, blocoApos } =
-            this.criarBlocosCasosEscolha(declaracao, funcaoAtual);
+        if (this.escolhaPodeUsarSwitchNativo(declaracao)) {
+            // Caminho otimizado: instrução switch nativa do LLVM.
+            // O backend a transforma em tabela de salto ou árvore de decisão binária,
+            // ambas mais eficientes que a cadeia linear de icmp + cond_br.
+            const blocoPadrao = declaracao.caminhoPadrao
+                ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.ESCOLHA_PADRAO, funcaoAtual)
+                : null;
+            const blocoApos = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.ESCOLHA_APOS, funcaoAtual);
 
-        const blocoInicial = blocosCasos.length > 0
-            ? blocosCasos[0]
-            : (blocoPadrao || blocoApos);
-        this.montador.CreateBr(blocoInicial);
-
-        const tipoEscolha = this.resolverTipoConstruto(declaracao.identificadorOuLiteral);
-
-        for (let indiceCaso = 0; indiceCaso < declaracao.caminhos.length; indiceCaso++) {
-            this.montador.SetInsertPoint(blocosCasos[indiceCaso]);
-
-            const caso = declaracao.caminhos[indiceCaso];
-            const comparacaoFinal = await this.construirComparacaoCaso(
+            const instrucaoSwitch = this.montador.CreateSwitch(
                 valorEscolha,
-                tipoEscolha,
-                caso.condicoes
+                blocoPadrao ?? blocoApos,
+                declaracao.caminhos.length
             );
 
-            const blocoCorpo = llvm.BasicBlock.Create(
-                this.contexto,
-                `${this.NOMES_BLOCOS.ESCOLHA_CORPO}_${indiceCaso}`,
-                funcaoAtual
-            );
+            for (let i = 0; i < declaracao.caminhos.length; i++) {
+                const caso = declaracao.caminhos[i];
+                const blocoCorpo = llvm.BasicBlock.Create(
+                    this.contexto,
+                    `${this.NOMES_BLOCOS.ESCOLHA_CORPO}_${i}`,
+                    funcaoAtual
+                );
+                const valorCaso = ConstantInt.get(
+                    this.contexto,
+                    new APInt(32, Math.trunc((caso.condicoes[0] as Literal).valor as number))
+                );
+                instrucaoSwitch.addCase(valorCaso, blocoCorpo);
 
-            const proximoBloco = this.obterProximoBloco(
-                indiceCaso,
-                blocosCasos,
-                blocoPadrao,
-                blocoApos
-            );
+                this.montador.SetInsertPoint(blocoCorpo);
+                await this.processarDeclaracoesBloco(caso.declaracoes);
+                this.montador.CreateBr(blocoApos);
+            }
 
-            this.montador.CreateCondBr(comparacaoFinal, blocoCorpo, proximoBloco);
+            if (blocoPadrao) {
+                this.montador.SetInsertPoint(blocoPadrao);
+                await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
+                this.montador.CreateBr(blocoApos);
+            }
 
-            this.montador.SetInsertPoint(blocoCorpo);
-            await this.processarDeclaracoesBloco(caso.declaracoes);
-            this.montador.CreateBr(blocoApos);
+            this.montador.SetInsertPoint(blocoApos);
+        } else {
+            // Caminho geral: cadeia linear de icmp + cond_br.
+            // Usado quando o tipo não é inteiro ou há condições compostas (OR).
+            const { blocosCasos, blocoPadrao, blocoApos } =
+                this.criarBlocosCasosEscolha(declaracao, funcaoAtual);
+            const tipoEscolha = this.resolverTipoConstruto(declaracao.identificadorOuLiteral);
+
+            const blocoInicial = blocosCasos.length > 0 ? blocosCasos[0] : (blocoPadrao || blocoApos);
+            this.montador.CreateBr(blocoInicial);
+
+            for (let indiceCaso = 0; indiceCaso < declaracao.caminhos.length; indiceCaso++) {
+                this.montador.SetInsertPoint(blocosCasos[indiceCaso]);
+
+                const caso = declaracao.caminhos[indiceCaso];
+                const comparacaoFinal = await this.construirComparacaoCaso(
+                    valorEscolha,
+                    tipoEscolha,
+                    caso.condicoes
+                );
+
+                const blocoCorpo = llvm.BasicBlock.Create(
+                    this.contexto,
+                    `${this.NOMES_BLOCOS.ESCOLHA_CORPO}_${indiceCaso}`,
+                    funcaoAtual
+                );
+
+                const proximoBloco = this.obterProximoBloco(
+                    indiceCaso,
+                    blocosCasos,
+                    blocoPadrao,
+                    blocoApos
+                );
+
+                this.montador.CreateCondBr(comparacaoFinal, blocoCorpo, proximoBloco);
+
+                this.montador.SetInsertPoint(blocoCorpo);
+                await this.processarDeclaracoesBloco(caso.declaracoes);
+                this.montador.CreateBr(blocoApos);
+            }
+
+            if (blocoPadrao) {
+                this.montador.SetInsertPoint(blocoPadrao);
+                await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
+                this.montador.CreateBr(blocoApos);
+            }
+
+            this.montador.SetInsertPoint(blocoApos);
         }
 
-        if (blocoPadrao) {
-            this.montador.SetInsertPoint(blocoPadrao);
-            await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
-            this.montador.CreateBr(blocoApos);
-        }
-
-        this.montador.SetInsertPoint(blocoApos);
         return Promise.resolve();
     }
 
@@ -2030,62 +2141,58 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     protected resolverOperando(operando: llvm.Value | VariavelEscopo, tipo: string): OperandoInterface {
-        switch (operando.constructor.name) {
-            case 'ConstantFP':
-            case 'SIToFPInst':
-                return {
-                    valor: operando as llvm.Value,
-                    tipo: 'número'
-                };
-            case 'VariavelEscopo':
-                const variavelEscopo = operando as VariavelEscopo;
-                const tipoVariavel = variavelEscopo.variavelLlvm.getType();
+        // VariavelEscopo: carrega o valor da memória se necessário.
+        if (operando instanceof VariavelEscopo) {
+            const variavelEscopo = operando as VariavelEscopo;
+            const tipoVariavel = variavelEscopo.variavelLlvm.getType();
 
-                if (tipoVariavel.constructor.name === 'PointerType') {
-                    const tipoLlvm = this.obterTipoLlvm(tipo);
-                    const valorCarregado = this.montador.CreateLoad(
-                        tipoLlvm,
-                        variavelEscopo.variavelLlvm,
-                        this.NOMES_BLOCOS.LOAD_OPERANDO
-                    );
-                    return {
-                        valor: valorCarregado,
-                        tipo: tipo
-                    };
-                } else {
-                    return {
-                        valor: variavelEscopo.variavelLlvm,
-                        tipo: tipo
-                    };
-                }
-            case 'Instruction':
-                const operandoEsquerdoTipado = operando as llvm.Instruction;
-                const tipoOperandoEsquerdo = operandoEsquerdoTipado.getType();
-                switch (tipoOperandoEsquerdo.constructor.name) {
-                    case 'IntegerType':
-                        return {
-                            valor: operando as llvm.Value,
-                            tipo: 'inteiro'
-                        };
-                    default:
-                        return {
-                            valor: this.montador.CreateSIToFP(
-                                operando as llvm.Value,
-                                llvm.Type.getDoubleTy(this.contexto)),
-                            tipo: 'número'
-                        }
-                }
-            default:
+            if (this.tipoEhPonteiro(tipoVariavel)) {
+                const tipoLlvm = this.obterTipoLlvm(tipo);
+                const valorCarregado = this.montador.CreateLoad(
+                    tipoLlvm,
+                    variavelEscopo.variavelLlvm,
+                    this.NOMES_BLOCOS.LOAD_OPERANDO
+                );
                 return {
-                    valor: operando as llvm.Value,
+                    valor: valorCarregado,
                     tipo: tipo
                 };
+            }
+
+            return {
+                valor: variavelEscopo.variavelLlvm,
+                tipo: tipo
+            };
         }
+
+        // Valor LLVM: discrimina pelo tipo via constructor.name pelo mesmo motivo que
+        // tipoEhPonteiro — os métodos isXxx() do binding falham com "Illegal invocation"
+        // quando chamados em instâncias de subclasses via herança de protótipo Napi.
+        //
+        // Mapeamento de Type::New() no binding:
+        //   isIntegerTy()  → 'IntegerType'
+        //   isFunctionTy() → 'FunctionType'
+        //   isStructTy()   → 'StructType'
+        //   isArrayTy()    → 'ArrayType'
+        //   isVectorTy()   → 'VectorType'
+        //   isPointerTy()  → 'PointerType'
+        //   caso contrário → 'Type'  (double, float, void, …)
+        const valorLlvm = operando as llvm.Value;
+        const nomeTipoLlvm = valorLlvm.getType()?.constructor?.name;
+
+        if (nomeTipoLlvm === 'Type') {
+            // Tipo genérico: em Delégua corresponde a 'número' (double/float).
+            return { valor: valorLlvm, tipo: 'número' };
+        }
+
+        return { valor: valorLlvm, tipo: tipo };
     }
 
     protected resolverMultiplicacao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
         if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateMul(operandoEsquerdo.valor, operandoDireito.valor));
+            // NSW (No Signed Wrap): overflow é comportamento indefinido em Delégua,
+            // o que permite ao SCEV do LLVM 21 analisar e otimizar laços com esses operandos.
+            return Promise.resolve(this.montador.CreateNSWMul(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
         return Promise.resolve(this.montador.CreateFMul(operandoEsquerdo.valor, operandoDireito.valor));
@@ -2093,7 +2200,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected resolverAdicao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
         if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateAdd(operandoEsquerdo.valor, operandoDireito.valor));
+            return Promise.resolve(this.montador.CreateNSWAdd(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
         return Promise.resolve(this.montador.CreateFAdd(operandoEsquerdo.valor, operandoDireito.valor));
@@ -2101,7 +2208,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected resolverSubtracao(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
         if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateSub(operandoEsquerdo.valor, operandoDireito.valor));
+            return Promise.resolve(this.montador.CreateNSWSub(operandoEsquerdo.valor, operandoDireito.valor));
         }
 
         return Promise.resolve(this.montador.CreateFSub(operandoEsquerdo.valor, operandoDireito.valor));
@@ -2470,17 +2577,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             true
         );
 
-        this.funcaoEscreva = llvm.Function.Create(
-            tipoFuncaoPrinter,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'escreva',
-            this.modulo
-        );
+        this.funcaoEscreva = this.modulo.getOrInsertFunction('escreva', tipoFuncaoPrinter);
 
         // void* leia(const char* texto, const char *fmt)
-        const tipoRetornoLeia = this.montador.getPtrTy();
         const tipoFuncaoLeia = llvm.FunctionType.get(
-            tipoRetornoLeia,
+            this.montador.getPtrTy(),
             [
                 this.montador.getPtrTy(),
                 this.montador.getPtrTy()
@@ -2488,65 +2589,37 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             false
         );
 
-        this.funcaoLeia = llvm.Function.Create(
-            tipoFuncaoLeia,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'leia',
-            this.modulo
+        this.funcaoLeia = this.modulo.getOrInsertFunction('leia', tipoFuncaoLeia);
+
+        // int inteiro(void *valor)
+        const tipoFuncaoInteiro = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy()],
+            false
         );
 
-        // int *inteiro(void *valor)
+        this.funcaoInteiro = this.modulo.getOrInsertFunction('inteiro', tipoFuncaoInteiro);
 
-        const tipoRetornoInteiro = this.montador.getInt32Ty();
-        const tipoFuncaoInteiro = llvm.FunctionType.get(
-            tipoRetornoInteiro,
-            [
-                this.montador.getPtrTy()
-            ],
-            false
-        )
-
-        this.funcaoInteiro = llvm.Function.Create(
-            tipoFuncaoInteiro,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'inteiro',
-            this.modulo
-        )
-
-        // double *numero(void *valor)
-        const tipoRetornoNumero = this.montador.getDoubleTy();
+        // double numero(void *valor)
         const tipoFuncaoNumero = llvm.FunctionType.get(
-            tipoRetornoNumero,
-            [
-                this.montador.getPtrTy()
-            ],
+            this.montador.getDoubleTy(),
+            [this.montador.getPtrTy()],
             false
-        )
+        );
 
-        this.funcaoNumero = llvm.Function.Create(
-            tipoFuncaoNumero,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'numero',
-            this.modulo
-        )
+        this.funcaoNumero = this.modulo.getOrInsertFunction('numero', tipoFuncaoNumero);
 
         // void falhar(const char *msg)
-        const tipoRetornoFalhar = llvm.Type.getVoidTy(this.contexto);
         const tipoFuncaoFalhar = llvm.FunctionType.get(
-            tipoRetornoFalhar,
-            [
-                this.montador.getPtrTy()
-            ],
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy()],
             false
         );
 
-        this.funcaoFalhar = llvm.Function.Create(
-            tipoFuncaoFalhar,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            'falhar',
-            this.modulo
-        );
+        this.funcaoFalhar = this.modulo.getOrInsertFunction('falhar', tipoFuncaoFalhar);
 
+        // Personality function para suporte a exceções C++ (tente/pegue).
+        // Deve ser obtida como llvm.Function pois setPersonalityFn exige esse tipo.
         const tipoPersonalidade = llvm.FunctionType.get(
             this.montador.getInt32Ty(),
             [
@@ -2568,18 +2641,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const tipoBeginCatch = llvm.FunctionType.get(
             this.montador.getPtrTy(),
-            [
-                this.montador.getPtrTy()
-            ],
+            [this.montador.getPtrTy()],
             false
         );
 
-        this.funcaoBeginCatch = llvm.Function.Create(
-            tipoBeginCatch,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            '__cxa_begin_catch',
-            this.modulo
-        );
+        this.funcaoBeginCatch = this.modulo.getOrInsertFunction('__cxa_begin_catch', tipoBeginCatch);
 
         const tipoEndCatch = llvm.FunctionType.get(
             llvm.Type.getVoidTy(this.contexto),
@@ -2587,12 +2653,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             false
         );
 
-        this.funcaoEndCatch = llvm.Function.Create(
-            tipoEndCatch,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            '__cxa_end_catch',
-            this.modulo
-        );
+        this.funcaoEndCatch = this.modulo.getOrInsertFunction('__cxa_end_catch', tipoEndCatch);
     }
 
     /**
@@ -2610,13 +2671,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.modulo
         );
 
-        funcaoInicio.setPersonalityFn(this.funcaoPersonalidade);
-
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
 
         for (const declaracao of declaracoes) {
             await declaracao.aceitar(this);
+        }
+
+        // Define a personality function apenas se o código contém blocos tente/pegue,
+        // pois sua presença incondicional inibe inlining e otimizações de tail-call.
+        if (this.contemExcecoes) {
+            funcaoInicio.setPersonalityFn(this.funcaoPersonalidade);
         }
 
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
@@ -2647,6 +2712,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.modulo = new llvm.Module('demo', this.contexto);
         this.montador = new llvm.IRBuilder(this.contexto);
         this.tipoEstruturaVetor = null;
+        this.contemExcecoes = false;
 
         const avaliadorSintaticoComTipagem = this.avaliadorSintatico as any;
         if (!avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas) {
@@ -2685,8 +2751,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.criarFuncoesNativa();
 
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha()
-        topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero))
-        topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro))
+        topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value))
+        topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro?.getCallee() as llvm.Value))
 
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Classe);
