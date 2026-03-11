@@ -1,6 +1,6 @@
 {
   "name": "@designliquido/delegua-llvm",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "description": "Biblioteca de conversão de código Delégua na representação intermediária de código LLVM.",
   "main": "index.js",
   "types": "index.d.ts",
