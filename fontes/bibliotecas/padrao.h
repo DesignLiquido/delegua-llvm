@@ -26,3 +26,7 @@ void *leia(const char *texto, const char *fmt);
 int inteiro(void *valor);
 double numero(void *valor);
 void falhar(const char *msg);
+double aleatorio(void);
+int aleatorioEntre(double a, double b);
+char* texto_de_inteiro(int val);
+char* texto_de_numero(double val);

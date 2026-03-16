@@ -1,4 +1,5 @@
 #include "./padrao.h"
+#include <time.h>
 
 // Utilidades
 
@@ -90,6 +91,40 @@ double numero(void *valor) {
   char *s = (char*) valor;
 
   return strtod(s, NULL);
+}
+
+static int semente_inicializada = 0;
+
+static void inicializar_semente(void) {
+    if (!semente_inicializada) {
+        srand((unsigned int)time(NULL));
+        semente_inicializada = 1;
+    }
+}
+
+double aleatorio(void) {
+    inicializar_semente();
+    return (double)rand() / RAND_MAX;
+}
+
+int aleatorioEntre(double a, double b) {
+    inicializar_semente();
+    int ia = (int)a;
+    int ib = (int)b;
+    if (ia > ib) { int tmp = ia; ia = ib; ib = tmp; }
+    return ia + rand() % (ib - ia + 1);
+}
+
+char* texto_de_inteiro(int val) {
+    char* buf = (char*)malloc(32);
+    snprintf(buf, 32, "%d", val);
+    return buf;
+}
+
+char* texto_de_numero(double val) {
+    char* buf = (char*)malloc(64);
+    snprintf(buf, 64, "%g", val);
+    return buf;
 }
 
 void falhar(const char *msg) {

@@ -56,6 +56,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoTextoInclui: llvm.FunctionCallee;
     funcaoTextoSubtexto: llvm.FunctionCallee;
     funcaoTextoSubstituir: llvm.FunctionCallee;
+    funcaoAleatorio: llvm.FunctionCallee;
+    funcaoAleatorioEntre: llvm.FunctionCallee;
+    funcaoTextoDeInteiro: llvm.FunctionCallee;
+    funcaoTextoDeNumero: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -2501,12 +2505,79 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return valor;
     }
 
+    private async chamarFuncaoTexto(argumentos: Construto[]): Promise<llvm.Value> {
+        const argumento = argumentos[0];
+        const resolvido = await argumento.aceitar(this);
+
+        let valor: llvm.Value;
+        let tipo: string;
+
+        if (resolvido instanceof VariavelEscopo) {
+            tipo = resolvido.tipo ?? argumento.tipo ?? 'número';
+            valor = this.montador.CreateLoad(this.obterTipoLlvm(tipo), resolvido.variavelLlvm, 'load_texto_arg');
+        } else {
+            valor = resolvido as llvm.Value;
+            tipo = argumento.tipo ?? 'número';
+        }
+
+        // Se já é texto, retorna o ponteiro diretamente
+        if (tipo === 'texto') {
+            return valor;
+        }
+
+        // inteiro → texto (usa %d para evitar notação científica)
+        if (tipo === 'inteiro') {
+            // Literal inteiro sem tipo explícito chega como double do parser do Delégua
+            if (tipo !== 'inteiro' || argumento.tipo === 'número') {
+                valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int_texto');
+            }
+            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
+        }
+
+        // número (double) → texto
+        // Se a variável era inteiro mas não temos conversão ainda, eleva para double
+        if (tipo === 'inteiro') {
+            valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double_texto');
+        }
+        return this.montador.CreateCall(this.funcaoTextoDeNumero, [valor]);
+    }
+
+    private async chamarAleatorioEntre(argumentos: Construto[]): Promise<llvm.Value> {
+        const a = await this.carregarArgumentoNumero(argumentos[0]);
+        const b = await this.carregarArgumentoNumero(argumentos[1]);
+        return this.montador.CreateCall(this.funcaoAleatorioEntre, [a, b]);
+    }
+
+    private async carregarArgumentoNumero(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        let valor: llvm.Value;
+        if (resolvido instanceof VariavelEscopo) {
+            const tipoLlvm = this.obterTipoLlvm(resolvido.tipo ?? argumento.tipo ?? 'número');
+            valor = this.montador.CreateLoad(tipoLlvm, resolvido.variavelLlvm, 'load_arg_num');
+        } else {
+            valor = resolvido as llvm.Value;
+        }
+        // Converte i32 → double se necessário
+        if ((resolvido instanceof VariavelEscopo ? resolvido.tipo : argumento.tipo) === 'inteiro') {
+            return this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
+        }
+        return valor;
+    }
+
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
         // Instanciação de classe: Ponto(...)
         if (expressao.entidadeChamada.constructor.name === 'Variavel') {
             const nomeCallee = (expressao.entidadeChamada as Variavel).simbolo.lexema;
             if (this.registroClasses.has(nomeCallee)) {
                 return await this.instanciarClasse(nomeCallee, expressao.argumentos);
+            }
+            // texto() escolhe a função C com base no tipo do argumento
+            if (nomeCallee === 'texto') {
+                return await this.chamarFuncaoTexto(expressao.argumentos);
+            }
+            // aleatorioEntre precisa de despacho próprio para carregar variáveis como double
+            if (nomeCallee === 'aleatorioEntre') {
+                return await this.chamarAleatorioEntre(expressao.argumentos);
             }
         }
 
@@ -2757,6 +2828,36 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             false
         );
         this.funcaoTextoSubstituir = this.modulo.getOrInsertFunction('delegua_texto_substituir', tipoFuncaoTextoSubstituir);
+
+        // double aleatorio(void)
+        const tipoFuncaoAleatorio = llvm.FunctionType.get(
+            this.montador.getDoubleTy(), [], false
+        );
+        this.funcaoAleatorio = this.modulo.getOrInsertFunction('aleatorio', tipoFuncaoAleatorio);
+
+        // int aleatorioEntre(double a, double b)
+        const tipoFuncaoAleatorioEntre = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getDoubleTy(), this.montador.getDoubleTy()],
+            false
+        );
+        this.funcaoAleatorioEntre = this.modulo.getOrInsertFunction('aleatorioEntre', tipoFuncaoAleatorioEntre);
+
+        // char* texto_de_inteiro(int val)
+        const tipoFuncaoTextoDeInteiro = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoTextoDeInteiro = this.modulo.getOrInsertFunction('texto_de_inteiro', tipoFuncaoTextoDeInteiro);
+
+        // char* texto_de_numero(double val)
+        const tipoFuncaoTextoDeNumero = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getDoubleTy()],
+            false
+        );
+        this.funcaoTextoDeNumero = this.modulo.getOrInsertFunction('texto_de_numero', tipoFuncaoTextoDeNumero);
     }
 
     /**
@@ -2856,6 +2957,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha()
         topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value))
         topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro?.getCallee() as llvm.Value))
+        topoDaPilhaDeVariaveis.set("aleatorio", new VariavelEscopo(this.funcaoAleatorio?.getCallee() as llvm.Value))
+        topoDaPilhaDeVariaveis.set("aleatorioEntre", new VariavelEscopo(this.funcaoAleatorioEntre?.getCallee() as llvm.Value))
 
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Classe);
