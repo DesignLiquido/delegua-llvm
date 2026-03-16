@@ -51,6 +51,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoPersonalidade: llvm.Function;
     funcaoBeginCatch: llvm.FunctionCallee;
     funcaoEndCatch: llvm.FunctionCallee;
+    funcaoTextoMaiusculo: llvm.FunctionCallee;
+    funcaoTextoMinusculo: llvm.FunctionCallee;
+    funcaoTextoInclui: llvm.FunctionCallee;
+    funcaoTextoSubtexto: llvm.FunctionCallee;
+    funcaoTextoSubstituir: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -69,6 +74,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         ['longo', '%ld'],
         ['número', '%g'],
         ['texto', '%s'],
+        ['lógico', '%d'],
     ]);
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
@@ -2417,6 +2423,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // AcessoMetodo usa .nomeMetodo; AcessoMetodoOuPropriedade usa .simbolo.lexema
         const nomeMetodo = (acesso as AcessoMetodo).nomeMetodo ?? (acesso as AcessoMetodoOuPropriedade).simbolo.lexema;
+
+        // Métodos embutidos de texto
+        if (nomeClasse === 'texto') {
+            return await this.chamarMetodoTexto(nomeMetodo, objetoPtr, argumentos);
+        }
+
         const nomeFuncao = `${nomeClasse}_${nomeMetodo}`;
         const funcaoLlvm = this.modulo.getFunction(nomeFuncao);
         if (!funcaoLlvm) {
@@ -2430,6 +2442,63 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         return this.montador.CreateCall(funcaoLlvm, args);
+    }
+
+    private async chamarMetodoTexto(nomeMetodo: string, objetoPtr: llvm.Value, argumentos: Construto[]): Promise<llvm.Value> {
+        // Carrega o char* real a partir do ponteiro da variável
+        const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
+
+        switch (nomeMetodo) {
+            case 'maiusculo':
+                return this.montador.CreateCall(this.funcaoTextoMaiusculo, [strPtr]);
+
+            case 'minusculo':
+                return this.montador.CreateCall(this.funcaoTextoMinusculo, [strPtr]);
+
+            case 'inclui': {
+                const sub = await this.carregarArgumentoTexto(argumentos[0]);
+                return this.montador.CreateCall(this.funcaoTextoInclui, [strPtr, sub]);
+            }
+
+            case 'subtexto': {
+                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
+                const fim = await this.carregarArgumentoInteiro(argumentos[1]);
+                return this.montador.CreateCall(this.funcaoTextoSubtexto, [strPtr, inicio, fim]);
+            }
+
+            case 'substituir': {
+                const de = await this.carregarArgumentoTexto(argumentos[0]);
+                const para = await this.carregarArgumentoTexto(argumentos[1]);
+                return this.montador.CreateCall(this.funcaoTextoSubstituir, [strPtr, de, para]);
+            }
+
+            default:
+                throw new Error(`Método de texto '${nomeMetodo}' não implementado.`);
+        }
+    }
+
+    private async carregarArgumentoTexto(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        if (resolvido instanceof VariavelEscopo) {
+            return this.montador.CreateLoad(this.montador.getPtrTy(), resolvido.variavelLlvm, 'load_arg_texto');
+        }
+        return resolvido as llvm.Value;
+    }
+
+    private async carregarArgumentoInteiro(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        let valor: llvm.Value;
+        if (resolvido instanceof VariavelEscopo) {
+            const tipoLlvm = this.obterTipoLlvm(resolvido.tipo ?? argumento.tipo ?? 'inteiro');
+            valor = this.montador.CreateLoad(tipoLlvm, resolvido.variavelLlvm, 'load_arg_int');
+        } else {
+            valor = resolvido as llvm.Value;
+        }
+        // Converte double → i32 se necessário (literais inteiros chegam como double no Delégua)
+        if (valor.getType().isDoubleTy()) {
+            return this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
+        }
+        return valor;
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
@@ -2654,6 +2723,40 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
 
         this.funcaoEndCatch = this.modulo.getOrInsertFunction('__cxa_end_catch', tipoEndCatch);
+
+        // char* delegua_texto_maiusculo(const char* s)
+        // char* delegua_texto_minusculo(const char* s)
+        const tipoFuncaoTextoPtr1 = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoMaiusculo = this.modulo.getOrInsertFunction('delegua_texto_maiusculo', tipoFuncaoTextoPtr1);
+        this.funcaoTextoMinusculo = this.modulo.getOrInsertFunction('delegua_texto_minusculo', tipoFuncaoTextoPtr1);
+
+        // int delegua_texto_inclui(const char* s, const char* sub)
+        const tipoFuncaoTextoInclui = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoInclui = this.modulo.getOrInsertFunction('delegua_texto_inclui', tipoFuncaoTextoInclui);
+
+        // char* delegua_texto_subtexto(const char* s, int inicio, int fim)
+        const tipoFuncaoTextoSubtexto = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoTextoSubtexto = this.modulo.getOrInsertFunction('delegua_texto_subtexto', tipoFuncaoTextoSubtexto);
+
+        // char* delegua_texto_substituir(const char* s, const char* de, const char* para)
+        const tipoFuncaoTextoSubstituir = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoSubstituir = this.modulo.getOrInsertFunction('delegua_texto_substituir', tipoFuncaoTextoSubstituir);
     }
 
     /**
