@@ -3398,6 +3398,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.registrarModuloCsv();
         this.registrarModuloJson();
         this.registrarModuloHttp();
+        this.registrarModuloCriptografia();
     }
 
     private registrarModuloMatematica(): void {
@@ -3673,6 +3674,41 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         ]);
 
         this.mapaModulos.set('http', funcoes);
+    }
+
+    private registrarModuloCriptografia(): void {
+        const ptr   = this.montador.getPtrTy();
+        const i32   = this.montador.getInt32Ty();
+
+        // Sub-fase F.1a — cifras clássicas sem dependências externas.
+        // Todos os retornos são char* (ptr) exceto os que usam 'inteiro' → i32.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[]
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(ptr, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'texto' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // XOR
+            ['cifrarXor',                    reg('delegua_cript_cifrar_xor',          ['texto', 'texto'])],
+            ['decifrarXor',                  reg('delegua_cript_decifrar_xor',         ['texto', 'texto'])],
+            // ROT
+            ['rot13',                        reg('delegua_cript_rot13',                ['texto'])],
+            ['rotN',                         reg('delegua_cript_rot_n',                ['texto', 'inteiro'])],
+            ['decifrarRotN',                 reg('delegua_cript_decifrar_rot_n',        ['texto', 'inteiro'])],
+            // Base64
+            ['codificarBase64',              reg('delegua_cript_base64_codificar',     ['texto'])],
+            ['decodificarBase64',            reg('delegua_cript_base64_decodificar',   ['texto'])],
+            // Menino do Acre (tema runico)
+            ['criptografarEmMeninoDoAcre',   reg('delegua_cript_menino_do_acre_cif',   ['texto'])],
+            ['descriptografarDeMeninoDoAcre',reg('delegua_cript_menino_do_acre_dec',   ['texto'])],
+        ]);
+
+        this.mapaModulos.set('criptografia', funcoes);
     }
 
     /**
