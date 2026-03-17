@@ -76,9 +76,10 @@ describe('Compilador - Mecanismo de Importação (Fase 0)', () => {
             expect(ir).toBeTruthy();
 
             // Confirma que mapaModulos contém apenas os módulos embutidos após compilar().
-            // Atualmente: 'matematica' (Fase A.1).
-            expect(compilador.obterMapaModulos().size).toBe(1);
+            // Atualmente: 'matematica' (Fase A.1) e 'fisica' (Fase A.2).
+            expect(compilador.obterMapaModulos().size).toBe(2);
             expect(compilador.obterMapaModulos().has('matematica')).toBe(true);
+            expect(compilador.obterMapaModulos().has('fisica')).toBe(true);
         });
 
         it('lança erro ao chamar método inexistente em módulo registrado', async () => {
