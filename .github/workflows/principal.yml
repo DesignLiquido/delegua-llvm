@@ -5,10 +5,14 @@ on:
     branches:
       - principal
 
+env:
+  LLVM_VERSION_MAJOR: 22
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test:
     name: Run Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
       matrix:
@@ -24,10 +28,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'yarn'
 
-      - name: Install LLVM 18
+      - name: Install LLVM 22 on Ubuntu 24.04
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-18 llvm-18-dev clang-18
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev
+          echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
