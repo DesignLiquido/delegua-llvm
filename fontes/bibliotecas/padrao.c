@@ -127,6 +127,26 @@ char* texto_de_numero(double val) {
     return buf;
 }
 
+char* delegua_formatar(const char* fmt, ...) {
+    va_list args;
+
+    // Primeira passagem: calcular o tamanho necessário
+    va_start(args, fmt);
+    int tamanho = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+
+    if (tamanho < 0) return NULL;
+
+    char* resultado = (char*)malloc(tamanho + 1);
+
+    // Segunda passagem: preencher o buffer
+    va_start(args, fmt);
+    vsnprintf(resultado, tamanho + 1, fmt, args);
+    va_end(args);
+
+    return resultado;
+}
+
 void falhar(const char *msg) {
   size_t tamanho = strlen(msg) + 1;
   void* exc = __cxa_allocate_exception(tamanho);

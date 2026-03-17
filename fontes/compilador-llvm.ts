@@ -60,6 +60,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoAleatorioEntre: llvm.FunctionCallee;
     funcaoTextoDeInteiro: llvm.FunctionCallee;
     funcaoTextoDeNumero: llvm.FunctionCallee;
+    funcaoFormatar: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -2658,16 +2659,64 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         new APInt(1, expressao.valor ? 1 : 0)
                     )
                 );
-            case 'texto':
+            case 'texto': {
+                const valor = expressao.valor as string;
+                if (valor.includes('${')) {
+                    return this.resolverTextoInterpolado(valor);
+                }
                 return Promise.resolve(
-                    this.montador.CreateGlobalStringPtr(
-                        expressao.valor as string,
-                        "str",
-                        0,
-                        this.modulo
-                    )
+                    this.montador.CreateGlobalStringPtr(valor, "str", 0, this.modulo)
                 );
+            }
         }
+    }
+
+    private parsearTemplateString(modelo: string): Array<string | { nomeVar: string }> {
+        const partes: Array<string | { nomeVar: string }> = [];
+        const regex = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+        let ultimaPos = 0;
+        let correspondencia: RegExpExecArray;
+
+        while ((correspondencia = regex.exec(modelo)) !== null) {
+            if (correspondencia.index > ultimaPos) {
+                partes.push(modelo.slice(ultimaPos, correspondencia.index));
+            }
+            partes.push({ nomeVar: correspondencia[1] });
+            ultimaPos = correspondencia.index + correspondencia[0].length;
+        }
+
+        if (ultimaPos < modelo.length) {
+            partes.push(modelo.slice(ultimaPos));
+        }
+
+        return partes;
+    }
+
+    private async resolverTextoInterpolado(modelo: string): Promise<llvm.Value> {
+        const partes = this.parsearTemplateString(modelo);
+        const segmentosFormato: string[] = [];
+        const argumentos: llvm.Value[] = [];
+
+        for (const parte of partes) {
+            if (typeof parte === 'string') {
+                // Escapa '%' em trechos estáticos para que não seja interpretado pelo printf
+                segmentosFormato.push(parte.replace(/%/g, '%%'));
+            } else {
+                const varEscopo = this.pilhaVariaveisEscopo.obterValor(parte.nomeVar);
+                const tipo = varEscopo.tipo ?? 'número';
+                const formato = this.printfFormatos.get(tipo) ?? '%s';
+                segmentosFormato.push(formato);
+
+                const tipoLlvm = this.obterTipoLlvm(tipo);
+                const valor = this.montador.CreateLoad(tipoLlvm, varEscopo.variavelLlvm, `load_interp_${parte.nomeVar}`);
+                argumentos.push(valor);
+            }
+        }
+
+        const formatoFinal = segmentosFormato.join('');
+        const formatoPtr = this.montador.CreateGlobalStringPtr(formatoFinal, 'fmt_interp', 0, this.modulo);
+
+        return this.montador.CreateCall(this.funcaoFormatar, [formatoPtr, ...argumentos]);
     }
 
     protected buscarFormatoLeia(tipoDelegua: string): llvm.Constant {
@@ -2858,6 +2907,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             false
         );
         this.funcaoTextoDeNumero = this.modulo.getOrInsertFunction('texto_de_numero', tipoFuncaoTextoDeNumero);
+
+        // char* delegua_formatar(const char* fmt, ...)  — sprintf alocador para interpolação de texto
+        const tipoFuncaoFormatar = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy()],
+            true  // variadic
+        );
+        this.funcaoFormatar = this.modulo.getOrInsertFunction('delegua_formatar', tipoFuncaoFormatar);
     }
 
     /**

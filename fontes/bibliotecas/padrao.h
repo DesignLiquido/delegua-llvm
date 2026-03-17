@@ -30,3 +30,4 @@ double aleatorio(void);
 int aleatorioEntre(double a, double b);
 char* texto_de_inteiro(int val);
 char* texto_de_numero(double val);
+char* delegua_formatar(const char* fmt, ...);
