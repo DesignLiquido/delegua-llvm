@@ -80,6 +80,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private indicesPropriedades: Map<string, Map<string, number>> = new Map();
     private tiposPropriedades: Map<string, Map<string, string>> = new Map();
     private metodosClasse: Map<string, Map<string, string>> = new Map();
+    // Mapa de herança: nomeFIlho → nomePai (single inheritance).
+    private superClasses: Map<string, string> = new Map();
     private pilhaIsto: llvm.Value[] = [];
     private classesComMarcadorTipo: Set<string> = new Set();
     private contadoresNaoNegativos: Set<string> = new Set();
@@ -253,15 +255,34 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
 
-        // 1. Coletar tipos LLVM das propriedades e construir o struct
+        // Detecta superclasse (primeira entrada em superClasses, se existir).
+        const superClasseRef = (declaracao.superClasses as any[])?.[0];
+        const nomeSuperClasse: string | null =
+            superClasseRef?.simbolo?.lexema ?? superClasseRef?.tipo ?? null;
+
+        // 1. Coletar tipos LLVM das propriedades e construir o struct.
+        //    Com herança plana: campos do pai vêm primeiro, depois os próprios.
         const tiposPropsLlvm: llvm.Type[] = [];
         const mapaIndices: Map<string, number> = new Map();
         const mapaTipos: Map<string, string> = new Map();
 
-        for (const [indice, propriedade] of declaracao.propriedades.entries()) {
+        if (nomeSuperClasse && this.indicesPropriedades.has(nomeSuperClasse)) {
+            const indicesPai = this.indicesPropriedades.get(nomeSuperClasse);
+            const tiposPai = this.tiposPropriedades.get(nomeSuperClasse);
+            // Ordena pelo índice para garantir a ordem original dos campos.
+            const camposPai = [...indicesPai.entries()].sort((a, b) => a[1] - b[1]);
+            for (const [nomeCampo] of camposPai) {
+                const tipoCampo = tiposPai.get(nomeCampo);
+                tiposPropsLlvm.push(this.obterTipoLlvm(tipoCampo));
+                mapaIndices.set(nomeCampo, tiposPropsLlvm.length - 1);
+                mapaTipos.set(nomeCampo, tipoCampo);
+            }
+        }
+
+        for (const propriedade of declaracao.propriedades) {
             const tipoProp = propriedade.tipo || 'número';
             tiposPropsLlvm.push(this.obterTipoLlvm(tipoProp));
-            mapaIndices.set(propriedade.nome.lexema, indice);
+            mapaIndices.set(propriedade.nome.lexema, tiposPropsLlvm.length - 1);
             mapaTipos.set(propriedade.nome.lexema, tipoProp);
         }
 
@@ -302,9 +323,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 tiposParametros.push(this.obterTipoLlvm(parametro.tipoDado));
             }
 
-            const tipoRetorno = ehConstrutor
+            const tipoRetornoStr: string = ehConstrutor ? 'vazio' : (metodo.funcao.tipo ?? 'vazio');
+            const tipoRetorno = (tipoRetornoStr === 'vazio')
                 ? llvm.Type.getVoidTy(this.contexto)
-                : this.obterTipoLlvm(metodo.funcao.tipo);
+                : this.obterTipoLlvm(tipoRetornoStr);
 
             const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParametros, false);
             const objetoLlvmFuncao = llvm.Function.Create(
@@ -326,10 +348,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
             this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
             this.pilhaIsto.push(selfArg);
+            const tipoRetornoAnteriorMetodo = this.tipoRetornoFuncaoAtual;
+            this.tipoRetornoFuncaoAtual = tipoRetornoStr;
             await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
-            if (ehConstrutor) {
+            if (tipoRetornoStr === 'vazio') {
                 this.montador.CreateRetVoid();
             }
+            this.tipoRetornoFuncaoAtual = tipoRetornoAnteriorMetodo;
             this.pilhaIsto.pop();
             this.pilhaVariaveisEscopo.removerUltimo();
 
@@ -337,6 +362,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 metodo.simbolo.lexema,
                 ehConstrutor ? 'vazio' : metodo.funcao.tipo
             );
+        }
+
+        // Registra relação de herança e copia métodos herdados não sobrescritos.
+        if (nomeSuperClasse) {
+            this.superClasses.set(nomeClasse, nomeSuperClasse);
+
+            const metodosPai = this.metodosClasse.get(nomeSuperClasse);
+            if (metodosPai) {
+                const nomesPropriosFilho = new Set(declaracao.metodos.map(m => m.simbolo.lexema));
+                for (const [nomeMetodo, tipoRetorno] of metodosPai.entries()) {
+                    if (!nomesPropriosFilho.has(nomeMetodo) && nomeMetodo !== 'construtor') {
+                        this.metodosClasse.get(nomeClasse).set(nomeMetodo, tipoRetorno);
+                    }
+                }
+            }
         }
 
         return Promise.resolve();
@@ -1375,7 +1415,27 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoSuper(expressao: Super): Promise<any> {
-        return Promise.resolve(null);
+        // `super` retorna o ponteiro `isto` atual, mas tipado como a superclasse.
+        // Isso permite que `super.metodo()` despache para `SuperClasse_metodo`.
+        let istoEscopo: VariavelEscopo;
+        try {
+            istoEscopo = this.pilhaVariaveisEscopo.obterValor('isto');
+        } catch {
+            return Promise.resolve(null);
+        }
+        if (!istoEscopo) return Promise.resolve(null);
+
+        // O nome da superclasse pode vir do nó AST (superclasse) ou do mapa de herança.
+        const nomeSuperClasse: string =
+            (expressao as any).superclasse ??
+            this.superClasses.get(istoEscopo.tipo) ??
+            null;
+
+        if (!nomeSuperClasse) return Promise.resolve(istoEscopo);
+
+        return Promise.resolve(
+            new VariavelEscopo(istoEscopo.variavelLlvm, undefined, nomeSuperClasse)
+        );
     }
 
     visitarExpressaoSustar(declaracao?: Sustar): SustarQuebra | void {
@@ -2477,8 +2537,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos);
         }
 
-        const nomeFuncao = `${nomeClasse}_${nomeMetodo}`;
-        const funcaoLlvm = this.modulo.getFunction(nomeFuncao);
+        // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
+        let funcaoLlvm = this.modulo.getFunction(`${nomeClasse}_${nomeMetodo}`);
+        if (!funcaoLlvm) {
+            let nomeSuperAtual = this.superClasses.get(nomeClasse);
+            while (nomeSuperAtual && !funcaoLlvm) {
+                funcaoLlvm = this.modulo.getFunction(`${nomeSuperAtual}_${nomeMetodo}`);
+                nomeSuperAtual = this.superClasses.get(nomeSuperAtual);
+            }
+        }
         if (!funcaoLlvm) {
             throw new Error(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
         }
@@ -3282,6 +3349,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.indicesPropriedades = new Map();
         this.tiposPropriedades = new Map();
         this.metodosClasse = new Map();
+        this.superClasses = new Map();
         this.pilhaIsto = [];
         this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>()
