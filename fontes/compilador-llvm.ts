@@ -3393,6 +3393,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         this.registrarModuloMatematica();
         this.registrarModuloFisica();
+        this.registrarModuloEstatistica();
     }
 
     private registrarModuloMatematica(): void {
@@ -3465,6 +3466,37 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         ]);
 
         this.mapaModulos.set('fisica', funcoes);
+    }
+
+    private registrarModuloEstatistica(): void {
+        const d = this.montador.getDoubleTy();
+        const ptr = this.montador.getPtrTy();
+
+        // Auxiliar: cria EntradaFuncaoModulo para função double(Vetor*...).
+        // tiposParametros usa 'vetor' para parâmetros Vetor* — o despachante usa o else-branch,
+        // que passa variavelLlvm (o ponteiro alloca do Vetor) diretamente.
+        const reg1 = (nomeCFunc: string): EntradaFuncaoModulo => {
+            const tipo = llvm.FunctionType.get(d, [ptr], false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros: ['vetor'], tipoRetorno: 'numero' };
+        };
+        const reg2 = (nomeCFunc: string): EntradaFuncaoModulo => {
+            const tipo = llvm.FunctionType.get(d, [ptr, ptr], false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros: ['vetor', 'vetor'], tipoRetorno: 'numero' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            ['max',         reg1('delegua_est_max')],
+            ['min',         reg1('delegua_est_min')],
+            ['media',       reg1('delegua_est_media')],
+            ['mediana',     reg1('delegua_est_mediana')],
+            ['ve',          reg1('delegua_est_variancia')],
+            ['covariancia', reg2('delegua_est_covariancia')],
+            // moda: retorna Vetor via out-param — adiado
+        ]);
+
+        this.mapaModulos.set('estatistica', funcoes);
     }
 
     /**
