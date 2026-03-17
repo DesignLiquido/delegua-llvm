@@ -213,3 +213,47 @@ char* delegua_vetor_juntar_texto(Vetor* v, const char* sep) {
     *pos = '\0';
     return resultado;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filtrar e mapear com callbacks
+// ─────────────────────────────────────────────────────────────────────────────
+
+void delegua_vetor_filtrar_inteiro(Vetor* v, int (*fn)(int), Vetor* saida) {
+    if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    int* elems = (int*)v->ptr;
+    int aprovados = 0;
+    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) aprovados++; }
+    int* resultado = aprovados > 0 ? (int*)malloc((size_t)aprovados * sizeof(int)) : NULL;
+    int j = 0;
+    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) resultado[j++] = elems[i]; }
+    saida->ptr = resultado; saida->tamanho = aprovados;
+}
+
+void delegua_vetor_filtrar_numero(Vetor* v, int (*fn)(double), Vetor* saida) {
+    if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    double* elems = (double*)v->ptr;
+    int aprovados = 0;
+    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) aprovados++; }
+    double* resultado = aprovados > 0 ? (double*)malloc((size_t)aprovados * sizeof(double)) : NULL;
+    int j = 0;
+    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) resultado[j++] = elems[i]; }
+    saida->ptr = resultado; saida->tamanho = aprovados;
+}
+
+void delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int), Vetor* saida) {
+    if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    int* elems = (int*)v->ptr;
+    int* resultado = (int*)malloc((size_t)v->tamanho * sizeof(int));
+    if (!resultado) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    for (int i = 0; i < v->tamanho; i++) { resultado[i] = fn(elems[i]); }
+    saida->ptr = resultado; saida->tamanho = v->tamanho;
+}
+
+void delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double), Vetor* saida) {
+    if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    double* elems = (double*)v->ptr;
+    double* resultado = (double*)malloc((size_t)v->tamanho * sizeof(double));
+    if (!resultado) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    for (int i = 0; i < v->tamanho; i++) { resultado[i] = fn(elems[i]); }
+    saida->ptr = resultado; saida->tamanho = v->tamanho;
+}

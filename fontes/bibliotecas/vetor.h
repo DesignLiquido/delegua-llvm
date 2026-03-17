@@ -33,3 +33,15 @@ char* delegua_vetor_juntar_numero(Vetor* v, const char* sep);
 
 // Junta elementos texto (char*) separados por sep.
 char* delegua_vetor_juntar_texto(Vetor* v, const char* sep);
+
+// Filtra elementos inteiros usando predicado — cria novo vetor em *saida.
+void delegua_vetor_filtrar_inteiro(Vetor* v, int (*fn)(int), Vetor* saida);
+
+// Filtra elementos número (double) usando predicado — cria novo vetor em *saida.
+void delegua_vetor_filtrar_numero(Vetor* v, int (*fn)(double), Vetor* saida);
+
+// Mapeia elementos inteiros (int→int) — cria novo vetor em *saida.
+void delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int), Vetor* saida);
+
+// Mapeia elementos número (double→double) — cria novo vetor em *saida.
+void delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double), Vetor* saida);

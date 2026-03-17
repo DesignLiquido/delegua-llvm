@@ -70,6 +70,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoVetorJuntarInteiro: llvm.FunctionCallee;
     funcaoVetorJuntarNumero: llvm.FunctionCallee;
     funcaoVetorJuntarTexto: llvm.FunctionCallee;
+    funcaoVetorFiltrarInteiro: llvm.FunctionCallee;
+    funcaoVetorFiltrarNumero: llvm.FunctionCallee;
+    funcaoVetorMapearInteiro: llvm.FunctionCallee;
+    funcaoVetorMapearNumero: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -82,6 +86,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private tipoEstruturaVetor: llvm.StructType = null;
     private pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock }> = [];
     private contemExcecoes: boolean = false;
+    // Tipo de retorno esperado da função sendo compilada no momento (null = main / desconhecido).
+    // Usado para converter i1 → i32 quando a função declara retorno 'inteiro'/'lógico'.
+    private tipoRetornoFuncaoAtual: string | null = null;
+    // Contador para gerar nomes únicos de lambdas.
+    private contadorLambda: number = 0;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -1326,7 +1335,23 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve();
         }
 
-        this.montador.CreateRet(valorResolvido as llvm.Value);
+        let valorFinal = valorResolvido as llvm.Value;
+
+        // Conversões de tipo quando a função foi compilada via compilarLambda e tem tipo de retorno esperado.
+        if (this.tipoRetornoFuncaoAtual === 'inteiro') {
+            const operadorLexema = (declaracao.valor as any)?.operador?.lexema;
+            const opComparacao = ['==', '!=', '<', '<=', '>', '>='].includes(operadorLexema ?? '');
+
+            if (opComparacao) {
+                // Comparação produz i1 → ZExt para i32
+                valorFinal = this.montador.CreateZExt(valorFinal, this.montador.getInt32Ty(), 'bool_para_int_ret');
+            } else if ((declaracao.valor?.tipo ?? '') === 'número') {
+                // Literal/expressão número (double) → FPToSI para i32
+                valorFinal = this.montador.CreateFPToSI(valorFinal, this.montador.getInt32Ty(), 'double_para_int_ret');
+            }
+        }
+
+        this.montador.CreateRet(valorFinal);
         return Promise.resolve();
     }
 
@@ -1570,6 +1595,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.getDoubleTy();
             case 'texto':
                 return this.montador.getPtrTy();
+            case 'lógico':
+            case 'logico':
+                return this.montador.getInt32Ty();
             default:
                 if (this.tipoEhVetor(tipoDelegua)) {
                     return this.tipoEstruturaVetor ?? llvm.PointerType.get(this.contexto, 0);
@@ -2569,9 +2597,95 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
             }
 
+            case 'filtrarPor': {
+                const fnPtr = await this.resolverPonteiroDeFuncao(
+                    argumentos[0],
+                    [tipoElem],
+                    'inteiro'   // predicado retorna inteiro (0/1)
+                );
+                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'filtrado');
+                if (tipoElem === 'inteiro') {
+                    this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
+                } else {
+                    this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
+                }
+                return alocSaida;
+            }
+
             default:
                 throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
         }
+    }
+
+    // Resolve o ponteiro LLVM de uma função passada como argumento.
+    // Se for FuncaoConstruto (lambda), compila-a primeiro.
+    // Se for referência a função nomeada, carrega da pilha de escopo.
+    private async resolverPonteiroDeFuncao(
+        argumento: Construto,
+        tiposParametrosEsperados: string[],
+        tipoRetornoEsperado: string
+    ): Promise<llvm.Value> {
+        const nomeConstruct = argumento.constructor.name;
+        if (nomeConstruct === 'FuncaoConstruto') {
+            return await this.compilarLambda(argumento as FuncaoConstruto, tiposParametrosEsperados, tipoRetornoEsperado);
+        }
+        // Referência a função nomeada ou variável
+        const resolvido = await argumento.aceitar(this);
+        if (resolvido instanceof VariavelEscopo) {
+            return resolvido.variavelLlvm;
+        }
+        return resolvido as llvm.Value;
+    }
+
+    // Compila uma função anônima (FuncaoConstruto) como função LLVM com nome único.
+    // Parâmetros sem tipo recebem o tipo esperado de tiposParametrosEsperados.
+    // O tipo de retorno esperado é usado para selecionar o tipo LLVM correto.
+    private async compilarLambda(
+        construto: FuncaoConstruto,
+        tiposParametrosEsperados: string[],
+        tipoRetornoEsperado: string
+    ): Promise<llvm.Function> {
+        const nomeLambda = `__lambda_${this.contadorLambda++}`;
+
+        // Monta tipos dos parâmetros: usa a anotação do parâmetro ou o tipo esperado.
+        const tiposParamStr: string[] = construto.parametros.map((p, i) => {
+            const tipo = p.tipoDado && p.tipoDado !== 'qualquer' ? p.tipoDado : (tiposParametrosEsperados[i] ?? 'número');
+            return tipo;
+        });
+        const tiposParamLlvm = tiposParamStr.map(t => this.obterTipoLlvm(t));
+
+        // Tipo de retorno: usa o declarado ou o esperado.
+        const tipoRetornoStr = construto.tipo && construto.tipo !== 'qualquer' ? construto.tipo : tipoRetornoEsperado;
+        const tipoRetornoLlvm = this.obterTipoLlvm(tipoRetornoStr);
+
+        const tipoFuncao = llvm.FunctionType.get(tipoRetornoLlvm, tiposParamLlvm, false);
+        const funcaoLlvm = llvm.Function.Create(
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            nomeLambda,
+            this.modulo
+        );
+
+        // Escopo: mapeia parâmetros para os argumentos LLVM da função.
+        const mapaVariaveis: Map<string, VariavelEscopo> = new Map();
+        for (const [i, param] of construto.parametros.entries()) {
+            const argLlvm = funcaoLlvm.getArg(i);
+            mapaVariaveis.set(param.nome.lexema, new VariavelEscopo(argLlvm, undefined, tiposParamStr[i]));
+        }
+
+        // Salva e restaura ponto de inserção e tipo de retorno corrente.
+        const blocoAnterior = this.montador.GetInsertBlock();
+        const tipoRetornoAnterior = this.tipoRetornoFuncaoAtual;
+        this.tipoRetornoFuncaoAtual = tipoRetornoStr;
+
+        this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
+        await this.visitarCorpoFuncao(construto, funcaoLlvm);
+        this.pilhaVariaveisEscopo.removerUltimo();
+
+        this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
+        this.montador.SetInsertPoint(blocoAnterior);
+
+        return funcaoLlvm;
     }
 
     private async carregarArgumentoTexto(argumento: Construto): Promise<llvm.Value> {
@@ -2641,6 +2755,33 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return this.montador.CreateCall(this.funcaoAleatorioEntre, [a, b]);
     }
 
+    private async chamarMapear(argumentos: Construto[]): Promise<llvm.Value> {
+        // mapear(lista, fn)  →  novo vetor com fn aplicada a cada elemento
+        const vetorArg = argumentos[0];
+        const fnArg = argumentos[1];
+
+        // Resolve o vetor de entrada
+        const vetorResolvido = await vetorArg.aceitar(this);
+        const vetorPtr: llvm.Value = vetorResolvido instanceof VariavelEscopo
+            ? vetorResolvido.variavelLlvm
+            : vetorResolvido as llvm.Value;
+
+        // Determina o tipo do elemento
+        const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
+        const tipoElem = this.tipoElementoVetor(tipoVetor);
+        const ehNumero = tipoElem === 'número' || tipoElem === 'numero';
+
+        const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], tipoElem);
+
+        const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'mapeado');
+        if (ehNumero) {
+            this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
+        } else {
+            this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
+        }
+        return alocSaida;
+    }
+
     private async carregarArgumentoNumero(argumento: Construto): Promise<llvm.Value> {
         const resolvido = await argumento.aceitar(this);
         let valor: llvm.Value;
@@ -2671,6 +2812,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // aleatorioEntre precisa de despacho próprio para carregar variáveis como double
             if (nomeCallee === 'aleatorioEntre') {
                 return await this.chamarAleatorioEntre(expressao.argumentos);
+            }
+            // mapear(lista, fn) — função global que mapeia elementos de um vetor
+            if (nomeCallee === 'mapear') {
+                return await this.chamarMapear(expressao.argumentos);
             }
         }
 
@@ -3073,6 +3218,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoVetorJuntarInteiro = this.modulo.getOrInsertFunction('delegua_vetor_juntar_inteiro', tipoFuncaoVetorJuntar);
         this.funcaoVetorJuntarNumero = this.modulo.getOrInsertFunction('delegua_vetor_juntar_numero', tipoFuncaoVetorJuntar);
         this.funcaoVetorJuntarTexto = this.modulo.getOrInsertFunction('delegua_vetor_juntar_texto', tipoFuncaoVetorJuntar);
+
+        // void delegua_vetor_filtrar_inteiro(Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_filtrar_numero (Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_mapear_inteiro (Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_mapear_numero  (Vetor* v, ptr fn, Vetor* saida)
+        // Todos recebem (ptr, ptr, ptr) → void  — o ponteiro de função é opaco no IR.
+        const tipoFuncaoVetorCallback = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorFiltrarInteiro = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_inteiro', tipoFuncaoVetorCallback);
+        this.funcaoVetorFiltrarNumero  = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_numero',  tipoFuncaoVetorCallback);
+        this.funcaoVetorMapearInteiro  = this.modulo.getOrInsertFunction('delegua_vetor_mapear_inteiro',  tipoFuncaoVetorCallback);
+        this.funcaoVetorMapearNumero   = this.modulo.getOrInsertFunction('delegua_vetor_mapear_numero',   tipoFuncaoVetorCallback);
     }
 
     /**
@@ -3132,6 +3292,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador = new llvm.IRBuilder(this.contexto);
         this.tipoEstruturaVetor = null;
         this.contemExcecoes = false;
+        this.contadorLambda = 0;
+        this.tipoRetornoFuncaoAtual = null;
 
         const avaliadorSintaticoComTipagem = this.avaliadorSintatico as any;
         if (!avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas) {
