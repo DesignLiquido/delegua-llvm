@@ -34,6 +34,13 @@ import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 import { VariavelEscopo } from './variavel-escopo';
 import { OperandoInterface } from './interfaces';
 
+// Entrada no mapaModulos: associa um FunctionCallee LLVM à assinatura da função.
+interface EntradaFuncaoModulo {
+    callee: llvm.FunctionCallee;
+    tiposParametros: string[];
+    tipoRetorno: string;
+}
+
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
     lexador: Lexador;
     avaliadorSintatico: AvaliadorSintatico;
@@ -51,24 +58,58 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoPersonalidade: llvm.Function;
     funcaoBeginCatch: llvm.FunctionCallee;
     funcaoEndCatch: llvm.FunctionCallee;
+    funcaoTextoMaiusculo: llvm.FunctionCallee;
+    funcaoTextoMinusculo: llvm.FunctionCallee;
+    funcaoTextoInclui: llvm.FunctionCallee;
+    funcaoTextoSubtexto: llvm.FunctionCallee;
+    funcaoTextoSubstituir: llvm.FunctionCallee;
+    funcaoAleatorio: llvm.FunctionCallee;
+    funcaoAleatorioEntre: llvm.FunctionCallee;
+    funcaoTextoDeInteiro: llvm.FunctionCallee;
+    funcaoTextoDeNumero: llvm.FunctionCallee;
+    funcaoFormatar: llvm.FunctionCallee;
+    funcaoVetorAdicionar: llvm.FunctionCallee;
+    funcaoVetorRemoverUltimo: llvm.FunctionCallee;
+    funcaoVetorRemoverPrimeiro: llvm.FunctionCallee;
+    funcaoVetorInverter: llvm.FunctionCallee;
+    funcaoVetorOrdenar: llvm.FunctionCallee;
+    funcaoVetorFatiar: llvm.FunctionCallee;
+    funcaoVetorJuntarInteiro: llvm.FunctionCallee;
+    funcaoVetorJuntarNumero: llvm.FunctionCallee;
+    funcaoVetorJuntarTexto: llvm.FunctionCallee;
+    funcaoVetorFiltrarInteiro: llvm.FunctionCallee;
+    funcaoVetorFiltrarNumero: llvm.FunctionCallee;
+    funcaoVetorMapearInteiro: llvm.FunctionCallee;
+    funcaoVetorMapearNumero: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
     private indicesPropriedades: Map<string, Map<string, number>> = new Map();
     private tiposPropriedades: Map<string, Map<string, string>> = new Map();
     private metodosClasse: Map<string, Map<string, string>> = new Map();
+    // Mapa de herança: nomeFIlho → nomePai (single inheritance).
+    private superClasses: Map<string, string> = new Map();
+    // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
+    // Populado em criarFuncoesNativas() à medida que as bibliotecas são implementadas.
+    private mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
     private pilhaIsto: llvm.Value[] = [];
     private classesComMarcadorTipo: Set<string> = new Set();
     private contadoresNaoNegativos: Set<string> = new Set();
     private tipoEstruturaVetor: llvm.StructType = null;
     private pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock }> = [];
     private contemExcecoes: boolean = false;
+    // Tipo de retorno esperado da função sendo compilada no momento (null = main / desconhecido).
+    // Usado para converter i1 → i32 quando a função declara retorno 'inteiro'/'lógico'.
+    private tipoRetornoFuncaoAtual: string | null = null;
+    // Contador para gerar nomes únicos de lambdas.
+    private contadorLambda: number = 0;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
         ['longo', '%ld'],
         ['número', '%g'],
         ['texto', '%s'],
+        ['lógico', '%d'],
     ]);
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
@@ -224,15 +265,34 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
 
-        // 1. Coletar tipos LLVM das propriedades e construir o struct
+        // Detecta superclasse (primeira entrada em superClasses, se existir).
+        const superClasseRef = (declaracao.superClasses as any[])?.[0];
+        const nomeSuperClasse: string | null =
+            superClasseRef?.simbolo?.lexema ?? superClasseRef?.tipo ?? null;
+
+        // 1. Coletar tipos LLVM das propriedades e construir o struct.
+        //    Com herança plana: campos do pai vêm primeiro, depois os próprios.
         const tiposPropsLlvm: llvm.Type[] = [];
         const mapaIndices: Map<string, number> = new Map();
         const mapaTipos: Map<string, string> = new Map();
 
-        for (const [indice, propriedade] of declaracao.propriedades.entries()) {
+        if (nomeSuperClasse && this.indicesPropriedades.has(nomeSuperClasse)) {
+            const indicesPai = this.indicesPropriedades.get(nomeSuperClasse);
+            const tiposPai = this.tiposPropriedades.get(nomeSuperClasse);
+            // Ordena pelo índice para garantir a ordem original dos campos.
+            const camposPai = [...indicesPai.entries()].sort((a, b) => a[1] - b[1]);
+            for (const [nomeCampo] of camposPai) {
+                const tipoCampo = tiposPai.get(nomeCampo);
+                tiposPropsLlvm.push(this.obterTipoLlvm(tipoCampo));
+                mapaIndices.set(nomeCampo, tiposPropsLlvm.length - 1);
+                mapaTipos.set(nomeCampo, tipoCampo);
+            }
+        }
+
+        for (const propriedade of declaracao.propriedades) {
             const tipoProp = propriedade.tipo || 'número';
             tiposPropsLlvm.push(this.obterTipoLlvm(tipoProp));
-            mapaIndices.set(propriedade.nome.lexema, indice);
+            mapaIndices.set(propriedade.nome.lexema, tiposPropsLlvm.length - 1);
             mapaTipos.set(propriedade.nome.lexema, tipoProp);
         }
 
@@ -273,9 +333,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 tiposParametros.push(this.obterTipoLlvm(parametro.tipoDado));
             }
 
-            const tipoRetorno = ehConstrutor
+            const tipoRetornoStr: string = ehConstrutor ? 'vazio' : (metodo.funcao.tipo ?? 'vazio');
+            const tipoRetorno = (tipoRetornoStr === 'vazio')
                 ? llvm.Type.getVoidTy(this.contexto)
-                : this.obterTipoLlvm(metodo.funcao.tipo);
+                : this.obterTipoLlvm(tipoRetornoStr);
 
             const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParametros, false);
             const objetoLlvmFuncao = llvm.Function.Create(
@@ -297,10 +358,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
             this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
             this.pilhaIsto.push(selfArg);
+            const tipoRetornoAnteriorMetodo = this.tipoRetornoFuncaoAtual;
+            this.tipoRetornoFuncaoAtual = tipoRetornoStr;
             await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
-            if (ehConstrutor) {
+            if (tipoRetornoStr === 'vazio') {
                 this.montador.CreateRetVoid();
             }
+            this.tipoRetornoFuncaoAtual = tipoRetornoAnteriorMetodo;
             this.pilhaIsto.pop();
             this.pilhaVariaveisEscopo.removerUltimo();
 
@@ -308,6 +372,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 metodo.simbolo.lexema,
                 ehConstrutor ? 'vazio' : metodo.funcao.tipo
             );
+        }
+
+        // Registra relação de herança e copia métodos herdados não sobrescritos.
+        if (nomeSuperClasse) {
+            this.superClasses.set(nomeClasse, nomeSuperClasse);
+
+            const metodosPai = this.metodosClasse.get(nomeSuperClasse);
+            if (metodosPai) {
+                const nomesPropriosFilho = new Set(declaracao.metodos.map(m => m.simbolo.lexema));
+                for (const [nomeMetodo, tipoRetorno] of metodosPai.entries()) {
+                    if (!nomesPropriosFilho.has(nomeMetodo) && nomeMetodo !== 'construtor') {
+                        this.metodosClasse.get(nomeClasse).set(nomeMetodo, tipoRetorno);
+                    }
+                }
+            }
         }
 
         return Promise.resolve();
@@ -510,7 +589,39 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoImportar(declaracao: Importar): Promise<any> {
-        // Import não tem efeito direto no IR neste contexto minimal.
+        // Resolve o nome do módulo a partir do caminho (normalmente um Literal com valor string).
+        const nomeModulo: string = (declaracao.caminho as any)?.valor ?? '';
+
+        if (!this.mapaModulos.has(nomeModulo)) {
+            // Módulo desconhecido (ex: caminho de arquivo) — ignorado nesta fase.
+            return Promise.resolve();
+        }
+
+        // Forma 2a: importar tudo como alias de 'modulo'
+        if (declaracao.simboloTudo) {
+            const alias = declaracao.simboloTudo.lexema;
+            const sentinela = new VariavelEscopo(null, undefined, `modulo:${nomeModulo}`);
+            this.pilhaVariaveisEscopo.topoDaPilha().set(alias, sentinela);
+            return Promise.resolve();
+        }
+
+        // Forma 2b: importar { fn1, fn2 } de 'modulo'
+        if (declaracao.elementosImportacao.length > 0) {
+            const funcoes = this.mapaModulos.get(nomeModulo);
+            for (const elemento of declaracao.elementosImportacao) {
+                const nomeFuncao = elemento.lexema;
+                const entrada = funcoes?.get(nomeFuncao);
+                if (entrada) {
+                    // getCallee() retorna o llvm.Value (llvm.Function) subjacente ao FunctionCallee.
+                    const llvmFuncao = entrada.callee.getCallee();
+                    this.pilhaVariaveisEscopo.topoDaPilha().set(
+                        nomeFuncao,
+                        new VariavelEscopo(llvmFuncao, undefined, 'função')
+                    );
+                }
+            }
+        }
+
         return Promise.resolve();
     }
 
@@ -1189,6 +1300,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoImportar(expressao: ImportarComoConstruto): Promise<any> {
+        // Importação dinâmica: var mod = importar('nomeModulo')
+        // Retorna um VariavelEscopo sentinela com tipo 'modulo:<nome>' quando o módulo
+        // é uma biblioteca embutida reconhecida.
+        const nomeModulo = (expressao.caminho?.valor ?? '') as string;
+        if (nomeModulo && this.mapaModulos.has(nomeModulo)) {
+            return Promise.resolve(new VariavelEscopo(null, undefined, `modulo:${nomeModulo}`));
+        }
+        // Módulo não reconhecido — pode ser um caminho de arquivo; ignorado nesta fase.
         return Promise.resolve();
     }
 
@@ -1306,7 +1425,23 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve();
         }
 
-        this.montador.CreateRet(valorResolvido as llvm.Value);
+        let valorFinal = valorResolvido as llvm.Value;
+
+        // Conversões de tipo quando a função foi compilada via compilarLambda e tem tipo de retorno esperado.
+        if (this.tipoRetornoFuncaoAtual === 'inteiro') {
+            const operadorLexema = (declaracao.valor as any)?.operador?.lexema;
+            const opComparacao = ['==', '!=', '<', '<=', '>', '>='].includes(operadorLexema ?? '');
+
+            if (opComparacao) {
+                // Comparação produz i1 → ZExt para i32
+                valorFinal = this.montador.CreateZExt(valorFinal, this.montador.getInt32Ty(), 'bool_para_int_ret');
+            } else if ((declaracao.valor?.tipo ?? '') === 'número') {
+                // Literal/expressão número (double) → FPToSI para i32
+                valorFinal = this.montador.CreateFPToSI(valorFinal, this.montador.getInt32Ty(), 'double_para_int_ret');
+            }
+        }
+
+        this.montador.CreateRet(valorFinal);
         return Promise.resolve();
     }
 
@@ -1330,7 +1465,27 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoSuper(expressao: Super): Promise<any> {
-        return Promise.resolve(null);
+        // `super` retorna o ponteiro `isto` atual, mas tipado como a superclasse.
+        // Isso permite que `super.metodo()` despache para `SuperClasse_metodo`.
+        let istoEscopo: VariavelEscopo;
+        try {
+            istoEscopo = this.pilhaVariaveisEscopo.obterValor('isto');
+        } catch {
+            return Promise.resolve(null);
+        }
+        if (!istoEscopo) return Promise.resolve(null);
+
+        // O nome da superclasse pode vir do nó AST (superclasse) ou do mapa de herança.
+        const nomeSuperClasse: string =
+            (expressao as any).superclasse ??
+            this.superClasses.get(istoEscopo.tipo) ??
+            null;
+
+        if (!nomeSuperClasse) return Promise.resolve(istoEscopo);
+
+        return Promise.resolve(
+            new VariavelEscopo(istoEscopo.variavelLlvm, undefined, nomeSuperClasse)
+        );
     }
 
     visitarExpressaoSustar(declaracao?: Sustar): SustarQuebra | void {
@@ -1550,6 +1705,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.getDoubleTy();
             case 'texto':
                 return this.montador.getPtrTy();
+            case 'lógico':
+            case 'logico':
+                return this.montador.getInt32Ty();
             default:
                 if (this.tipoEhVetor(tipoDelegua)) {
                     return this.tipoEstruturaVetor ?? llvm.PointerType.get(this.contexto, 0);
@@ -2020,6 +2178,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
 
+        // Importação de módulo: var mod = importar('nome') → armazena sentinela sem alloca.
+        if (declaracao.inicializador?.constructor?.name === 'ImportarComoConstruto') {
+            const sentinela = await declaracao.inicializador.aceitar(this);
+            const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
+            topoDaPilha.set(
+                declaracao.simbolo.lexema,
+                sentinela instanceof VariavelEscopo ? sentinela : new VariavelEscopo(null, undefined, 'qualquer')
+            );
+            return Promise.resolve();
+        }
+
         // Instanciação de classe: var p = Ponto(...)
         if (this.registroClasses.has(tipoVariavel)) {
             const objetoPtr = await declaracao.inicializador.aceitar(this) as llvm.Value;
@@ -2417,8 +2586,56 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // AcessoMetodo usa .nomeMetodo; AcessoMetodoOuPropriedade usa .simbolo.lexema
         const nomeMetodo = (acesso as AcessoMetodo).nomeMetodo ?? (acesso as AcessoMetodoOuPropriedade).simbolo.lexema;
-        const nomeFuncao = `${nomeClasse}_${nomeMetodo}`;
-        const funcaoLlvm = this.modulo.getFunction(nomeFuncao);
+
+        // Métodos embutidos de texto
+        if (nomeClasse === 'texto') {
+            return await this.chamarMetodoTexto(nomeMetodo, objetoPtr, argumentos);
+        }
+
+        // Métodos embutidos de vetor
+        if (this.tipoEhVetor(nomeClasse)) {
+            const tipoElem = this.tipoElementoVetor(nomeClasse);
+            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos);
+        }
+
+        // Despacho de módulo importado:
+        //   var mod = importar('nome')         → tipo 'modulo:nome'
+        //   importar tudo como mod de 'nome'   → tipo 'modulo:nome'
+        if (nomeClasse?.startsWith('modulo:')) {
+            const nomeModulo = nomeClasse.slice(7);
+            const funcoes = this.mapaModulos.get(nomeModulo);
+            const entrada = funcoes?.get(nomeMetodo);
+            if (!entrada) {
+                throw new Error(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
+            }
+            const args: llvm.Value[] = [];
+            for (let i = 0; i < argumentos.length; i++) {
+                const tipoPar = entrada.tiposParametros[i] ?? 'qualquer';
+                if (tipoPar === 'inteiro') {
+                    args.push(await this.carregarArgumentoInteiro(argumentos[i]));
+                } else if (tipoPar === 'numero' || tipoPar === 'número') {
+                    args.push(await this.carregarArgumentoNumero(argumentos[i]));
+                } else if (tipoPar === 'texto') {
+                    args.push(await this.carregarArgumentoTexto(argumentos[i]));
+                } else {
+                    const argResolvido = await argumentos[i].aceitar(this);
+                    args.push(argResolvido instanceof VariavelEscopo
+                        ? argResolvido.variavelLlvm
+                        : argResolvido as llvm.Value);
+                }
+            }
+            return this.montador.CreateCall(entrada.callee, args);
+        }
+
+        // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
+        let funcaoLlvm = this.modulo.getFunction(`${nomeClasse}_${nomeMetodo}`);
+        if (!funcaoLlvm) {
+            let nomeSuperAtual = this.superClasses.get(nomeClasse);
+            while (nomeSuperAtual && !funcaoLlvm) {
+                funcaoLlvm = this.modulo.getFunction(`${nomeSuperAtual}_${nomeMetodo}`);
+                nomeSuperAtual = this.superClasses.get(nomeSuperAtual);
+            }
+        }
         if (!funcaoLlvm) {
             throw new Error(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
         }
@@ -2432,12 +2649,330 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return this.montador.CreateCall(funcaoLlvm, args);
     }
 
+    private async chamarMetodoTexto(nomeMetodo: string, objetoPtr: llvm.Value, argumentos: Construto[]): Promise<llvm.Value> {
+        // Carrega o char* real a partir do ponteiro da variável
+        const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
+
+        switch (nomeMetodo) {
+            case 'maiusculo':
+                return this.montador.CreateCall(this.funcaoTextoMaiusculo, [strPtr]);
+
+            case 'minusculo':
+                return this.montador.CreateCall(this.funcaoTextoMinusculo, [strPtr]);
+
+            case 'inclui': {
+                const sub = await this.carregarArgumentoTexto(argumentos[0]);
+                return this.montador.CreateCall(this.funcaoTextoInclui, [strPtr, sub]);
+            }
+
+            case 'subtexto': {
+                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
+                const fim = await this.carregarArgumentoInteiro(argumentos[1]);
+                return this.montador.CreateCall(this.funcaoTextoSubtexto, [strPtr, inicio, fim]);
+            }
+
+            case 'substituir': {
+                const de = await this.carregarArgumentoTexto(argumentos[0]);
+                const para = await this.carregarArgumentoTexto(argumentos[1]);
+                return this.montador.CreateCall(this.funcaoTextoSubstituir, [strPtr, de, para]);
+            }
+
+            default:
+                throw new Error(`Método de texto '${nomeMetodo}' não implementado.`);
+        }
+    }
+
+    // Retorna o tamanho em bytes de um elemento de vetor segundo o tipo Delégua.
+    private tamElementoEmBytes(tipoElem: string): number {
+        if (tipoElem === 'inteiro') return 4;
+        // número, longo, texto (ponteiro 64-bit) → 8 bytes
+        return 8;
+    }
+
+    // Constante i32 para tamanho de elemento.
+    private constTamElem(tipoElem: string): llvm.Value {
+        return ConstantInt.get(this.contexto, new APInt(32, this.tamElementoEmBytes(tipoElem)));
+    }
+
+    private async chamarMetodoVetor(
+        nomeMetodo: string,
+        vetorPtr: llvm.Value,
+        tipoElem: string,
+        argumentos: Construto[]
+    ): Promise<llvm.Value> {
+        const tamElem = this.constTamElem(tipoElem);
+        const ehNumero = ConstantInt.get(this.contexto, new APInt(32, tipoElem === 'número' || tipoElem === 'numero' ? 1 : 0));
+
+        switch (nomeMetodo) {
+            case 'adicionar':
+            case 'empilhar': {
+                // Aloca um slot temporário para o elemento e passa seu endereço
+                const tipoLlvmElem = this.obterTipoLlvm(tipoElem);
+                const alocElem = this.montador.CreateAlloca(tipoLlvmElem, null, 'novo_elem');
+                let valorElem: llvm.Value;
+                if (tipoElem === 'inteiro') {
+                    valorElem = await this.carregarArgumentoInteiro(argumentos[0]);
+                } else if (tipoElem === 'número' || tipoElem === 'numero') {
+                    valorElem = await this.carregarArgumentoNumero(argumentos[0]);
+                } else {
+                    valorElem = await this.carregarArgumentoTexto(argumentos[0]);
+                }
+                this.montador.CreateStore(valorElem, alocElem);
+                return this.montador.CreateCall(this.funcaoVetorAdicionar, [vetorPtr, alocElem, tamElem]);
+            }
+
+            case 'removerUltimo':
+                return this.montador.CreateCall(this.funcaoVetorRemoverUltimo, [vetorPtr]);
+
+            case 'removerPrimeiro':
+                return this.montador.CreateCall(this.funcaoVetorRemoverPrimeiro, [vetorPtr, tamElem]);
+
+            case 'inverter':
+                return this.montador.CreateCall(this.funcaoVetorInverter, [vetorPtr, tamElem]);
+
+            case 'ordenar':
+                return this.montador.CreateCall(this.funcaoVetorOrdenar, [vetorPtr, tamElem, ehNumero]);
+
+            case 'fatiar': {
+                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
+                const fim = argumentos[1]
+                    ? await this.carregarArgumentoInteiro(argumentos[1])
+                    : ConstantInt.get(this.contexto, new APInt(32, 0x7fffffff));
+                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'fatia');
+                this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem, alocSaida]);
+                return alocSaida;
+            }
+
+            case 'juntar': {
+                const sep = await this.carregarArgumentoTexto(argumentos[0]);
+                if (tipoElem === 'inteiro') {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarInteiro, [vetorPtr, sep]);
+                } else if (tipoElem === 'número' || tipoElem === 'numero') {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarNumero, [vetorPtr, sep]);
+                } else {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarTexto, [vetorPtr, sep]);
+                }
+            }
+
+            case 'filtrarPor': {
+                const fnPtr = await this.resolverPonteiroDeFuncao(
+                    argumentos[0],
+                    [tipoElem],
+                    'inteiro'   // predicado retorna inteiro (0/1)
+                );
+                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'filtrado');
+                if (tipoElem === 'inteiro') {
+                    this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
+                } else {
+                    this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
+                }
+                return alocSaida;
+            }
+
+            default:
+                throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
+        }
+    }
+
+    // Resolve o ponteiro LLVM de uma função passada como argumento.
+    // Se for FuncaoConstruto (lambda), compila-a primeiro.
+    // Se for referência a função nomeada, carrega da pilha de escopo.
+    private async resolverPonteiroDeFuncao(
+        argumento: Construto,
+        tiposParametrosEsperados: string[],
+        tipoRetornoEsperado: string
+    ): Promise<llvm.Value> {
+        const nomeConstruct = argumento.constructor.name;
+        if (nomeConstruct === 'FuncaoConstruto') {
+            return await this.compilarLambda(argumento as FuncaoConstruto, tiposParametrosEsperados, tipoRetornoEsperado);
+        }
+        // Referência a função nomeada ou variável
+        const resolvido = await argumento.aceitar(this);
+        if (resolvido instanceof VariavelEscopo) {
+            return resolvido.variavelLlvm;
+        }
+        return resolvido as llvm.Value;
+    }
+
+    // Compila uma função anônima (FuncaoConstruto) como função LLVM com nome único.
+    // Parâmetros sem tipo recebem o tipo esperado de tiposParametrosEsperados.
+    // O tipo de retorno esperado é usado para selecionar o tipo LLVM correto.
+    private async compilarLambda(
+        construto: FuncaoConstruto,
+        tiposParametrosEsperados: string[],
+        tipoRetornoEsperado: string
+    ): Promise<llvm.Function> {
+        const nomeLambda = `__lambda_${this.contadorLambda++}`;
+
+        // Monta tipos dos parâmetros: usa a anotação do parâmetro ou o tipo esperado.
+        const tiposParamStr: string[] = construto.parametros.map((p, i) => {
+            const tipo = p.tipoDado && p.tipoDado !== 'qualquer' ? p.tipoDado : (tiposParametrosEsperados[i] ?? 'número');
+            return tipo;
+        });
+        const tiposParamLlvm = tiposParamStr.map(t => this.obterTipoLlvm(t));
+
+        // Tipo de retorno: usa o declarado ou o esperado.
+        const tipoRetornoStr = construto.tipo && construto.tipo !== 'qualquer' ? construto.tipo : tipoRetornoEsperado;
+        const tipoRetornoLlvm = this.obterTipoLlvm(tipoRetornoStr);
+
+        const tipoFuncao = llvm.FunctionType.get(tipoRetornoLlvm, tiposParamLlvm, false);
+        const funcaoLlvm = llvm.Function.Create(
+            tipoFuncao,
+            llvm.Function.LinkageTypes.ExternalLinkage,
+            nomeLambda,
+            this.modulo
+        );
+
+        // Escopo: mapeia parâmetros para os argumentos LLVM da função.
+        const mapaVariaveis: Map<string, VariavelEscopo> = new Map();
+        for (const [i, param] of construto.parametros.entries()) {
+            const argLlvm = funcaoLlvm.getArg(i);
+            mapaVariaveis.set(param.nome.lexema, new VariavelEscopo(argLlvm, undefined, tiposParamStr[i]));
+        }
+
+        // Salva e restaura ponto de inserção e tipo de retorno corrente.
+        const blocoAnterior = this.montador.GetInsertBlock();
+        const tipoRetornoAnterior = this.tipoRetornoFuncaoAtual;
+        this.tipoRetornoFuncaoAtual = tipoRetornoStr;
+
+        this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
+        await this.visitarCorpoFuncao(construto, funcaoLlvm);
+        this.pilhaVariaveisEscopo.removerUltimo();
+
+        this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
+        this.montador.SetInsertPoint(blocoAnterior);
+
+        return funcaoLlvm;
+    }
+
+    private async carregarArgumentoTexto(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        if (resolvido instanceof VariavelEscopo) {
+            return this.montador.CreateLoad(this.montador.getPtrTy(), resolvido.variavelLlvm, 'load_arg_texto');
+        }
+        return resolvido as llvm.Value;
+    }
+
+    private async carregarArgumentoInteiro(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        let valor: llvm.Value;
+        if (resolvido instanceof VariavelEscopo) {
+            const tipoLlvm = this.obterTipoLlvm(resolvido.tipo ?? argumento.tipo ?? 'inteiro');
+            valor = this.montador.CreateLoad(tipoLlvm, resolvido.variavelLlvm, 'load_arg_int');
+        } else {
+            valor = resolvido as llvm.Value;
+        }
+        // Converte double → i32 se necessário (literais inteiros chegam como double no Delégua)
+        if (valor.getType().isDoubleTy()) {
+            return this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
+        }
+        return valor;
+    }
+
+    private async chamarFuncaoTexto(argumentos: Construto[]): Promise<llvm.Value> {
+        const argumento = argumentos[0];
+        const resolvido = await argumento.aceitar(this);
+
+        let valor: llvm.Value;
+        let tipo: string;
+
+        if (resolvido instanceof VariavelEscopo) {
+            tipo = resolvido.tipo ?? argumento.tipo ?? 'número';
+            valor = this.montador.CreateLoad(this.obterTipoLlvm(tipo), resolvido.variavelLlvm, 'load_texto_arg');
+        } else {
+            valor = resolvido as llvm.Value;
+            tipo = argumento.tipo ?? 'número';
+        }
+
+        // Se já é texto, retorna o ponteiro diretamente
+        if (tipo === 'texto') {
+            return valor;
+        }
+
+        // inteiro → texto (usa %d para evitar notação científica)
+        if (tipo === 'inteiro') {
+            // Literal inteiro sem tipo explícito chega como double do parser do Delégua
+            if (tipo !== 'inteiro' || argumento.tipo === 'número') {
+                valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int_texto');
+            }
+            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
+        }
+
+        // número (double) → texto
+        // Se a variável era inteiro mas não temos conversão ainda, eleva para double
+        if (tipo === 'inteiro') {
+            valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double_texto');
+        }
+        return this.montador.CreateCall(this.funcaoTextoDeNumero, [valor]);
+    }
+
+    private async chamarAleatorioEntre(argumentos: Construto[]): Promise<llvm.Value> {
+        const a = await this.carregarArgumentoNumero(argumentos[0]);
+        const b = await this.carregarArgumentoNumero(argumentos[1]);
+        return this.montador.CreateCall(this.funcaoAleatorioEntre, [a, b]);
+    }
+
+    private async chamarMapear(argumentos: Construto[]): Promise<llvm.Value> {
+        // mapear(lista, fn)  →  novo vetor com fn aplicada a cada elemento
+        const vetorArg = argumentos[0];
+        const fnArg = argumentos[1];
+
+        // Resolve o vetor de entrada
+        const vetorResolvido = await vetorArg.aceitar(this);
+        const vetorPtr: llvm.Value = vetorResolvido instanceof VariavelEscopo
+            ? vetorResolvido.variavelLlvm
+            : vetorResolvido as llvm.Value;
+
+        // Determina o tipo do elemento
+        const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
+        const tipoElem = this.tipoElementoVetor(tipoVetor);
+        const ehNumero = tipoElem === 'número' || tipoElem === 'numero';
+
+        const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], tipoElem);
+
+        const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'mapeado');
+        if (ehNumero) {
+            this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
+        } else {
+            this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
+        }
+        return alocSaida;
+    }
+
+    private async carregarArgumentoNumero(argumento: Construto): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        let valor: llvm.Value;
+        if (resolvido instanceof VariavelEscopo) {
+            const tipoLlvm = this.obterTipoLlvm(resolvido.tipo ?? argumento.tipo ?? 'número');
+            valor = this.montador.CreateLoad(tipoLlvm, resolvido.variavelLlvm, 'load_arg_num');
+        } else {
+            valor = resolvido as llvm.Value;
+        }
+        // Converte i32 → double se necessário
+        if ((resolvido instanceof VariavelEscopo ? resolvido.tipo : argumento.tipo) === 'inteiro') {
+            return this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
+        }
+        return valor;
+    }
+
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
         // Instanciação de classe: Ponto(...)
         if (expressao.entidadeChamada.constructor.name === 'Variavel') {
             const nomeCallee = (expressao.entidadeChamada as Variavel).simbolo.lexema;
             if (this.registroClasses.has(nomeCallee)) {
                 return await this.instanciarClasse(nomeCallee, expressao.argumentos);
+            }
+            // texto() escolhe a função C com base no tipo do argumento
+            if (nomeCallee === 'texto') {
+                return await this.chamarFuncaoTexto(expressao.argumentos);
+            }
+            // aleatorioEntre precisa de despacho próprio para carregar variáveis como double
+            if (nomeCallee === 'aleatorioEntre') {
+                return await this.chamarAleatorioEntre(expressao.argumentos);
+            }
+            // mapear(lista, fn) — função global que mapeia elementos de um vetor
+            if (nomeCallee === 'mapear') {
+                return await this.chamarMapear(expressao.argumentos);
             }
         }
 
@@ -2518,16 +3053,64 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         new APInt(1, expressao.valor ? 1 : 0)
                     )
                 );
-            case 'texto':
+            case 'texto': {
+                const valor = expressao.valor as string;
+                if (valor.includes('${')) {
+                    return this.resolverTextoInterpolado(valor);
+                }
                 return Promise.resolve(
-                    this.montador.CreateGlobalStringPtr(
-                        expressao.valor as string,
-                        "str",
-                        0,
-                        this.modulo
-                    )
+                    this.montador.CreateGlobalStringPtr(valor, "str", 0, this.modulo)
                 );
+            }
         }
+    }
+
+    private parsearTemplateString(modelo: string): Array<string | { nomeVar: string }> {
+        const partes: Array<string | { nomeVar: string }> = [];
+        const regex = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+        let ultimaPos = 0;
+        let correspondencia: RegExpExecArray;
+
+        while ((correspondencia = regex.exec(modelo)) !== null) {
+            if (correspondencia.index > ultimaPos) {
+                partes.push(modelo.slice(ultimaPos, correspondencia.index));
+            }
+            partes.push({ nomeVar: correspondencia[1] });
+            ultimaPos = correspondencia.index + correspondencia[0].length;
+        }
+
+        if (ultimaPos < modelo.length) {
+            partes.push(modelo.slice(ultimaPos));
+        }
+
+        return partes;
+    }
+
+    private async resolverTextoInterpolado(modelo: string): Promise<llvm.Value> {
+        const partes = this.parsearTemplateString(modelo);
+        const segmentosFormato: string[] = [];
+        const argumentos: llvm.Value[] = [];
+
+        for (const parte of partes) {
+            if (typeof parte === 'string') {
+                // Escapa '%' em trechos estáticos para que não seja interpretado pelo printf
+                segmentosFormato.push(parte.replace(/%/g, '%%'));
+            } else {
+                const varEscopo = this.pilhaVariaveisEscopo.obterValor(parte.nomeVar);
+                const tipo = varEscopo.tipo ?? 'número';
+                const formato = this.printfFormatos.get(tipo) ?? '%s';
+                segmentosFormato.push(formato);
+
+                const tipoLlvm = this.obterTipoLlvm(tipo);
+                const valor = this.montador.CreateLoad(tipoLlvm, varEscopo.variavelLlvm, `load_interp_${parte.nomeVar}`);
+                argumentos.push(valor);
+            }
+        }
+
+        const formatoFinal = segmentosFormato.join('');
+        const formatoPtr = this.montador.CreateGlobalStringPtr(formatoFinal, 'fmt_interp', 0, this.modulo);
+
+        return this.montador.CreateCall(this.funcaoFormatar, [formatoPtr, ...argumentos]);
     }
 
     protected buscarFormatoLeia(tipoDelegua: string): llvm.Constant {
@@ -2654,6 +3237,558 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
 
         this.funcaoEndCatch = this.modulo.getOrInsertFunction('__cxa_end_catch', tipoEndCatch);
+
+        // char* delegua_texto_maiusculo(const char* s)
+        // char* delegua_texto_minusculo(const char* s)
+        const tipoFuncaoTextoPtr1 = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoMaiusculo = this.modulo.getOrInsertFunction('delegua_texto_maiusculo', tipoFuncaoTextoPtr1);
+        this.funcaoTextoMinusculo = this.modulo.getOrInsertFunction('delegua_texto_minusculo', tipoFuncaoTextoPtr1);
+
+        // int delegua_texto_inclui(const char* s, const char* sub)
+        const tipoFuncaoTextoInclui = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoInclui = this.modulo.getOrInsertFunction('delegua_texto_inclui', tipoFuncaoTextoInclui);
+
+        // char* delegua_texto_subtexto(const char* s, int inicio, int fim)
+        const tipoFuncaoTextoSubtexto = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoTextoSubtexto = this.modulo.getOrInsertFunction('delegua_texto_subtexto', tipoFuncaoTextoSubtexto);
+
+        // char* delegua_texto_substituir(const char* s, const char* de, const char* para)
+        const tipoFuncaoTextoSubstituir = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoTextoSubstituir = this.modulo.getOrInsertFunction('delegua_texto_substituir', tipoFuncaoTextoSubstituir);
+
+        // double aleatorio(void)
+        const tipoFuncaoAleatorio = llvm.FunctionType.get(
+            this.montador.getDoubleTy(), [], false
+        );
+        this.funcaoAleatorio = this.modulo.getOrInsertFunction('aleatorio', tipoFuncaoAleatorio);
+
+        // int aleatorioEntre(double a, double b)
+        const tipoFuncaoAleatorioEntre = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getDoubleTy(), this.montador.getDoubleTy()],
+            false
+        );
+        this.funcaoAleatorioEntre = this.modulo.getOrInsertFunction('aleatorioEntre', tipoFuncaoAleatorioEntre);
+
+        // char* texto_de_inteiro(int val)
+        const tipoFuncaoTextoDeInteiro = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoTextoDeInteiro = this.modulo.getOrInsertFunction('texto_de_inteiro', tipoFuncaoTextoDeInteiro);
+
+        // char* texto_de_numero(double val)
+        const tipoFuncaoTextoDeNumero = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getDoubleTy()],
+            false
+        );
+        this.funcaoTextoDeNumero = this.modulo.getOrInsertFunction('texto_de_numero', tipoFuncaoTextoDeNumero);
+
+        // char* delegua_formatar(const char* fmt, ...)  — sprintf alocador para interpolação de texto
+        const tipoFuncaoFormatar = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy()],
+            true  // variadic
+        );
+        this.funcaoFormatar = this.modulo.getOrInsertFunction('delegua_formatar', tipoFuncaoFormatar);
+
+        // int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem)
+        const tipoFuncaoVetorAdicionar = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorAdicionar = this.modulo.getOrInsertFunction('delegua_vetor_adicionar', tipoFuncaoVetorAdicionar);
+
+        // int delegua_vetor_remover_ultimo(Vetor* v)
+        const tipoFuncaoVetorRemoverUltimo = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorRemoverUltimo = this.modulo.getOrInsertFunction('delegua_vetor_remover_ultimo', tipoFuncaoVetorRemoverUltimo);
+
+        // int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem)
+        const tipoFuncaoVetorRemoverPrimeiro = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorRemoverPrimeiro = this.modulo.getOrInsertFunction('delegua_vetor_remover_primeiro', tipoFuncaoVetorRemoverPrimeiro);
+
+        // void delegua_vetor_inverter(Vetor* v, int tam_elem)
+        const tipoFuncaoVetorInverter = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorInverter = this.modulo.getOrInsertFunction('delegua_vetor_inverter', tipoFuncaoVetorInverter);
+
+        // void delegua_vetor_ordenar(Vetor* v, int tam_elem, int eh_numero)
+        const tipoFuncaoVetorOrdenar = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorOrdenar = this.modulo.getOrInsertFunction('delegua_vetor_ordenar', tipoFuncaoVetorOrdenar);
+
+        // void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida)
+        const tipoFuncaoVetorFatiar = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [
+                this.montador.getPtrTy(),
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                this.montador.getPtrTy()
+            ],
+            false
+        );
+        this.funcaoVetorFatiar = this.modulo.getOrInsertFunction('delegua_vetor_fatiar', tipoFuncaoVetorFatiar);
+
+        // char* delegua_vetor_juntar_inteiro(Vetor* v, const char* sep)
+        // char* delegua_vetor_juntar_numero(Vetor* v, const char* sep)
+        // char* delegua_vetor_juntar_texto(Vetor* v, const char* sep)
+        const tipoFuncaoVetorJuntar = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorJuntarInteiro = this.modulo.getOrInsertFunction('delegua_vetor_juntar_inteiro', tipoFuncaoVetorJuntar);
+        this.funcaoVetorJuntarNumero = this.modulo.getOrInsertFunction('delegua_vetor_juntar_numero', tipoFuncaoVetorJuntar);
+        this.funcaoVetorJuntarTexto = this.modulo.getOrInsertFunction('delegua_vetor_juntar_texto', tipoFuncaoVetorJuntar);
+
+        // void delegua_vetor_filtrar_inteiro(Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_filtrar_numero (Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_mapear_inteiro (Vetor* v, ptr fn, Vetor* saida)
+        // void delegua_vetor_mapear_numero  (Vetor* v, ptr fn, Vetor* saida)
+        // Todos recebem (ptr, ptr, ptr) → void  — o ponteiro de função é opaco no IR.
+        const tipoFuncaoVetorCallback = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorFiltrarInteiro = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_inteiro', tipoFuncaoVetorCallback);
+        this.funcaoVetorFiltrarNumero  = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_numero',  tipoFuncaoVetorCallback);
+        this.funcaoVetorMapearInteiro  = this.modulo.getOrInsertFunction('delegua_vetor_mapear_inteiro',  tipoFuncaoVetorCallback);
+        this.funcaoVetorMapearNumero   = this.modulo.getOrInsertFunction('delegua_vetor_mapear_numero',   tipoFuncaoVetorCallback);
+
+        this.registrarModuloMatematica();
+        this.registrarModuloFisica();
+        this.registrarModuloEstatistica();
+        this.registrarModuloArquivos();
+        this.registrarModuloCsv();
+        this.registrarModuloJson();
+        this.registrarModuloHttp();
+        this.registrarModuloCriptografia();
+        this.registrarModuloDados();
+    }
+
+    private registrarModuloMatematica(): void {
+        const d = this.montador.getDoubleTy();
+        const i32 = this.montador.getInt32Ty();
+
+        // Auxiliar: cria FunctionCallee para uma função C com assinatura double(double...)
+        const reg = (nomeCFunc: string, tiposParametros: string[], tipoRetorno: string = 'numero'): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : d);
+            const tipo = llvm.FunctionType.get(d, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Algébricas
+            ['exp',                    reg('delegua_mat_exp',                    ['numero'])],
+            ['logaritmo',              reg('delegua_mat_logaritmo',              ['numero'])],
+            ['potencia',               reg('delegua_mat_potencia',               ['numero', 'numero'])],
+            ['raizQuadrada',           reg('delegua_mat_raiz_quadrada',          ['numero'])],
+            ['arredondarParaBaixo',    reg('delegua_mat_arredondar_para_baixo',  ['numero'])],
+            ['aprox',                  reg('delegua_mat_aprox',                  ['numero', 'inteiro'])],
+            // Trigonometria
+            ['pi',                     reg('delegua_mat_pi',                     [])],
+            ['seno',                   reg('delegua_mat_seno',                   ['numero'])],
+            ['cosseno',                reg('delegua_mat_cosseno',                ['numero'])],
+            ['tangente',               reg('delegua_mat_tangente',               ['numero'])],
+            ['arcoSeno',               reg('delegua_mat_arco_seno',              ['numero'])],
+            ['arcoCosseno',            reg('delegua_mat_arco_cosseno',           ['numero'])],
+            ['arcoTangente',           reg('delegua_mat_arco_tangente',          ['numero'])],
+            ['graus',                  reg('delegua_mat_graus',                  ['numero'])],
+            ['radiano',                reg('delegua_mat_radiano',                ['numero'])],
+            // Cálculo
+            ['limite',                 reg('delegua_mat_limite',                 ['numero', 'numero', 'numero'])],
+            // Financeira
+            ['jurosSimples',           reg('delegua_mat_juros_simples',          ['numero', 'numero', 'numero'])],
+            ['jurosCompostos',         reg('delegua_mat_juros_compostos',        ['numero', 'numero', 'numero'])],
+            // Geometria plana
+            ['areaCirculo',            reg('delegua_mat_area_circulo',           ['numero'])],
+            ['areaQuadrado',           reg('delegua_mat_area_quadrado',          ['numero'])],
+            ['areaRetangulo',          reg('delegua_mat_area_retangulo',         ['numero', 'numero'])],
+            ['areaLosango',            reg('delegua_mat_area_losango',           ['numero', 'numero'])],
+            ['areaTrapezio',           reg('delegua_mat_area_trapezio',          ['numero', 'numero', 'numero'])],
+            ['areaTriangulo',          reg('delegua_mat_area_triangulo',         ['numero', 'numero'])],
+            ['distanciaDoisPontos',    reg('delegua_mat_distancia_dois_pontos',  ['numero', 'numero', 'numero', 'numero'])],
+            // Funções de grau
+            ['fun1r',                  reg('delegua_mat_fun1r',                  ['numero', 'numero'])],
+            ['xVertice',               reg('delegua_mat_x_vertice',              ['numero', 'numero', 'numero'])],
+            ['yVertice',               reg('delegua_mat_y_vertice',              ['numero', 'numero', 'numero'])],
+        ]);
+
+        this.mapaModulos.set('matematica', funcoes);
+    }
+
+    private registrarModuloFisica(): void {
+        const d = this.montador.getDoubleTy();
+
+        const reg = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(() => d);
+            const tipo = llvm.FunctionType.get(d, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'numero' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            ['velocidadeMedia', reg('delegua_fis_velocidade_media', ['numero', 'numero'])],
+            ['deltaS',          reg('delegua_fis_delta_s',          ['numero', 'numero'])],
+            ['deltaT',          reg('delegua_fis_delta_t',          ['numero', 'numero'])],
+            ['aceleracao',      reg('delegua_fis_aceleracao',       ['numero', 'numero', 'numero', 'numero'])],
+        ]);
+
+        this.mapaModulos.set('fisica', funcoes);
+    }
+
+    private registrarModuloEstatistica(): void {
+        const d = this.montador.getDoubleTy();
+        const ptr = this.montador.getPtrTy();
+
+        // Auxiliar: cria EntradaFuncaoModulo para função double(Vetor*...).
+        // tiposParametros usa 'vetor' para parâmetros Vetor* — o despachante usa o else-branch,
+        // que passa variavelLlvm (o ponteiro alloca do Vetor) diretamente.
+        const reg1 = (nomeCFunc: string): EntradaFuncaoModulo => {
+            const tipo = llvm.FunctionType.get(d, [ptr], false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros: ['vetor'], tipoRetorno: 'numero' };
+        };
+        const reg2 = (nomeCFunc: string): EntradaFuncaoModulo => {
+            const tipo = llvm.FunctionType.get(d, [ptr, ptr], false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros: ['vetor', 'vetor'], tipoRetorno: 'numero' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            ['max',         reg1('delegua_est_max')],
+            ['min',         reg1('delegua_est_min')],
+            ['media',       reg1('delegua_est_media')],
+            ['mediana',     reg1('delegua_est_mediana')],
+            ['ve',          reg1('delegua_est_variancia')],
+            ['covariancia', reg2('delegua_est_covariancia')],
+            // moda: retorna Vetor via out-param — adiado
+        ]);
+
+        this.mapaModulos.set('estatistica', funcoes);
+    }
+
+    private registrarModuloArquivos(): void {
+        const ptr  = this.montador.getPtrTy();
+        const i32  = this.montador.getInt32Ty();
+        const vazio = llvm.Type.getVoidTy(this.contexto);
+
+        // Auxiliar: cria EntradaFuncaoModulo para funções do módulo arquivos.
+        // tiposParametros: 'texto' → ptr (char* ou Arquivo*), 'inteiro' → i32.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[],
+            tipoRetorno: string
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t =>
+                t === 'inteiro' ? i32 : ptr
+            );
+            const tipoRetLlvm =
+                tipoRetorno === 'inteiro' ? i32
+                : tipoRetorno === 'vazio'  ? vazio
+                : ptr;
+            const tipo = llvm.FunctionType.get(tipoRetLlvm, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Funções de módulo (livres)
+            ['abrir',              reg('delegua_arq_abrir',                ['texto'],          'texto')],
+            ['diretorioAtual',     reg('delegua_arq_diretorio_atual',       [],                 'texto')],
+            ['diretorioExiste',    reg('delegua_arq_diretorio_existe',      ['texto'],          'inteiro')],
+            ['eArquivo',           reg('delegua_arq_e_arquivo',             ['texto'],          'inteiro')],
+            ['eDiretorio',         reg('delegua_arq_e_diretorio',           ['texto'],          'inteiro')],
+            // Funções de instância (recebem Arquivo* = 'texto' no mapa de módulo)
+            ['paraTexto',          reg('delegua_arq_para_texto',            ['texto'],          'texto')],
+            ['escrever',           reg('delegua_arq_escrever',              ['texto', 'texto'], 'vazio')],
+            ['sobrescrever',       reg('delegua_arq_sobrescrever',          ['texto', 'texto'], 'vazio')],
+            ['recarregar',         reg('delegua_arq_recarregar',            ['texto'],          'vazio')],
+            ['instanciaEArquivo',  reg('delegua_arq_instancia_e_arquivo',   ['texto'],          'inteiro')],
+            ['instanciaEDiretorio',reg('delegua_arq_instancia_e_diretorio', ['texto'],          'inteiro')],
+        ]);
+
+        this.mapaModulos.set('arquivos', funcoes);
+    }
+
+    private registrarModuloCsv(): void {
+        const ptr   = this.montador.getPtrTy();
+        const i8    = llvm.Type.getInt8Ty(this.contexto);
+        const i32   = this.montador.getInt32Ty();
+        const vazio = llvm.Type.getVoidTy(this.contexto);
+
+        // Auxiliar — tiposParametros: 'texto' → ptr, 'inteiro' → i32, 'char' → i8.
+        // O separador é passado como 'char' (i8); na chamada, usa carregarArgumentoInteiro
+        // que converte double→i32, mas aqui truncamos para i8 na assinatura C.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[],
+            tipoRetorno: string
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t =>
+                t === 'inteiro' ? i32
+                : t === 'char'  ? i8
+                : ptr
+            );
+            const tipoRetLlvm =
+                tipoRetorno === 'inteiro' ? i32
+                : tipoRetorno === 'vazio'  ? vazio
+                : ptr;
+            const tipo = llvm.FunctionType.get(tipoRetLlvm, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Funções principais (sep = separador CSV, inteiro com valor ASCII, ex. 44 = ',')
+            ['textoParaObjetoCsv', reg('delegua_csv_texto_para_tabela', ['texto', 'inteiro'], 'texto')],
+            ['objetoCsvParaTexto', reg('delegua_csv_tabela_para_texto', ['texto', 'inteiro'], 'texto')],
+            ['lerCsv',             reg('delegua_csv_ler',               ['texto', 'inteiro'], 'texto')],
+            ['escreverCsv',        reg('delegua_csv_escrever',          ['texto', 'texto', 'inteiro'], 'vazio')],
+            // Acessores de instância (recebem TabelaCsv* = 'texto')
+            ['totalLinhas',        reg('delegua_csv_total_linhas',      ['texto'],                     'inteiro')],
+            ['totalColunas',       reg('delegua_csv_total_colunas',     ['texto'],                     'inteiro')],
+            ['obterCelula',        reg('delegua_csv_obter_celula',      ['texto', 'inteiro', 'inteiro'],'texto')],
+            ['liberar',            reg('delegua_csv_liberar',           ['texto'],                     'vazio')],
+        ]);
+
+        this.mapaModulos.set('csv', funcoes);
+    }
+
+    private registrarModuloJson(): void {
+        const ptr   = this.montador.getPtrTy();
+        const i32   = this.montador.getInt32Ty();
+        const d     = this.montador.getDoubleTy();
+        const vazio = llvm.Type.getVoidTy(this.contexto);
+
+        // Auxiliar — tiposParametros: 'texto' → ptr (cJSON* ou char*), 'inteiro' → i32.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[],
+            tipoRetorno: string
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipoRetLlvm =
+                tipoRetorno === 'inteiro' ? i32
+                : tipoRetorno === 'numero'  ? d
+                : tipoRetorno === 'vazio'   ? vazio
+                : ptr;
+            const tipo = llvm.FunctionType.get(tipoRetLlvm, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Conversão / I/O
+            ['textoParaJson',                   reg('delegua_json_texto_para_objeto',  ['texto'],           'texto')],
+            ['objetoParaTextoJson',              reg('delegua_json_objeto_para_texto',  ['texto'],           'texto')],
+            ['importarArquivoJson',              reg('delegua_json_importar_arquivo',   ['texto'],           'texto')],
+            ['exportarObjetoParaArquivoJson',    reg('delegua_json_exportar_arquivo',   ['texto', 'texto'],  'vazio')],
+            // Acessores (recebem cJSON* = 'texto' no mapa)
+            ['obterCampo',                       reg('delegua_json_obter_campo',        ['texto', 'texto'],  'texto')],
+            ['obterItem',                        reg('delegua_json_obter_item',         ['texto', 'inteiro'],'texto')],
+            ['tamanho',                          reg('delegua_json_tamanho',            ['texto'],           'inteiro')],
+            ['valorTexto',                       reg('delegua_json_valor_texto',        ['texto'],           'texto')],
+            ['valorNumero',                      reg('delegua_json_valor_numero',       ['texto'],           'numero')],
+            ['liberar',                          reg('delegua_json_liberar',            ['texto'],           'vazio')],
+        ]);
+
+        this.mapaModulos.set('json', funcoes);
+    }
+
+    private registrarModuloHttp(): void {
+        const ptr   = this.montador.getPtrTy();
+        const i32   = this.montador.getInt32Ty();
+        const vazio = llvm.Type.getVoidTy(this.contexto);
+
+        // Auxiliar — tiposParametros: 'texto' → ptr (char*, ClienteHttp* ou RespostaHttp*),
+        //            'inteiro' → i32.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[],
+            tipoRetorno: string
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipoRetLlvm =
+                tipoRetorno === 'inteiro' ? i32
+                : tipoRetorno === 'vazio'  ? vazio
+                : ptr;
+            const tipo = llvm.FunctionType.get(tipoRetLlvm, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Criação de cliente
+            ['novoClienteHttp',             reg('delegua_http_novo_cliente',   ['texto', 'inteiro'],          'texto')],
+            ['adicionarCabecalho',          reg('delegua_http_add_cabecalho',  ['texto', 'texto'],            'vazio')],
+            // Métodos HTTP (cliente = ClienteHttp*, sufixo = char*, corpo = char*)
+            ['requisicaoGet',               reg('delegua_http_get',            ['texto', 'texto'],            'texto')],
+            ['requisicaoPost',              reg('delegua_http_post',           ['texto', 'texto', 'texto'],   'texto')],
+            ['requisicaoPut',               reg('delegua_http_put',            ['texto', 'texto', 'texto'],   'texto')],
+            ['requisicaoDelete',            reg('delegua_http_delete',         ['texto', 'texto'],            'texto')],
+            ['requisicaoPatch',             reg('delegua_http_patch',          ['texto', 'texto', 'texto'],   'texto')],
+            // Acessores sobre RespostaHttp*
+            ['codigoStatus',                reg('delegua_http_codigo_status',  ['texto'],                     'inteiro')],
+            ['dados',                       reg('delegua_http_dados',          ['texto'],                     'texto')],
+            ['mensagemStatus',              reg('delegua_http_mensagem',       ['texto'],                     'texto')],
+            // Limpeza de memória
+            ['liberarResposta',             reg('delegua_http_liberar_resp',   ['texto'],                     'vazio')],
+            ['liberarCliente',              reg('delegua_http_liberar_cliente',['texto'],                     'vazio')],
+        ]);
+
+        this.mapaModulos.set('http', funcoes);
+    }
+
+    private registrarModuloCriptografia(): void {
+        const ptr = this.montador.getPtrTy();
+        const i32 = this.montador.getInt32Ty();
+
+        // reg — retorna ptr (char*); regInt — retorna i32.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[]
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(ptr, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'texto' };
+        };
+        const regInt = (
+            nomeCFunc: string,
+            tiposParametros: string[]
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(i32, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'inteiro' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // XOR
+            ['cifrarXor',                    reg('delegua_cript_cifrar_xor',          ['texto', 'texto'])],
+            ['decifrarXor',                  reg('delegua_cript_decifrar_xor',         ['texto', 'texto'])],
+            // ROT
+            ['rot13',                        reg('delegua_cript_rot13',                ['texto'])],
+            ['rotN',                         reg('delegua_cript_rot_n',                ['texto', 'inteiro'])],
+            ['decifrarRotN',                 reg('delegua_cript_decifrar_rot_n',        ['texto', 'inteiro'])],
+            // Base64
+            ['codificarBase64',              reg('delegua_cript_base64_codificar',     ['texto'])],
+            ['decodificarBase64',            reg('delegua_cript_base64_decodificar',   ['texto'])],
+            // Menino do Acre (tema runico)
+            ['criptografarEmMeninoDoAcre',   reg('delegua_cript_menino_do_acre_cif',   ['texto'])],
+            ['descriptografarDeMeninoDoAcre',reg('delegua_cript_menino_do_acre_dec',   ['texto'])],
+            // F.1b — hashes (requer OpenSSL -lcrypto)
+            ['md5',                          reg('delegua_cript_md5',                  ['texto'])],
+            ['sha1',                         reg('delegua_cript_sha1',                 ['texto'])],
+            ['sha256',                       reg('delegua_cript_sha256',               ['texto'])],
+            ['sha512',                       reg('delegua_cript_sha512',               ['texto'])],
+            ['hmacSha256',                   reg('delegua_cript_hmac_sha256',          ['texto', 'texto'])],
+            ['hmacSha512',                   reg('delegua_cript_hmac_sha512',          ['texto', 'texto'])],
+            // F.1b — aleatório / UUID / PBKDF2
+            ['gerarBytesAleatorios',         reg('delegua_cript_bytes_aleatorios',     ['inteiro'])],
+            ['gerarTextoAleatorio',          reg('delegua_cript_texto_aleatorio',      ['inteiro'])],
+            ['gerarUuid',                    reg('delegua_cript_uuid',                 [])],
+            ['derivarChavePbkdf2',           reg('delegua_cript_pbkdf2',              ['texto', 'texto', 'inteiro', 'inteiro'])],
+            // F.1c — AES-256-GCM (requer OpenSSL -lcrypto -lssl)
+            ['criptografarAes256',           reg('delegua_cript_aes256_cifrar',        ['texto', 'texto', 'texto'])],
+            ['descriptografarAes256',        reg('delegua_cript_aes256_decifrar',      ['texto', 'texto', 'texto'])],
+            // F.1c — RSA (requer OpenSSL -lcrypto -lssl)
+            ['gerarChavePrivadaRsa',         reg('delegua_cript_rsa_gerar_privada',    ['inteiro'])],
+            ['derivarChavePublicaRsa',       reg('delegua_cript_rsa_derivar_publica',  ['texto'])],
+            ['criptografarRsa',              reg('delegua_cript_rsa_cifrar',           ['texto', 'texto'])],
+            ['descriptografarRsa',           reg('delegua_cript_rsa_decifrar',         ['texto', 'texto'])],
+            ['assinarRsa',                   reg('delegua_cript_rsa_assinar',          ['texto', 'texto'])],
+            ['verificarAssinaturaRsa',       regInt('delegua_cript_rsa_verificar',     ['texto', 'texto', 'texto'])],
+        ]);
+
+        this.mapaModulos.set('criptografia', funcoes);
+    }
+
+    private registrarModuloDados(): void {
+        const ptr = this.montador.getPtrTy();
+        const i32 = this.montador.getInt32Ty();
+        const d   = this.montador.getDoubleTy();
+
+        // reg — retorna ptr (RecorteDados* ou Serie* ou char*).
+        const reg = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(ptr, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'texto' };
+        };
+
+        // regInt — retorna i32.
+        const regInt = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(i32, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'inteiro' };
+        };
+
+        // regDouble — retorna double; parâmetros 'texto' → ptr (para RecorteDados*/Serie*).
+        const regDouble = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : (t === 'numero' ? d : ptr));
+            const tipo = llvm.FunctionType.get(d, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'numero' };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // I/O
+            ['lerCSV',              reg('delegua_dados_ler_csv',              ['texto'])],
+            // Operações sobre RecorteDados
+            ['cabeca',              reg('delegua_dados_cabeca',               ['texto', 'inteiro'])],
+            ['cauda',               reg('delegua_dados_cauda',                ['texto', 'inteiro'])],
+            ['info',                reg('delegua_dados_info',                 ['texto'])],
+            ['paraTexto',           reg('delegua_dados_para_texto',           ['texto'])],
+            ['removerNulo',         reg('delegua_dados_remover_nulo',         ['texto'])],
+            ['selecionarColuna',    reg('delegua_dados_selecionar_coluna',    ['texto', 'texto'])],
+            // Operações sobre Serie
+            ['serieMax',            regDouble('delegua_dados_serie_max',      ['texto'])],
+            ['serieMin',            regDouble('delegua_dados_serie_min',      ['texto'])],
+            ['serieMedia',          regDouble('delegua_dados_serie_media',    ['texto'])],
+            ['serieTamanho',        regInt('delegua_dados_serie_tamanho',     ['texto'])],
+        ]);
+
+        this.mapaModulos.set('dados', funcoes);
     }
 
     /**
@@ -2703,6 +3838,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.indicesPropriedades = new Map();
         this.tiposPropriedades = new Map();
         this.metodosClasse = new Map();
+        this.superClasses = new Map();
+        this.mapaModulos = new Map();
         this.pilhaIsto = [];
         this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>()
@@ -2713,6 +3850,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador = new llvm.IRBuilder(this.contexto);
         this.tipoEstruturaVetor = null;
         this.contemExcecoes = false;
+        this.contadorLambda = 0;
+        this.tipoRetornoFuncaoAtual = null;
 
         const avaliadorSintaticoComTipagem = this.avaliadorSintatico as any;
         if (!avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas) {
@@ -2753,6 +3892,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha()
         topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value))
         topoDaPilhaDeVariaveis.set("inteiro", new VariavelEscopo(this.funcaoInteiro?.getCallee() as llvm.Value))
+        topoDaPilhaDeVariaveis.set("aleatorio", new VariavelEscopo(this.funcaoAleatorio?.getCallee() as llvm.Value))
+        topoDaPilhaDeVariaveis.set("aleatorioEntre", new VariavelEscopo(this.funcaoAleatorioEntre?.getCallee() as llvm.Value))
 
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Classe);

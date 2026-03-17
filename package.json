@@ -14,7 +14,7 @@
     "delegua"
   ],
   "scripts": {
-    "empacotar": "rimraf ./dist && tsc && copyfiles -V ./package.json ./dist",
+    "empacotar": "yarn rimraf ./dist && tsc && yarn copyfiles -V ./package.json ./dist && yarn copyfiles -u 1 \"fontes/bibliotecas/**\" ./dist",
     "testes-unitarios": "jest --coverage",
     "executar": "ts-node fontes/ilc.ts"
   },
@@ -27,8 +27,8 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@designliquido/delegua": "^1.13.0",
-    "@designliquido/llvm-bindings": "^9.0.0",
+    "@designliquido/delegua": "^1.14.0",
+    "@designliquido/llvm-bindings": "^9.1.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {

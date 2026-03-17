@@ -1,4 +1,5 @@
 #include "./padrao.h"
+#include <time.h>
 
 // Utilidades
 
@@ -90,6 +91,64 @@ double numero(void *valor) {
   char *s = (char*) valor;
 
   return strtod(s, NULL);
+}
+
+static int semente_inicializada = 0;
+
+static void inicializar_semente(void) {
+    if (!semente_inicializada) {
+        srand((unsigned int)time(NULL));
+        semente_inicializada = 1;
+    }
+}
+
+double aleatorio(void) {
+    inicializar_semente();
+    return (double)rand() / RAND_MAX;
+}
+
+int aleatorioEntre(double a, double b) {
+    inicializar_semente();
+    int ia = (int)a;
+    int ib = (int)b;
+    if (ia > ib) { int tmp = ia; ia = ib; ib = tmp; }
+    return ia + rand() % (ib - ia + 1);
+}
+
+char* texto_de_inteiro(int val) {
+    char* buf = (char*)malloc(32);
+    snprintf(buf, 32, "%d", val);
+    return buf;
+}
+
+char* texto_de_numero(double val) {
+    char* buf = (char*)malloc(64);
+    snprintf(buf, 64, "%g", val);
+    return buf;
+}
+
+char* delegua_formatar(const char* fmt, ...) {
+    va_list args;
+
+    // Primeira passagem: calcular o tamanho necessário
+    va_start(args, fmt);
+    int tamanho = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+
+    if (tamanho < 0) return NULL;
+
+    char* resultado = (char*)malloc(tamanho + 1);
+
+    if (resultado == NULL) {
+        return NULL;
+    }
+
+    // Segunda passagem: preencher o buffer
+    va_start(args, fmt);
+    vsnprintf(resultado, tamanho + 1, fmt, args);
+    va_end(args);
+
+    return resultado;
 }
 
 void falhar(const char *msg) {

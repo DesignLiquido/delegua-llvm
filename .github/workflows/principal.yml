@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - principal
+
+env:
+  LLVM_VERSION_MAJOR: 22
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        node-version: [22.x, 24.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'yarn'
+
+      - name: Install LLVM 22 on Ubuntu 24.04
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev
+          echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run tests
+        run: yarn testes-unitarios
+
+      - name: Upload coverage reports
+        if: matrix.node-version == '24.x'
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false
+        continue-on-error: true

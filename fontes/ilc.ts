@@ -72,7 +72,7 @@ function obterArquivosC(diretorio: string): string[] {
         
         if (stat.isFile() && item.endsWith('.c')) {
             arquivos.push(caminhoCompleto);
-        } else if (stat.isDirectory()) {
+        } else if (stat.isDirectory() && item !== 'terceiros') {
             arquivos.push(...obterArquivosC(caminhoCompleto));
         }
     }
@@ -156,7 +156,7 @@ async function principal() {
         }
 
         logEtapa('Compilando bibliotecas nativas');
-        const bibliotecasDir = path.join(__dirname, 'fontes/bibliotecas');
+        const bibliotecasDir = path.join(__dirname, 'bibliotecas');
         const arquivosC = obterArquivosC(bibliotecasDir);
         const arquivosObj: string[] = [];
 
