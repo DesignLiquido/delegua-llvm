@@ -82,6 +82,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private metodosClasse: Map<string, Map<string, string>> = new Map();
     // Mapa de herança: nomeFIlho → nomePai (single inheritance).
     private superClasses: Map<string, string> = new Map();
+    // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
+    // Populado em criarFuncoesNativas() à medida que as bibliotecas são implementadas.
+    private mapaModulos: Map<string, Map<string, llvm.FunctionCallee>> = new Map();
     private pilhaIsto: llvm.Value[] = [];
     private classesComMarcadorTipo: Set<string> = new Set();
     private contadoresNaoNegativos: Set<string> = new Set();
@@ -579,7 +582,39 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoImportar(declaracao: Importar): Promise<any> {
-        // Import não tem efeito direto no IR neste contexto minimal.
+        // Resolve o nome do módulo a partir do caminho (normalmente um Literal com valor string).
+        const nomeModulo: string = (declaracao.caminho as any)?.valor ?? '';
+
+        if (!this.mapaModulos.has(nomeModulo)) {
+            // Módulo desconhecido (ex: caminho de arquivo) — ignorado nesta fase.
+            return Promise.resolve();
+        }
+
+        // Forma 2a: importar tudo como alias de 'modulo'
+        if (declaracao.simboloTudo) {
+            const alias = declaracao.simboloTudo.lexema;
+            const sentinela = new VariavelEscopo(null, undefined, `modulo:${nomeModulo}`);
+            this.pilhaVariaveisEscopo.topoDaPilha().set(alias, sentinela);
+            return Promise.resolve();
+        }
+
+        // Forma 2b: importar { fn1, fn2 } de 'modulo'
+        if (declaracao.elementosImportacao.length > 0) {
+            const funcoes = this.mapaModulos.get(nomeModulo);
+            for (const elemento of declaracao.elementosImportacao) {
+                const nomeFuncao = elemento.lexema;
+                const funcaoCallee = funcoes?.get(nomeFuncao);
+                if (funcaoCallee) {
+                    // getCallee() retorna o llvm.Value (llvm.Function) subjacente ao FunctionCallee.
+                    const llvmFuncao = funcaoCallee.getCallee();
+                    this.pilhaVariaveisEscopo.topoDaPilha().set(
+                        nomeFuncao,
+                        new VariavelEscopo(llvmFuncao, undefined, 'função')
+                    );
+                }
+            }
+        }
+
         return Promise.resolve();
     }
 
@@ -1258,6 +1293,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoImportar(expressao: ImportarComoConstruto): Promise<any> {
+        // Importação dinâmica: var mod = importar('nomeModulo')
+        // Retorna um VariavelEscopo sentinela com tipo 'modulo:<nome>' quando o módulo
+        // é uma biblioteca embutida reconhecida.
+        const nomeModulo = (expressao.caminho?.valor ?? '') as string;
+        if (nomeModulo && this.mapaModulos.has(nomeModulo)) {
+            return Promise.resolve(new VariavelEscopo(null, undefined, `modulo:${nomeModulo}`));
+        }
+        // Módulo não reconhecido — pode ser um caminho de arquivo; ignorado nesta fase.
         return Promise.resolve();
     }
 
@@ -2128,6 +2171,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
 
+        // Importação de módulo: var mod = importar('nome') → armazena sentinela sem alloca.
+        if (declaracao.inicializador?.constructor?.name === 'ImportarComoConstruto') {
+            const sentinela = await declaracao.inicializador.aceitar(this);
+            const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
+            topoDaPilha.set(
+                declaracao.simbolo.lexema,
+                sentinela instanceof VariavelEscopo ? sentinela : new VariavelEscopo(null, undefined, 'qualquer')
+            );
+            return Promise.resolve();
+        }
+
         // Instanciação de classe: var p = Ponto(...)
         if (this.registroClasses.has(tipoVariavel)) {
             const objetoPtr = await declaracao.inicializador.aceitar(this) as llvm.Value;
@@ -2535,6 +2589,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (this.tipoEhVetor(nomeClasse)) {
             const tipoElem = this.tipoElementoVetor(nomeClasse);
             return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos);
+        }
+
+        // Despacho de módulo importado:
+        //   var mod = importar('nome')         → tipo 'modulo:nome'
+        //   importar tudo como mod de 'nome'   → tipo 'modulo:nome'
+        if (nomeClasse?.startsWith('modulo:')) {
+            const nomeModulo = nomeClasse.slice(7);
+            const funcoes = this.mapaModulos.get(nomeModulo);
+            const funcaoAlvo = funcoes?.get(nomeMetodo);
+            if (!funcaoAlvo) {
+                throw new Error(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
+            }
+            const args: llvm.Value[] = [];
+            for (const argumento of argumentos) {
+                const argResolvido = await argumento.aceitar(this);
+                args.push(argResolvido instanceof VariavelEscopo
+                    ? argResolvido.variavelLlvm
+                    : argResolvido as llvm.Value);
+            }
+            return this.montador.CreateCall(funcaoAlvo, args);
         }
 
         // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
@@ -3350,6 +3424,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.tiposPropriedades = new Map();
         this.metodosClasse = new Map();
         this.superClasses = new Map();
+        this.mapaModulos = new Map();
         this.pilhaIsto = [];
         this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>()
