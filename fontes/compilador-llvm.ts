@@ -61,6 +61,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoTextoDeInteiro: llvm.FunctionCallee;
     funcaoTextoDeNumero: llvm.FunctionCallee;
     funcaoFormatar: llvm.FunctionCallee;
+    funcaoVetorAdicionar: llvm.FunctionCallee;
+    funcaoVetorRemoverUltimo: llvm.FunctionCallee;
+    funcaoVetorRemoverPrimeiro: llvm.FunctionCallee;
+    funcaoVetorInverter: llvm.FunctionCallee;
+    funcaoVetorOrdenar: llvm.FunctionCallee;
+    funcaoVetorFatiar: llvm.FunctionCallee;
+    funcaoVetorJuntarInteiro: llvm.FunctionCallee;
+    funcaoVetorJuntarNumero: llvm.FunctionCallee;
+    funcaoVetorJuntarTexto: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -2434,6 +2443,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return await this.chamarMetodoTexto(nomeMetodo, objetoPtr, argumentos);
         }
 
+        // Métodos embutidos de vetor
+        if (this.tipoEhVetor(nomeClasse)) {
+            const tipoElem = this.tipoElementoVetor(nomeClasse);
+            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos);
+        }
+
         const nomeFuncao = `${nomeClasse}_${nomeMetodo}`;
         const funcaoLlvm = this.modulo.getFunction(nomeFuncao);
         if (!funcaoLlvm) {
@@ -2479,6 +2494,83 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
             default:
                 throw new Error(`Método de texto '${nomeMetodo}' não implementado.`);
+        }
+    }
+
+    // Retorna o tamanho em bytes de um elemento de vetor segundo o tipo Delégua.
+    private tamElementoEmBytes(tipoElem: string): number {
+        if (tipoElem === 'inteiro') return 4;
+        // número, longo, texto (ponteiro 64-bit) → 8 bytes
+        return 8;
+    }
+
+    // Constante i32 para tamanho de elemento.
+    private constTamElem(tipoElem: string): llvm.Value {
+        return ConstantInt.get(this.contexto, new APInt(32, this.tamElementoEmBytes(tipoElem)));
+    }
+
+    private async chamarMetodoVetor(
+        nomeMetodo: string,
+        vetorPtr: llvm.Value,
+        tipoElem: string,
+        argumentos: Construto[]
+    ): Promise<llvm.Value> {
+        const tamElem = this.constTamElem(tipoElem);
+        const ehNumero = ConstantInt.get(this.contexto, new APInt(32, tipoElem === 'número' || tipoElem === 'numero' ? 1 : 0));
+
+        switch (nomeMetodo) {
+            case 'adicionar':
+            case 'empilhar': {
+                // Aloca um slot temporário para o elemento e passa seu endereço
+                const tipoLlvmElem = this.obterTipoLlvm(tipoElem);
+                const alocElem = this.montador.CreateAlloca(tipoLlvmElem, null, 'novo_elem');
+                let valorElem: llvm.Value;
+                if (tipoElem === 'inteiro') {
+                    valorElem = await this.carregarArgumentoInteiro(argumentos[0]);
+                } else if (tipoElem === 'número' || tipoElem === 'numero') {
+                    valorElem = await this.carregarArgumentoNumero(argumentos[0]);
+                } else {
+                    valorElem = await this.carregarArgumentoTexto(argumentos[0]);
+                }
+                this.montador.CreateStore(valorElem, alocElem);
+                return this.montador.CreateCall(this.funcaoVetorAdicionar, [vetorPtr, alocElem, tamElem]);
+            }
+
+            case 'removerUltimo':
+                return this.montador.CreateCall(this.funcaoVetorRemoverUltimo, [vetorPtr]);
+
+            case 'removerPrimeiro':
+                return this.montador.CreateCall(this.funcaoVetorRemoverPrimeiro, [vetorPtr, tamElem]);
+
+            case 'inverter':
+                return this.montador.CreateCall(this.funcaoVetorInverter, [vetorPtr, tamElem]);
+
+            case 'ordenar':
+                return this.montador.CreateCall(this.funcaoVetorOrdenar, [vetorPtr, tamElem, ehNumero]);
+
+            case 'fatiar': {
+                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
+                const fim = argumentos[1]
+                    ? await this.carregarArgumentoInteiro(argumentos[1])
+                    : ConstantInt.get(this.contexto, new APInt(32, 0x7fffffff));
+                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'fatia');
+                this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem, alocSaida]);
+                return alocSaida;
+            }
+
+            case 'juntar': {
+                const sep = await this.carregarArgumentoTexto(argumentos[0]);
+                if (tipoElem === 'inteiro') {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarInteiro, [vetorPtr, sep]);
+                } else if (tipoElem === 'número' || tipoElem === 'numero') {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarNumero, [vetorPtr, sep]);
+                } else {
+                    return this.montador.CreateCall(this.funcaoVetorJuntarTexto, [vetorPtr, sep]);
+                }
+            }
+
+            default:
+                throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
         }
     }
 
@@ -2915,6 +3007,72 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             true  // variadic
         );
         this.funcaoFormatar = this.modulo.getOrInsertFunction('delegua_formatar', tipoFuncaoFormatar);
+
+        // int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem)
+        const tipoFuncaoVetorAdicionar = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorAdicionar = this.modulo.getOrInsertFunction('delegua_vetor_adicionar', tipoFuncaoVetorAdicionar);
+
+        // int delegua_vetor_remover_ultimo(Vetor* v)
+        const tipoFuncaoVetorRemoverUltimo = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorRemoverUltimo = this.modulo.getOrInsertFunction('delegua_vetor_remover_ultimo', tipoFuncaoVetorRemoverUltimo);
+
+        // int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem)
+        const tipoFuncaoVetorRemoverPrimeiro = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorRemoverPrimeiro = this.modulo.getOrInsertFunction('delegua_vetor_remover_primeiro', tipoFuncaoVetorRemoverPrimeiro);
+
+        // void delegua_vetor_inverter(Vetor* v, int tam_elem)
+        const tipoFuncaoVetorInverter = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorInverter = this.modulo.getOrInsertFunction('delegua_vetor_inverter', tipoFuncaoVetorInverter);
+
+        // void delegua_vetor_ordenar(Vetor* v, int tam_elem, int eh_numero)
+        const tipoFuncaoVetorOrdenar = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorOrdenar = this.modulo.getOrInsertFunction('delegua_vetor_ordenar', tipoFuncaoVetorOrdenar);
+
+        // void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida)
+        const tipoFuncaoVetorFatiar = llvm.FunctionType.get(
+            llvm.Type.getVoidTy(this.contexto),
+            [
+                this.montador.getPtrTy(),
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                this.montador.getInt32Ty(),
+                this.montador.getPtrTy()
+            ],
+            false
+        );
+        this.funcaoVetorFatiar = this.modulo.getOrInsertFunction('delegua_vetor_fatiar', tipoFuncaoVetorFatiar);
+
+        // char* delegua_vetor_juntar_inteiro(Vetor* v, const char* sep)
+        // char* delegua_vetor_juntar_numero(Vetor* v, const char* sep)
+        // char* delegua_vetor_juntar_texto(Vetor* v, const char* sep)
+        const tipoFuncaoVetorJuntar = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorJuntarInteiro = this.modulo.getOrInsertFunction('delegua_vetor_juntar_inteiro', tipoFuncaoVetorJuntar);
+        this.funcaoVetorJuntarNumero = this.modulo.getOrInsertFunction('delegua_vetor_juntar_numero', tipoFuncaoVetorJuntar);
+        this.funcaoVetorJuntarTexto = this.modulo.getOrInsertFunction('delegua_vetor_juntar_texto', tipoFuncaoVetorJuntar);
     }
 
     /**
