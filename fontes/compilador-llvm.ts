@@ -3395,6 +3395,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.registrarModuloFisica();
         this.registrarModuloEstatistica();
         this.registrarModuloArquivos();
+        this.registrarModuloCsv();
     }
 
     private registrarModuloMatematica(): void {
@@ -3541,6 +3542,50 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         ]);
 
         this.mapaModulos.set('arquivos', funcoes);
+    }
+
+    private registrarModuloCsv(): void {
+        const ptr   = this.montador.getPtrTy();
+        const i8    = llvm.Type.getInt8Ty(this.contexto);
+        const i32   = this.montador.getInt32Ty();
+        const vazio = llvm.Type.getVoidTy(this.contexto);
+
+        // Auxiliar — tiposParametros: 'texto' → ptr, 'inteiro' → i32, 'char' → i8.
+        // O separador é passado como 'char' (i8); na chamada, usa carregarArgumentoInteiro
+        // que converte double→i32, mas aqui truncamos para i8 na assinatura C.
+        const reg = (
+            nomeCFunc: string,
+            tiposParametros: string[],
+            tipoRetorno: string
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t =>
+                t === 'inteiro' ? i32
+                : t === 'char'  ? i8
+                : ptr
+            );
+            const tipoRetLlvm =
+                tipoRetorno === 'inteiro' ? i32
+                : tipoRetorno === 'vazio'  ? vazio
+                : ptr;
+            const tipo = llvm.FunctionType.get(tipoRetLlvm, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Funções principais (sep = separador CSV, inteiro com valor ASCII, ex. 44 = ',')
+            ['textoParaObjetoCsv', reg('delegua_csv_texto_para_tabela', ['texto', 'inteiro'], 'texto')],
+            ['objetoCsvParaTexto', reg('delegua_csv_tabela_para_texto', ['texto', 'inteiro'], 'texto')],
+            ['lerCsv',             reg('delegua_csv_ler',               ['texto', 'inteiro'], 'texto')],
+            ['escreverCsv',        reg('delegua_csv_escrever',          ['texto', 'texto', 'inteiro'], 'vazio')],
+            // Acessores de instância (recebem TabelaCsv* = 'texto')
+            ['totalLinhas',        reg('delegua_csv_total_linhas',      ['texto'],                     'inteiro')],
+            ['totalColunas',       reg('delegua_csv_total_colunas',     ['texto'],                     'inteiro')],
+            ['obterCelula',        reg('delegua_csv_obter_celula',      ['texto', 'inteiro', 'inteiro'],'texto')],
+            ['liberar',            reg('delegua_csv_liberar',           ['texto'],                     'vazio')],
+        ]);
+
+        this.mapaModulos.set('csv', funcoes);
     }
 
     /**

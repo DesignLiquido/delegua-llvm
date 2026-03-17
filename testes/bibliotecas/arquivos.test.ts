@@ -1,4 +1,4 @@
-import { CompiladorLLVM } from '../fontes/compilador-llvm';
+import { CompiladorLLVM } from '../../fontes/compilador-llvm';
 
 describe('Compilador - Biblioteca delegua-arquivos (Fase B.1)', () => {
     describe('Importação dinâmica: var arq = importar("arquivos")', () => {
