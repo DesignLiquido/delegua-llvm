@@ -3706,6 +3706,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // Menino do Acre (tema runico)
             ['criptografarEmMeninoDoAcre',   reg('delegua_cript_menino_do_acre_cif',   ['texto'])],
             ['descriptografarDeMeninoDoAcre',reg('delegua_cript_menino_do_acre_dec',   ['texto'])],
+            // F.1b — hashes (requer OpenSSL -lcrypto)
+            ['md5',                          reg('delegua_cript_md5',                  ['texto'])],
+            ['sha1',                         reg('delegua_cript_sha1',                 ['texto'])],
+            ['sha256',                       reg('delegua_cript_sha256',               ['texto'])],
+            ['sha512',                       reg('delegua_cript_sha512',               ['texto'])],
+            ['hmacSha256',                   reg('delegua_cript_hmac_sha256',          ['texto', 'texto'])],
+            ['hmacSha512',                   reg('delegua_cript_hmac_sha512',          ['texto', 'texto'])],
+            // F.1b — aleatório / UUID / PBKDF2
+            ['gerarBytesAleatorios',         reg('delegua_cript_bytes_aleatorios',     ['inteiro'])],
+            ['gerarTextoAleatorio',          reg('delegua_cript_texto_aleatorio',      ['inteiro'])],
+            ['gerarUuid',                    reg('delegua_cript_uuid',                 [])],
+            ['derivarChavePbkdf2',           reg('delegua_cript_pbkdf2',              ['texto', 'texto', 'inteiro', 'inteiro'])],
         ]);
 
         this.mapaModulos.set('criptografia', funcoes);
