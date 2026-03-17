@@ -3677,11 +3677,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     private registrarModuloCriptografia(): void {
-        const ptr   = this.montador.getPtrTy();
-        const i32   = this.montador.getInt32Ty();
+        const ptr = this.montador.getPtrTy();
+        const i32 = this.montador.getInt32Ty();
 
-        // Sub-fase F.1a — cifras clássicas sem dependências externas.
-        // Todos os retornos são char* (ptr) exceto os que usam 'inteiro' → i32.
+        // reg — retorna ptr (char*); regInt — retorna i32.
         const reg = (
             nomeCFunc: string,
             tiposParametros: string[]
@@ -3690,6 +3689,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipo = llvm.FunctionType.get(ptr, tiposLlvm, false);
             const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
             return { callee, tiposParametros, tipoRetorno: 'texto' };
+        };
+        const regInt = (
+            nomeCFunc: string,
+            tiposParametros: string[]
+        ): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : ptr);
+            const tipo = llvm.FunctionType.get(i32, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno: 'inteiro' };
         };
 
         const funcoes = new Map<string, EntradaFuncaoModulo>([
@@ -3718,6 +3726,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ['gerarTextoAleatorio',          reg('delegua_cript_texto_aleatorio',      ['inteiro'])],
             ['gerarUuid',                    reg('delegua_cript_uuid',                 [])],
             ['derivarChavePbkdf2',           reg('delegua_cript_pbkdf2',              ['texto', 'texto', 'inteiro', 'inteiro'])],
+            // F.1c — AES-256-GCM (requer OpenSSL -lcrypto -lssl)
+            ['criptografarAes256',           reg('delegua_cript_aes256_cifrar',        ['texto', 'texto', 'texto'])],
+            ['descriptografarAes256',        reg('delegua_cript_aes256_decifrar',      ['texto', 'texto', 'texto'])],
+            // F.1c — RSA (requer OpenSSL -lcrypto -lssl)
+            ['gerarChavePrivadaRsa',         reg('delegua_cript_rsa_gerar_privada',    ['inteiro'])],
+            ['derivarChavePublicaRsa',       reg('delegua_cript_rsa_derivar_publica',  ['texto'])],
+            ['criptografarRsa',              reg('delegua_cript_rsa_cifrar',           ['texto', 'texto'])],
+            ['descriptografarRsa',           reg('delegua_cript_rsa_decifrar',         ['texto', 'texto'])],
+            ['assinarRsa',                   reg('delegua_cript_rsa_assinar',          ['texto', 'texto'])],
+            ['verificarAssinaturaRsa',       regInt('delegua_cript_rsa_verificar',     ['texto', 'texto', 'texto'])],
         ]);
 
         this.mapaModulos.set('criptografia', funcoes);
