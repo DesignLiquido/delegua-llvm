@@ -72,7 +72,7 @@ function obterArquivosC(diretorio: string): string[] {
         
         if (stat.isFile() && item.endsWith('.c')) {
             arquivos.push(caminhoCompleto);
-        } else if (stat.isDirectory()) {
+        } else if (stat.isDirectory() && item !== 'terceiros') {
             arquivos.push(...obterArquivosC(caminhoCompleto));
         }
     }

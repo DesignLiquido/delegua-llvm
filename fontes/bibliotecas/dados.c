@@ -169,12 +169,42 @@ static RecorteDados* fatiar(RecorteDados* rd, int inicio, int n) {
         if (orig->tipo == TIPO_DOUBLE) {
             double* src = (double*)orig->dados;
             double* dst = (double*)malloc(n * sizeof(double));
+            if (!dst) {
+                /* Falha na alocação: limpar coluna atual e recorte parcialmente construído */
+                free(col->nome);
+                free(col);
+                liberar_colunas(novo);
+                free(novo);
+                return NULL;
+            }
             memcpy(dst, src + inicio, n * sizeof(double));
             col->dados = dst;
         } else {
             char** src = (char**)orig->dados;
             char** dst = (char**)malloc(n * sizeof(char*));
-            for (int r = 0; r < n; r++) dst[r] = strdup(src[inicio + r]);
+            if (!dst) {
+                /* Falha na alocação: limpar coluna atual e recorte parcialmente construído */
+                free(col->nome);
+                free(col);
+                liberar_colunas(novo);
+                free(novo);
+                return NULL;
+            }
+            for (int r = 0; r < n; r++) {
+                dst[r] = strdup(src[inicio + r]);
+                if (!dst[r]) {
+                    /* Falha em strdup: liberar strings já copiadas e fazer cleanup consistente */
+                    for (int k = 0; k < r; k++) {
+                        free(dst[k]);
+                    }
+                    free(dst);
+                    free(col->nome);
+                    free(col);
+                    liberar_colunas(novo);
+                    free(novo);
+                    return NULL;
+                }
+            }
             col->dados = dst;
         }
         novo->colunas[c] = col;
@@ -309,12 +339,28 @@ RecorteDados* delegua_dados_remover_nulo(RecorteDados* rd) {
         if (orig->tipo == TIPO_DOUBLE) {
             double* src = (double*)orig->dados;
             double* dst = (double*)malloc(total * sizeof(double));
+            if (!dst) {
+                free(col->nome);
+                free(col);
+                liberar_colunas(novo);
+                free(novo);
+                free(manter);
+                return NULL;
+            }
             int j = 0;
             for (int r = 0; r < rd->num_linhas; r++) if (manter[r]) dst[j++] = src[r];
             col->dados = dst;
         } else {
             char** src = (char**)orig->dados;
             char** dst = (char**)malloc(total * sizeof(char*));
+            if (!dst) {
+                free(col->nome);
+                free(col);
+                liberar_colunas(novo);
+                free(novo);
+                free(manter);
+                return NULL;
+            }
             int j = 0;
             for (int r = 0; r < rd->num_linhas; r++) if (manter[r]) dst[j++] = strdup(src[r]);
             col->dados = dst;

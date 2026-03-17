@@ -4,6 +4,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ── Inicialização global do libcurl (guardada) ─────────────────────────────
+
+static int g_curl_global_inicializado = 0;
+static int g_curl_global_cleanup_registrado = 0;
+
+static void delegua_http_curl_global_cleanup(void) {
+    if (g_curl_global_inicializado) {
+        curl_global_cleanup();
+        g_curl_global_inicializado = 0;
+        g_curl_global_cleanup_registrado = 0;
+    }
+}
+
+static int delegua_http_curl_global_init(void) {
+    if (!g_curl_global_inicializado) {
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != 0) {
+            return 0; // falha na inicialização global
+        }
+        g_curl_global_inicializado = 1;
+        if (!g_curl_global_cleanup_registrado) {
+            atexit(delegua_http_curl_global_cleanup);
+            g_curl_global_cleanup_registrado = 1;
+        }
+    }
+    return 1;
+}
+
 // ── Buffer dinâmico para coletar o corpo da resposta ────────────────────────
 
 typedef struct {
@@ -121,9 +148,16 @@ void delegua_http_add_cabecalho(ClienteHttp* cliente, char* cabecalho) {
 }
 
 RespostaHttp* delegua_http_get(ClienteHttp* cliente, char* sufixo) {
+    if (!delegua_http_curl_global_init()) {
+        return NULL;
+    }
     CURL* handle = curl_easy_init();
     if (!handle) return NULL;
     char* url = concatenar_url(cliente ? cliente->url_base : "", sufixo);
+    if (!url) {
+        curl_easy_cleanup(handle);
+        return NULL;
+    }
     curl_easy_setopt(handle, CURLOPT_URL, url);
     RespostaHttp* resp = executar(handle, cliente);
     free(url);
@@ -131,9 +165,16 @@ RespostaHttp* delegua_http_get(ClienteHttp* cliente, char* sufixo) {
 }
 
 RespostaHttp* delegua_http_post(ClienteHttp* cliente, char* sufixo, char* corpo) {
+    if (!delegua_http_curl_global_init()) {
+        return NULL;
+    }
     CURL* handle = curl_easy_init();
     if (!handle) return NULL;
     char* url = concatenar_url(cliente ? cliente->url_base : "", sufixo);
+    if (!url) {
+        curl_easy_cleanup(handle);
+        return NULL;
+    }
     curl_easy_setopt(handle, CURLOPT_URL, url);
     curl_easy_setopt(handle, CURLOPT_POST, 1L);
     curl_easy_setopt(handle, CURLOPT_POSTFIELDS, corpo ? corpo : "");
@@ -143,9 +184,16 @@ RespostaHttp* delegua_http_post(ClienteHttp* cliente, char* sufixo, char* corpo)
 }
 
 RespostaHttp* delegua_http_put(ClienteHttp* cliente, char* sufixo, char* corpo) {
+    if (!delegua_http_curl_global_init()) {
+        return NULL;
+    }
     CURL* handle = curl_easy_init();
     if (!handle) return NULL;
     char* url = concatenar_url(cliente ? cliente->url_base : "", sufixo);
+    if (!url) {
+        curl_easy_cleanup(handle);
+        return NULL;
+    }
     curl_easy_setopt(handle, CURLOPT_URL, url);
     curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(handle, CURLOPT_POSTFIELDS, corpo ? corpo : "");

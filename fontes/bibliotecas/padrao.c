@@ -139,6 +139,10 @@ char* delegua_formatar(const char* fmt, ...) {
 
     char* resultado = (char*)malloc(tamanho + 1);
 
+    if (resultado == NULL) {
+        return NULL;
+    }
+
     // Segunda passagem: preencher o buffer
     va_start(args, fmt);
     vsnprintf(resultado, tamanho + 1, fmt, args);

@@ -1,5 +1,7 @@
 #include "vetor.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // ───────────────────────────────────────────────────────────
 // Comparadores para qsort
@@ -23,17 +25,19 @@ static int comparar_numero(const void* a, const void* b) {
 
 int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem) {
     int novo_tam = v->tamanho + 1;
-    void* novo_ptr = malloc((size_t)novo_tam * (size_t)tam_elem);
-    if (!novo_ptr) return v->tamanho;
-
-    if (v->ptr && v->tamanho > 0) {
-        memcpy(novo_ptr, v->ptr, (size_t)v->tamanho * (size_t)tam_elem);
+    /* Redimensiona o buffer existente, evitando vazamento de memória */
+    void* novo_ptr = realloc(v->ptr, (size_t)novo_tam * (size_t)tam_elem);
+    if (!novo_ptr) {
+        /* Falha ao realocar: mantém o vetor inalterado */
+        return v->tamanho;
     }
 
-    // Copia o elemento novo na última posição
-    memcpy((char*)novo_ptr + (size_t)v->tamanho * (size_t)tam_elem, elem, (size_t)tam_elem);
-
+    /* Atualiza o ponteiro após realocação bem-sucedida */
     v->ptr = novo_ptr;
+
+    /* Copia o elemento novo na última posição */
+    memcpy((char*)v->ptr + (size_t)v->tamanho * (size_t)tam_elem, elem, (size_t)tam_elem);
+
     v->tamanho = novo_tam;
     return novo_tam;
 }
@@ -221,23 +225,97 @@ char* delegua_vetor_juntar_texto(Vetor* v, const char* sep) {
 void delegua_vetor_filtrar_inteiro(Vetor* v, int (*fn)(int), Vetor* saida) {
     if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
     int* elems = (int*)v->ptr;
+
+    /* Armazena os resultados do predicado para evitar chamá-lo duas vezes. */
+    char* flags = (char*)malloc((size_t)v->tamanho * sizeof(char));
+    if (!flags) {
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
     int aprovados = 0;
-    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) aprovados++; }
-    int* resultado = aprovados > 0 ? (int*)malloc((size_t)aprovados * sizeof(int)) : NULL;
+    for (int i = 0; i < v->tamanho; i++) {
+        int res = fn(elems[i]);
+        flags[i] = (char)(res != 0);
+        if (flags[i]) {
+            aprovados++;
+        }
+    }
+
+    if (aprovados == 0) {
+        free(flags);
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
+    int* resultado = (int*)malloc((size_t)aprovados * sizeof(int));
+    if (!resultado) {
+        free(flags);
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
     int j = 0;
-    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) resultado[j++] = elems[i]; }
-    saida->ptr = resultado; saida->tamanho = aprovados;
+    for (int i = 0; i < v->tamanho; i++) {
+        if (flags[i]) {
+            resultado[j++] = elems[i];
+        }
+    }
+
+    free(flags);
+    saida->ptr = resultado;
+    saida->tamanho = aprovados;
 }
 
 void delegua_vetor_filtrar_numero(Vetor* v, int (*fn)(double), Vetor* saida) {
     if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
     double* elems = (double*)v->ptr;
+
+    /* Armazena os resultados do predicado para evitar chamá-lo duas vezes. */
+    char* flags = (char*)malloc((size_t)v->tamanho * sizeof(char));
+    if (!flags) {
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
     int aprovados = 0;
-    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) aprovados++; }
-    double* resultado = aprovados > 0 ? (double*)malloc((size_t)aprovados * sizeof(double)) : NULL;
+    for (int i = 0; i < v->tamanho; i++) {
+        int res = fn(elems[i]);
+        flags[i] = (char)(res != 0);
+        if (flags[i]) {
+            aprovados++;
+        }
+    }
+
+    if (aprovados == 0) {
+        free(flags);
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
+    double* resultado = (double*)malloc((size_t)aprovados * sizeof(double));
+    if (!resultado) {
+        free(flags);
+        saida->ptr = NULL;
+        saida->tamanho = 0;
+        return;
+    }
+
     int j = 0;
-    for (int i = 0; i < v->tamanho; i++) { if (fn(elems[i])) resultado[j++] = elems[i]; }
-    saida->ptr = resultado; saida->tamanho = aprovados;
+    for (int i = 0; i < v->tamanho; i++) {
+        if (flags[i]) {
+            resultado[j++] = elems[i];
+        }
+    }
+
+    free(flags);
+    saida->ptr = resultado;
+    saida->tamanho = aprovados;
 }
 
 void delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int), Vetor* saida) {
