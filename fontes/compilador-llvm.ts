@@ -34,6 +34,13 @@ import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 import { VariavelEscopo } from './variavel-escopo';
 import { OperandoInterface } from './interfaces';
 
+// Entrada no mapaModulos: associa um FunctionCallee LLVM à assinatura da função.
+interface EntradaFuncaoModulo {
+    callee: llvm.FunctionCallee;
+    tiposParametros: string[];
+    tipoRetorno: string;
+}
+
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
     lexador: Lexador;
     avaliadorSintatico: AvaliadorSintatico;
@@ -84,7 +91,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private superClasses: Map<string, string> = new Map();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
     // Populado em criarFuncoesNativas() à medida que as bibliotecas são implementadas.
-    private mapaModulos: Map<string, Map<string, llvm.FunctionCallee>> = new Map();
+    private mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
     private pilhaIsto: llvm.Value[] = [];
     private classesComMarcadorTipo: Set<string> = new Set();
     private contadoresNaoNegativos: Set<string> = new Set();
@@ -603,10 +610,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const funcoes = this.mapaModulos.get(nomeModulo);
             for (const elemento of declaracao.elementosImportacao) {
                 const nomeFuncao = elemento.lexema;
-                const funcaoCallee = funcoes?.get(nomeFuncao);
-                if (funcaoCallee) {
+                const entrada = funcoes?.get(nomeFuncao);
+                if (entrada) {
                     // getCallee() retorna o llvm.Value (llvm.Function) subjacente ao FunctionCallee.
-                    const llvmFuncao = funcaoCallee.getCallee();
+                    const llvmFuncao = entrada.callee.getCallee();
                     this.pilhaVariaveisEscopo.topoDaPilha().set(
                         nomeFuncao,
                         new VariavelEscopo(llvmFuncao, undefined, 'função')
@@ -2597,18 +2604,27 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (nomeClasse?.startsWith('modulo:')) {
             const nomeModulo = nomeClasse.slice(7);
             const funcoes = this.mapaModulos.get(nomeModulo);
-            const funcaoAlvo = funcoes?.get(nomeMetodo);
-            if (!funcaoAlvo) {
+            const entrada = funcoes?.get(nomeMetodo);
+            if (!entrada) {
                 throw new Error(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
             }
             const args: llvm.Value[] = [];
-            for (const argumento of argumentos) {
-                const argResolvido = await argumento.aceitar(this);
-                args.push(argResolvido instanceof VariavelEscopo
-                    ? argResolvido.variavelLlvm
-                    : argResolvido as llvm.Value);
+            for (let i = 0; i < argumentos.length; i++) {
+                const tipoPar = entrada.tiposParametros[i] ?? 'qualquer';
+                if (tipoPar === 'inteiro') {
+                    args.push(await this.carregarArgumentoInteiro(argumentos[i]));
+                } else if (tipoPar === 'numero' || tipoPar === 'número') {
+                    args.push(await this.carregarArgumentoNumero(argumentos[i]));
+                } else if (tipoPar === 'texto') {
+                    args.push(await this.carregarArgumentoTexto(argumentos[i]));
+                } else {
+                    const argResolvido = await argumentos[i].aceitar(this);
+                    args.push(argResolvido instanceof VariavelEscopo
+                        ? argResolvido.variavelLlvm
+                        : argResolvido as llvm.Value);
+                }
             }
-            return this.montador.CreateCall(funcaoAlvo, args);
+            return this.montador.CreateCall(entrada.callee, args);
         }
 
         // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
@@ -3374,6 +3390,60 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoVetorFiltrarNumero  = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_numero',  tipoFuncaoVetorCallback);
         this.funcaoVetorMapearInteiro  = this.modulo.getOrInsertFunction('delegua_vetor_mapear_inteiro',  tipoFuncaoVetorCallback);
         this.funcaoVetorMapearNumero   = this.modulo.getOrInsertFunction('delegua_vetor_mapear_numero',   tipoFuncaoVetorCallback);
+
+        this.registrarModuloMatematica();
+    }
+
+    private registrarModuloMatematica(): void {
+        const d = this.montador.getDoubleTy();
+        const i32 = this.montador.getInt32Ty();
+
+        // Auxiliar: cria FunctionCallee para uma função C com assinatura double(double...)
+        const reg = (nomeCFunc: string, tiposParametros: string[], tipoRetorno: string = 'numero'): EntradaFuncaoModulo => {
+            const tiposLlvm = tiposParametros.map(t => t === 'inteiro' ? i32 : d);
+            const tipo = llvm.FunctionType.get(d, tiposLlvm, false);
+            const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
+            return { callee, tiposParametros, tipoRetorno };
+        };
+
+        const funcoes = new Map<string, EntradaFuncaoModulo>([
+            // Algébricas
+            ['exp',                    reg('delegua_mat_exp',                    ['numero'])],
+            ['logaritmo',              reg('delegua_mat_logaritmo',              ['numero'])],
+            ['potencia',               reg('delegua_mat_potencia',               ['numero', 'numero'])],
+            ['raizQuadrada',           reg('delegua_mat_raiz_quadrada',          ['numero'])],
+            ['arredondarParaBaixo',    reg('delegua_mat_arredondar_para_baixo',  ['numero'])],
+            ['aprox',                  reg('delegua_mat_aprox',                  ['numero', 'inteiro'])],
+            // Trigonometria
+            ['pi',                     reg('delegua_mat_pi',                     [])],
+            ['seno',                   reg('delegua_mat_seno',                   ['numero'])],
+            ['cosseno',                reg('delegua_mat_cosseno',                ['numero'])],
+            ['tangente',               reg('delegua_mat_tangente',               ['numero'])],
+            ['arcoSeno',               reg('delegua_mat_arco_seno',              ['numero'])],
+            ['arcoCosseno',            reg('delegua_mat_arco_cosseno',           ['numero'])],
+            ['arcoTangente',           reg('delegua_mat_arco_tangente',          ['numero'])],
+            ['graus',                  reg('delegua_mat_graus',                  ['numero'])],
+            ['radiano',                reg('delegua_mat_radiano',                ['numero'])],
+            // Cálculo
+            ['limite',                 reg('delegua_mat_limite',                 ['numero', 'numero', 'numero'])],
+            // Financeira
+            ['jurosSimples',           reg('delegua_mat_juros_simples',          ['numero', 'numero', 'numero'])],
+            ['jurosCompostos',         reg('delegua_mat_juros_compostos',        ['numero', 'numero', 'numero'])],
+            // Geometria plana
+            ['areaCirculo',            reg('delegua_mat_area_circulo',           ['numero'])],
+            ['areaQuadrado',           reg('delegua_mat_area_quadrado',          ['numero'])],
+            ['areaRetangulo',          reg('delegua_mat_area_retangulo',         ['numero', 'numero'])],
+            ['areaLosango',            reg('delegua_mat_area_losango',           ['numero', 'numero'])],
+            ['areaTrapezio',           reg('delegua_mat_area_trapezio',          ['numero', 'numero', 'numero'])],
+            ['areaTriangulo',          reg('delegua_mat_area_triangulo',         ['numero', 'numero'])],
+            ['distanciaDoisPontos',    reg('delegua_mat_distancia_dois_pontos',  ['numero', 'numero', 'numero', 'numero'])],
+            // Funções de grau
+            ['fun1r',                  reg('delegua_mat_fun1r',                  ['numero', 'numero'])],
+            ['xVertice',               reg('delegua_mat_x_vertice',              ['numero', 'numero', 'numero'])],
+            ['yVertice',               reg('delegua_mat_y_vertice',              ['numero', 'numero', 'numero'])],
+        ]);
+
+        this.mapaModulos.set('matematica', funcoes);
     }
 
     /**
