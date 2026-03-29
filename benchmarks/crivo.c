@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define N 500000
+#define N 1000000
 
 int main() {
     int* crivo = (int*)malloc((N + 1) * sizeof(int));

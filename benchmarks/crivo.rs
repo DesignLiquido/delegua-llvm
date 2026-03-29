@@ -1,4 +1,4 @@
-const N: usize = 500_000;
+const N: usize = 1_000_000;
 
 fn main() {
     let mut crivo = vec![1i32; N + 1];

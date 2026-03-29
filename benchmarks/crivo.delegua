@@ -1,4 +1,4 @@
-var n: inteiro = 500000
+var n: inteiro = 1000000
 var crivo: inteiro[] = [0]
 
 para var k: inteiro = 1; k <= n; k++ {
