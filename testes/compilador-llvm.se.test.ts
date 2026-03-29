@@ -13,11 +13,11 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oge double');
+        expect(resultado).toContain('icmp sge i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
-        expect(resultado).toContain('br i1 %1, label %se_entao, label %se_senao');
+        expect(resultado).toContain('br i1');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
@@ -31,7 +31,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oge double');
+        expect(resultado).toContain('icmp sge i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -53,7 +53,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oge double');
+        expect(resultado).toContain('icmp sge i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -78,7 +78,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oge double');
+        expect(resultado).toContain('icmp sge i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -97,7 +97,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp olt double');
+        expect(resultado).toContain('icmp slt i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -115,7 +115,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oeq double');
+        expect(resultado).toContain('icmp eq i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -133,7 +133,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp ole double');
+        expect(resultado).toContain('icmp sle i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -151,7 +151,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp ogt double');
+        expect(resultado).toContain('icmp sgt i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -169,7 +169,7 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp one double');
+        expect(resultado).toContain('icmp ne i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
@@ -192,8 +192,8 @@ describe('Compilador - Se', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('fcmp oge double');
-        expect(resultado).toContain('fcmp oeq double');
+        expect(resultado).toContain('icmp sge i32');
+        expect(resultado).toContain('icmp eq i32');
         expect(resultado).toContain('se_entao:');
         expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');

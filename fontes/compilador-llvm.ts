@@ -1875,13 +1875,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             mapaVariaveis.set(parametro.nome.lexema, variavelEscopo);
         }
 
-        this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
-        await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
-        this.pilhaVariaveisEscopo.removerUltimo();
-
+        // Registra a função no escopo antes de visitar o corpo para permitir recursão.
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
         const variavelEscopoObjetoLlvmFuncao = new VariavelEscopo(objetoLlvmFuncao, declaracao as any);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopoObjetoLlvmFuncao);
+
+        this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
+        await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
+        this.pilhaVariaveisEscopo.removerUltimo();
     }
 
     /**
@@ -2035,7 +2036,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 );
                 argumentosResolvidos.push(valorCarregado);
             } else {
-                formatosTexto.push(this.printfFormatos.get(argumento.tipo));
+                const tipoArgumento = this.resolverTipoConstruto(argumento) || argumento.tipo;
+                formatosTexto.push(this.printfFormatos.get(tipoArgumento));
                 argumentosResolvidos.push(argumentoResolvido);
             }
         }
@@ -2161,13 +2163,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (declaracao.caminhoEntao) {
             await declaracao.caminhoEntao.aceitar(this);
         }
-        this.montador.CreateBr(blocoApos);
+        if (!this.montador.GetInsertBlock().getTerminator()) {
+            this.montador.CreateBr(blocoApos);
+        }
 
         this.montador.SetInsertPoint(blocoSenao);
         if (declaracao.caminhoSenao) {
             await declaracao.caminhoSenao.aceitar(this);
         }
-        this.montador.CreateBr(blocoApos);
+        if (!this.montador.GetInsertBlock().getTerminator()) {
+            this.montador.CreateBr(blocoApos);
+        }
 
         this.montador.SetInsertPoint(blocoApos);
         return Promise.resolve();
@@ -2293,6 +2299,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     if (this.registroClasses.has(nomeCallee)) {
                         return nomeCallee;
                     }
+                    // Resolve o tipo de retorno a partir da declaração da função no escopo.
+                    try {
+                        const varEscopo = this.pilhaVariaveisEscopo.obterValor(nomeCallee);
+                        if (varEscopo?.construtoVariavel) {
+                            const funcDecl = varEscopo.construtoVariavel as unknown as FuncaoDeclaracao;
+                            if (funcDecl.funcao?.tipo) {
+                                return funcDecl.funcao.tipo;
+                            }
+                        }
+                    } catch { /* variável não encontrada — segue com tipo do AST */ }
                 }
                 return chamada.entidadeChamada.tipo;
             }
@@ -2437,6 +2453,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         let tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
         let tipoDireito = this.resolverTipoConstruto(expressao.direita);
+
+        // Quando um operando é inteiro e o outro é um literal numérico inteiro,
+        // trata o literal como inteiro para evitar promoção indevida a double.
+        if (this.tipoEhInteiroDelegua(tipoEsquerdo) && tipoDireito === 'número'
+            && expressao.direita instanceof Literal && Number.isInteger((expressao.direita as Literal).valor)) {
+            tipoDireito = tipoEsquerdo;
+            operandoDireito = ConstantInt.get(this.contexto, new APInt(tipoEsquerdo === 'longo' ? 64 : 32, (expressao.direita as Literal).valor as number));
+        } else if (this.tipoEhInteiroDelegua(tipoDireito) && tipoEsquerdo === 'número'
+            && expressao.esquerda instanceof Literal && Number.isInteger((expressao.esquerda as Literal).valor)) {
+            tipoEsquerdo = tipoDireito;
+            operandoEsquerdo = ConstantInt.get(this.contexto, new APInt(tipoDireito === 'longo' ? 64 : 32, (expressao.esquerda as Literal).valor as number));
+        }
 
         const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
         const operandoDireitoResolvido: OperandoInterface = this.resolverOperando(operandoDireito, tipoDireito);
@@ -3033,13 +3061,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoDeVariavel(expressao: Variavel | Constante): Promise<VariavelEscopo> {
-        const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha();
-        const valorOuReferenciaVariavel = topoDaPilhaDeVariaveis.get(expressao.simbolo.lexema);
-        if (!valorOuReferenciaVariavel) {
+        try {
+            return Promise.resolve(this.pilhaVariaveisEscopo.obterValor(expressao.simbolo.lexema));
+        } catch {
             throw new Error(`Variável ${expressao.simbolo.lexema} não existe neste escopo.`);
         }
-
-        return Promise.resolve(valorOuReferenciaVariavel);
     }
 
     visitarExpressaoLiteral(expressao: Literal): Promise<llvm.Value> {
