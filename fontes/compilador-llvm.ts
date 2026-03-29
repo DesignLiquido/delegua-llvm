@@ -923,7 +923,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
 
             // Carrega o ponteiro de elementos (com cache para evitar loads redundantes).
-            const nomeVetor = (alvoBruto as any)?.simbolo?.lexema ?? '';
+            const nomeVetorBase = (alvoBruto as any)?.simbolo?.lexema;
+            const nomeVetor = (nomeVetorBase && nomeVetorBase.length > 0)
+                ? nomeVetorBase
+                : ((alvoResolvido.variavelLlvm as any)?.getName?.() || alvoResolvido.variavelLlvm.toString());
             const ptrElementos = this.carregarPonteiroElementosVetor(nomeVetor, alvoResolvido.variavelLlvm);
 
             // GEP para o elemento, com flag nuw quando o índice é garantidamente não-negativo.
@@ -1105,7 +1108,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
 
             // Carrega o ponteiro de elementos (com cache para evitar loads redundantes).
-            const nomeVetor = (alvoBruto as any)?.simbolo?.lexema ?? '';
+            const nomeVetorBase = (alvoBruto as any)?.simbolo?.lexema;
+            const nomeVetor = (nomeVetorBase && nomeVetorBase.length > 0)
+                ? nomeVetorBase
+                : ((alvoResolvido.variavelLlvm as any)?.getName?.() || alvoResolvido.variavelLlvm.toString());
             const ptrElementos = this.carregarPonteiroElementosVetor(nomeVetor, alvoResolvido.variavelLlvm);
 
             // GEP para o elemento específico.
@@ -1122,6 +1128,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 valorFinal = this.montador.CreateLoad(tipoElemento, valorResolvido.variavelLlvm, 'val_store');
             } else {
                 valorFinal = valorResolvido as llvm.Value;
+            }
+
+            // Converte o tipo do valor para o tipo do elemento do vetor, se necessário.
+            const nomeTipoValor = valorFinal.getType()?.constructor?.name;
+            const nomeTipoElemento = tipoElemento?.constructor?.name;
+            if (nomeTipoValor !== nomeTipoElemento) {
+                if (nomeTipoValor === 'Type' && nomeTipoElemento === 'IntegerType') {
+                    // double → inteiro (ex.: literal numérico em vetor de inteiros).
+                    valorFinal = this.montador.CreateFPToSI(valorFinal, tipoElemento, 'val_fptosi');
+                } else if (nomeTipoValor === 'IntegerType' && nomeTipoElemento === 'Type') {
+                    // inteiro → double (ex.: literal inteiro em vetor de números).
+                    valorFinal = this.montador.CreateSIToFP(valorFinal, tipoElemento, 'val_sitofp');
+                }
             }
 
             this.montador.CreateStore(valorFinal, gepElemento);
@@ -3188,7 +3207,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 if (argumentoResolvido instanceof VariavelEscopo) {
                     const tipoParam = tiposParametros[indice] || argumentoResolvido.tipo || 'número';
                     const tipoLlvm = this.obterTipoLlvm(tipoParam);
-                    argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                    if (this.tipoEhPonteiro(argumentoResolvido.variavelLlvm.getType())) {
+                        argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                    } else {
+                        argumentoResolvido = argumentoResolvido.variavelLlvm;
+                    }
                 }
                 argumentos.push(argumentoResolvido);
             }
@@ -3199,7 +3222,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 if (argumentoResolvido instanceof VariavelEscopo) {
                     const tipoParam = argumentoResolvido.tipo || argumento.tipo || 'número';
                     const tipoLlvm = this.obterTipoLlvm(tipoParam);
-                    argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                    if (this.tipoEhPonteiro(argumentoResolvido.variavelLlvm.getType())) {
+                        argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                    } else {
+                        argumentoResolvido = argumentoResolvido.variavelLlvm;
+                    }
                 }
                 argumentos.push(argumentoResolvido)
             }
