@@ -71,13 +71,20 @@ describe('Compilador - Mecanismo de Importação (Fase 0)', () => {
             // Primeiro, gera um programa mínimo para inicializar o contexto LLVM.
             // Depois adicionamos manualmente uma função de teste ao módulo.
             const ir = await compilador.compilar([
+                'var mat = importar("matematica")',
+                'var fis = importar("fisica")',
+                'var est = importar("estatistica")',
+                'var arq = importar("arquivos")',
+                'var csv2 = importar("csv")',
+                'var js = importar("json")',
+                'var ht = importar("http")',
+                'var cr = importar("criptografia")',
+                'var da = importar("dados")',
                 'escreva("antes")',
             ]);
             expect(ir).toBeTruthy();
 
-            // Confirma que mapaModulos contém apenas os módulos embutidos após compilar().
-            // matematica (A.1), fisica (A.2), estatistica (A.3), arquivos (B.1),
-            // csv (C.1), json (C.2), http (E.1), criptografia (F.1a-F.1c), dados (G.1).
+            // Confirma que mapaModulos contém os módulos importados.
             expect(compilador.obterMapaModulos().size).toBe(9);
             expect(compilador.obterMapaModulos().has('matematica')).toBe(true);
             expect(compilador.obterMapaModulos().has('fisica')).toBe(true);

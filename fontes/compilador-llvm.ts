@@ -48,6 +48,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     contexto: llvm.LLVMContext;
     modulo: llvm.Module;
     montador: llvm.IRBuilder;
+    maquinaAlvo: llvm.TargetMachine;
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
     funcaoEscreva: llvm.FunctionCallee;
@@ -1866,6 +1867,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.modulo
         );
 
+        // Atributos de otimização para funções do usuário.
+        objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.NoUnwind));
+        objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.WillReturn));
+
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
         // Aqui temos que iterar de novo os parâmetros da função, dado que a
         // referência aos argumentos da função só estão disponíveis depois que o 
@@ -2151,16 +2156,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.NOMES_BLOCOS.SE_ENTAO,
             funcaoAtual
         );
-        const blocoSenao = llvm.BasicBlock.Create(
-            this.contexto,
-            this.NOMES_BLOCOS.SE_SENAO,
-            funcaoAtual
-        );
         const blocoApos = llvm.BasicBlock.Create(
             this.contexto,
             this.NOMES_BLOCOS.SE_APOS,
             funcaoAtual
         );
+
+        // Cria bloco senão apenas quando há caminho alternativo, evitando blocos vazios.
+        const blocoSenao = declaracao.caminhoSenao
+            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.SE_SENAO, funcaoAtual, blocoApos)
+            : blocoApos;
 
         this.montador.CreateCondBr(condicao, blocoEntao, blocoSenao);
 
@@ -2172,12 +2177,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.montador.CreateBr(blocoApos);
         }
 
-        this.montador.SetInsertPoint(blocoSenao);
         if (declaracao.caminhoSenao) {
+            this.montador.SetInsertPoint(blocoSenao);
             await declaracao.caminhoSenao.aceitar(this);
-        }
-        if (!this.montador.GetInsertBlock().getTerminator()) {
-            this.montador.CreateBr(blocoApos);
+            if (!this.montador.GetInsertBlock().getTerminator()) {
+                this.montador.CreateBr(blocoApos);
+            }
         }
 
         this.montador.SetInsertPoint(blocoApos);
@@ -3225,7 +3230,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      *
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
-    protected criarFuncoesNativa(): void {
+    protected criarFuncoesNativa(modulosImportados?: Set<string>): void {
         // %Vetor = type { ptr, i32 }  (ponteiro para elementos + tamanho)
         this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
         this.tipoEstruturaVetor.setBody([
@@ -3483,15 +3488,29 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoVetorMapearNumero   = this.modulo.getOrInsertFunction('delegua_vetor_mapear_numero',   tipoFuncaoVetorCallback);
         this.funcaoVetorMapearTexto    = this.modulo.getOrInsertFunction('delegua_vetor_mapear_texto',    tipoFuncaoVetorCallback);
 
-        this.registrarModuloMatematica();
-        this.registrarModuloFisica();
-        this.registrarModuloEstatistica();
-        this.registrarModuloArquivos();
-        this.registrarModuloCsv();
-        this.registrarModuloJson();
-        this.registrarModuloHttp();
-        this.registrarModuloCriptografia();
-        this.registrarModuloDados();
+        // Registra apenas os módulos efetivamente importados no código.
+        const registros: Map<string, () => void> = new Map([
+            ['matematica', () => this.registrarModuloMatematica()],
+            ['fisica', () => this.registrarModuloFisica()],
+            ['estatistica', () => this.registrarModuloEstatistica()],
+            ['arquivos', () => this.registrarModuloArquivos()],
+            ['csv', () => this.registrarModuloCsv()],
+            ['json', () => this.registrarModuloJson()],
+            ['http', () => this.registrarModuloHttp()],
+            ['criptografia', () => this.registrarModuloCriptografia()],
+            ['dados', () => this.registrarModuloDados()],
+        ]);
+
+        if (modulosImportados) {
+            for (const modulo of modulosImportados) {
+                registros.get(modulo)?.();
+            }
+        } else {
+            // Fallback: registra todos (comportamento anterior).
+            for (const registrar of registros.values()) {
+                registrar();
+            }
+        }
     }
 
     private registrarModuloMatematica(): void {
@@ -3922,9 +3941,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     /**
      * O ponto de entrada deste compilador.
      * @param codigo O código em Delégua.
+     * @param otimizar Quando verdadeiro, roda passes de otimização LLVM no IR (SROA, CSE, instcombine).
      * @returns A representação intermediária do código em LLVM.
      */
-    async compilar(codigo: string[]): Promise<string> {
+    async compilar(codigo: string[], otimizar: boolean = false): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
         this.registroClasses = new Map();
         this.indicesPropriedades = new Map();
@@ -3940,6 +3960,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.contexto = new llvm.LLVMContext();
         this.modulo = new llvm.Module('demo', this.contexto);
         this.montador = new llvm.IRBuilder(this.contexto);
+
+        // Define target triple e data layout para a plataforma nativa.
+        llvm.InitializeNativeTarget();
+        llvm.InitializeNativeTargetAsmPrinter();
+        const triploAlvo = llvm.config.LLVM_DEFAULT_TARGET_TRIPLE;
+        this.modulo.setTargetTriple(triploAlvo);
+        const alvo = llvm.TargetRegistry.lookupTarget(triploAlvo);
+        this.maquinaAlvo = alvo.createTargetMachine(triploAlvo, 'generic', '');
+        this.modulo.setDataLayout(this.maquinaAlvo.createDataLayout());
+
         this.tipoEstruturaVetor = null;
         this.contemExcecoes = false;
         this.contadorLambda = 0;
@@ -3977,9 +4007,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);
         }
 
-        // Deve ser chamado de forma dinâmica assim que é usado algo que dependa dele.
-        // Criação das funções nativas aqui.
-        this.criarFuncoesNativa();
+        // Detecta módulos importados para registrar apenas as funções necessárias.
+        const modulosImportados = new Set<string>();
+        const regexImportar = /importar\s*\(\s*['"](\w+)['"]\s*\)/;
+        const regexDe = /importar\s+.*\s+de\s+['"](\w+)['"]/;
+        for (const linha of codigo) {
+            const match = regexImportar.exec(linha) || regexDe.exec(linha);
+            if (match) modulosImportados.add(match[1]);
+        }
+
+        this.criarFuncoesNativa(modulosImportados);
 
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha()
         topoDaPilhaDeVariaveis.set("numero", new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value))
@@ -4005,12 +4042,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             d => !(d instanceof FuncaoDeclaracao) && !(d instanceof Classe)
         );
         await this.criarPontoEntrada(outrasDeclaracoes);
-        // console.log(this.modulo.print());
+
         if (llvm.verifyModule(this.modulo)) {
             console.error('Falha ao verificar módulo.');
             return;
         }
-        
+
+        if (otimizar) {
+            const passesModulo = new llvm.ModulePassManager();
+            const passesFuncao = passesModulo.createFunctionPassManager();
+            passesFuncao.addSROAPass();
+            passesFuncao.addEarlyCSEPass();
+            passesFuncao.addInstCombinePass();
+            passesModulo.addFunctionPasses(passesFuncao);
+            (passesModulo as any).run(this.modulo, this.maquinaAlvo);
+        }
+
         return this.modulo.print();
     }
 }

@@ -33,10 +33,11 @@ describe('Compilador - Se', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('icmp sge i32');
         expect(resultado).toContain('se_entao:');
-        expect(resultado).toContain('se_senao:');
         expect(resultado).toContain('se_apos:');
         expect(resultado).toContain('br i1');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
+        // Sem caminho senão, o bloco se_senao não deve ser gerado.
+        expect(resultado).not.toContain('se_senao:');
     });
 
     it('Com senão se', async () => {
