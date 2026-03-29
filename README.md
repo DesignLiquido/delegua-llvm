@@ -167,6 +167,28 @@ Todo o código gerado por esta biblioteca _não é otimizado_, e nem precisa ser
 opt -S meu_programa.ll > meu_programa.otimizado.ll
 ```
 
+## Benchmarks
+
+O diretório [`benchmarks/`](benchmarks/) contém programas equivalentes em Delégua, C e Rust para medir o desempenho do código compilado. Os três cenários cobertos são:
+
+| Benchmark | Descrição |
+|-----------|-----------|
+| Fibonacci recursivo | Calcula `fib(40)` por recursão |
+| Contagem de primos | Conta primos até 1.000.000 |
+| Bubble sort | Ordena um vetor de 10.000 elementos |
+
+Todos os binários são compilados com `-O2` (Delégua via LLVM, C via `clang`, Rust via `rustc`). O script valida que os resultados são idênticos entre as três linguagens antes de medir o tempo.
+
+### Executando os benchmarks
+
+Requer `clang`, `rustc` e `python3` disponíveis no `PATH`:
+
+```sh
+cd benchmarks
+bash executar.sh        # 3 execuções por linguagem (padrão)
+bash executar.sh 10     # 10 execuções por linguagem
+```
+
 ## Contribuindo
 
 - Nomes de variáveis, comentários e documentação devem estar em português, pois o projeto é em português.
