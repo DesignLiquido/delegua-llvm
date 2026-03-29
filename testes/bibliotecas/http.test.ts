@@ -164,6 +164,88 @@ describe('Compilador - Biblioteca delegua-http (Fase E.1)', () => {
         });
     });
 
+    describe('Fluxo completo: criar cliente → requisição → resposta → limpeza', () => {
+        it('GET com leitura de status e corpo', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'var http = importar("http")',
+                'var cliente: texto = http.novoClienteHttp("https://api.exemplo.com", 5000)',
+                'var resp: texto = http.requisicaoGet(cliente, "/dados")',
+                'var codigo: inteiro = http.codigoStatus(resp)',
+                'var corpo: texto = http.dados(resp)',
+                'var msg: texto = http.mensagemStatus(resp)',
+                'escreva(codigo)',
+                'http.liberarResposta(resp)',
+                'http.liberarCliente(cliente)',
+            ]);
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('delegua_http_novo_cliente');
+            expect(resultado).toContain('delegua_http_get');
+            expect(resultado).toContain('delegua_http_codigo_status');
+            expect(resultado).toContain('delegua_http_dados');
+            expect(resultado).toContain('delegua_http_mensagem');
+            expect(resultado).toContain('delegua_http_liberar_resp');
+            expect(resultado).toContain('delegua_http_liberar_cliente');
+        });
+
+        it('POST com cabeçalho customizado e corpo', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'var http = importar("http")',
+                'var cliente: texto = http.novoClienteHttp("https://api.exemplo.com", 5000)',
+                'http.adicionarCabecalho(cliente, "Content-Type: text/plain")',
+                'var resp: texto = http.requisicaoPost(cliente, "/enviar", "corpo da requisicao")',
+                'var codigo: inteiro = http.codigoStatus(resp)',
+                'escreva(codigo)',
+                'http.liberarResposta(resp)',
+                'http.liberarCliente(cliente)',
+            ]);
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('delegua_http_add_cabecalho');
+            expect(resultado).toContain('delegua_http_post');
+            expect(resultado).toContain('delegua_http_codigo_status');
+        });
+
+        it('PUT, DELETE e PATCH no mesmo cliente', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'var http = importar("http")',
+                'var cliente: texto = http.novoClienteHttp("https://api.exemplo.com", 5000)',
+                'var r1: texto = http.requisicaoPut(cliente, "/recurso/1", "atualizado")',
+                'var r2: texto = http.requisicaoDelete(cliente, "/recurso/2")',
+                'var r3: texto = http.requisicaoPatch(cliente, "/recurso/3", "parcial")',
+                'http.liberarResposta(r1)',
+                'http.liberarResposta(r2)',
+                'http.liberarResposta(r3)',
+                'http.liberarCliente(cliente)',
+            ]);
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('delegua_http_put');
+            expect(resultado).toContain('delegua_http_delete');
+            expect(resultado).toContain('delegua_http_patch');
+        });
+
+        it('variáveis de resposta passadas entre chamadas', async () => {
+            const compilador = new CompiladorLLVM();
+            const resultado = await compilador.compilar([
+                'var http = importar("http")',
+                'var cliente: texto = http.novoClienteHttp("https://api.exemplo.com", 5000)',
+                'var resp: texto = http.requisicaoGet(cliente, "/ping")',
+                'var corpo: texto = http.dados(resp)',
+                'var resp2: texto = http.requisicaoPost(cliente, "/echo", corpo)',
+                'var codigo: inteiro = http.codigoStatus(resp2)',
+                'escreva(codigo)',
+                'http.liberarResposta(resp)',
+                'http.liberarResposta(resp2)',
+                'http.liberarCliente(cliente)',
+            ]);
+            expect(resultado).toBeTruthy();
+            expect(resultado).toContain('delegua_http_get');
+            expect(resultado).toContain('delegua_http_dados');
+            expect(resultado).toContain('delegua_http_post');
+        });
+    });
+
     describe('Coexistência com outras bibliotecas', () => {
         it('usa http junto com json', async () => {
             const compilador = new CompiladorLLVM();
