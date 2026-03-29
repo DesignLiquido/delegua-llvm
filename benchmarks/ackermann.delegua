@@ -1,0 +1,11 @@
+funcao ack(m: inteiro, n: inteiro): inteiro {
+    se m == 0 {
+        retorna n + 1
+    }
+    se n == 0 {
+        retorna ack(m - 1, 1)
+    }
+    retorna ack(m - 1, ack(m, n - 1))
+}
+
+escreva(ack(3, 11))
