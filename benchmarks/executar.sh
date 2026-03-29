@@ -95,6 +95,7 @@ run_benchmark() {
 
 run_benchmark "Fibonacci Recursivo (fib 40)" "fibonacci" "102334155"
 run_benchmark "Contagem de Primos (até 1M)" "primos" "78498"
+run_benchmark "Bubble Sort (10000 elementos)" "bubblesort" "1"
 
 echo ""
 echo "========================================"

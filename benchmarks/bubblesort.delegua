@@ -1,0 +1,22 @@
+var n: inteiro = 10000
+var lista: inteiro[] = [0]
+
+para var k: inteiro = 1; k < n; k++ {
+    lista.adicionar(0)
+}
+
+para var k: inteiro = 0; k < n; k++ {
+    lista[k] = n - k
+}
+
+para var i: inteiro = 0; i < n - 1; i++ {
+    para var j: inteiro = 0; j < n - 1 - i; j++ {
+        se lista[j] > lista[j + 1] {
+            var temp: inteiro = lista[j]
+            lista[j] = lista[j + 1]
+            lista[j + 1] = temp
+        }
+    }
+}
+
+escreva(lista[0])
