@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 
 import { CompiladorLLVM } from './compilador-llvm';
+import { detectarModulosImportados, obterBibliotecasParaCompilacao } from './bibliotecas-compilacao';
 
 const LOGO = `
 ╔══════════════════════════════════════════════════════════════════╗
@@ -56,28 +57,6 @@ function logInfo(mensagem: string) {
 
 function logErro(mensagem: string) {
     console.log(`${CORES.vermelho}  ✗ ${mensagem}${CORES.reset}`);
-}
-
-function obterArquivosC(diretorio: string): string[] {
-    const arquivos: string[] = [];
-    
-    if (!fs.existsSync(diretorio)) {
-        return arquivos;
-    }
-
-    const itens = fs.readdirSync(diretorio);
-    for (const item of itens) {
-        const caminhoCompleto = path.join(diretorio, item);
-        const stat = fs.statSync(caminhoCompleto);
-        
-        if (stat.isFile() && item.endsWith('.c')) {
-            arquivos.push(caminhoCompleto);
-        } else if (stat.isDirectory() && item !== 'terceiros') {
-            arquivos.push(...obterArquivosC(caminhoCompleto));
-        }
-    }
-    
-    return arquivos;
 }
 
 function limparArquivosTemporarios(arquivos: string[]) {
@@ -157,13 +136,14 @@ async function principal() {
 
         logEtapa('Compilando bibliotecas nativas');
         const bibliotecasDir = path.join(__dirname, 'bibliotecas');
-        const arquivosC = obterArquivosC(bibliotecasDir);
+        const modulos = detectarModulosImportados(codigo);
+        const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir);
         const arquivosObj: string[] = [];
 
         for (const arquivoC of arquivosC) {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
-            
+
             execSync(`clang -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
@@ -172,7 +152,8 @@ async function principal() {
 
         logEtapa('Linkando binário');
         const objetosStr = arquivosObj.map(o => `"${o}"`).join(' ');
-        execSync(`clang++ "${irPath}" ${objetosStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
+        execSync(`clang++ "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         logSucesso(`Binário gerado: ${caminhoBinario}`);
 
         logEtapa('Limpando arquivos temporários');
