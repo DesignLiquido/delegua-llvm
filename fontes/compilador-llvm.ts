@@ -2720,9 +2720,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
         if (funcaoConstrutor) {
             const args: llvm.Value[] = [objetoAlloc];
-            for (const argumento of argumentos) {
-                const argResolvido = await argumento.aceitar(this);
-                args.push(argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : argResolvido as llvm.Value);
+            for (let i = 0; i < argumentos.length; i++) {
+                const tipoEsperado = funcaoConstrutor.getArg(i + 1).getType();
+                const argResolvido = await argumentos[i].aceitar(this);
+                let valor: llvm.Value;
+                if (argResolvido instanceof VariavelEscopo) {
+                    const tipoLlvm = this.obterTipoLlvm(argResolvido.tipo ?? 'número');
+                    valor = this.montador.CreateLoad(tipoLlvm, argResolvido.variavelLlvm, 'load_arg_construtor');
+                } else {
+                    valor = argResolvido as llvm.Value;
+                }
+                // Conversão de tipos: i32 ↔ double conforme assinatura do construtor.
+                if (valor.getType() !== tipoEsperado) {
+                    if (tipoEsperado === this.montador.getDoubleTy()) {
+                        valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
+                    } else if (tipoEsperado === this.montador.getInt32Ty()) {
+                        valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
+                    }
+                }
+                args.push(valor);
             }
             this.montador.CreateCall(funcaoConstrutor, args);
         }

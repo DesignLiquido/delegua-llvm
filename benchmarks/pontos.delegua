@@ -1,0 +1,25 @@
+classe Ponto {
+    x: inteiro
+    y: inteiro
+    construtor(x: inteiro, y: inteiro) {
+        isto.x = x
+        isto.y = y
+    }
+    distanciaManhattan(): inteiro {
+        var dx: inteiro = isto.x
+        var dy: inteiro = isto.y
+        se dx < 0 { dx = 0 - dx }
+        se dy < 0 { dy = 0 - dy }
+        retorna dx + dy
+    }
+}
+
+var total: inteiro = 0
+para var i: inteiro = 0; i < 1000000; i++ {
+    var x: inteiro = (i * 7 + 3) % 1000 - 500
+    var y: inteiro = (i * 13 + 7) % 1000 - 500
+    var p = Ponto(x, y)
+    total = total + p.distanciaManhattan()
+}
+
+escreva(total)

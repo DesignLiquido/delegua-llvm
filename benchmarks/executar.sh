@@ -99,6 +99,8 @@ run_benchmark "Bubble Sort (10000 elementos)" "bubblesort" "1"
 run_benchmark "Crivo de Eratóstenes (até 1M)" "crivo" "78498"
 run_benchmark "Soma de Dígitos (1 a 10M)" "somadigitos" "315000001"
 run_benchmark "Ackermann (3, 11)" "ackermann" "16381"
+run_benchmark "Pontos - Classes (1M)" "pontos" "500000000"
+run_benchmark "Árvore BST (300K)" "arvore" "90021"
 
 echo ""
 echo "========================================"

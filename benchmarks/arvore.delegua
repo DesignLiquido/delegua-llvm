@@ -1,0 +1,73 @@
+var n: inteiro = 300000
+
+var valores: inteiro[] = [0]
+var esquerda: inteiro[] = [-1]
+var direita: inteiro[] = [-1]
+var tamanho: inteiro = 0
+
+para var k: inteiro = 1; k < n; k++ {
+    valores.adicionar(0)
+    esquerda.adicionar(-1)
+    direita.adicionar(-1)
+}
+
+para var i: inteiro = 0; i < n; i++ {
+    var val: inteiro = (i * 7141 + 54773) % 1000000
+    se val < 0 { val = 0 - val }
+
+    se tamanho == 0 {
+        valores[0] = val
+        esquerda[0] = -1
+        direita[0] = -1
+        tamanho = 1
+    } senao {
+        var atual: inteiro = 0
+        var inserido: inteiro = 0
+        enquanto inserido == 0 {
+            se val < valores[atual] {
+                se esquerda[atual] == -1 {
+                    esquerda[atual] = tamanho
+                    valores[tamanho] = val
+                    esquerda[tamanho] = -1
+                    direita[tamanho] = -1
+                    tamanho = tamanho + 1
+                    inserido = 1
+                } senao {
+                    atual = esquerda[atual]
+                }
+            } senao se val > valores[atual] {
+                se direita[atual] == -1 {
+                    direita[atual] = tamanho
+                    valores[tamanho] = val
+                    esquerda[tamanho] = -1
+                    direita[tamanho] = -1
+                    tamanho = tamanho + 1
+                    inserido = 1
+                } senao {
+                    atual = direita[atual]
+                }
+            } senao {
+                inserido = 1
+            }
+        }
+    }
+}
+
+var encontrados: inteiro = 0
+para var i: inteiro = 0; i < n; i++ {
+    var atual: inteiro = 0
+    var achou: inteiro = 0
+    enquanto atual != -1 {
+        se i == valores[atual] {
+            achou = 1
+            atual = -1
+        } senao se i < valores[atual] {
+            atual = esquerda[atual]
+        } senao {
+            atual = direita[atual]
+        }
+    }
+    encontrados = encontrados + achou
+}
+
+escreva(encontrados)
