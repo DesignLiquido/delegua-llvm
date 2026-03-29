@@ -144,7 +144,7 @@ async function principal() {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            execSync(`clang -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
+            execSync(`clang -O2 -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             logSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
@@ -153,7 +153,7 @@ async function principal() {
         logEtapa('Linkando binário');
         const objetosStr = arquivosObj.map(o => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
-        execSync(`clang++ "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        execSync(`clang++ -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         logSucesso(`Binário gerado: ${caminhoBinario}`);
 
         logEtapa('Limpando arquivos temporários');

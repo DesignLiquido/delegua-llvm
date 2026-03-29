@@ -1880,9 +1880,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const variavelEscopoObjetoLlvmFuncao = new VariavelEscopo(objetoLlvmFuncao, declaracao as any);
         topoDaPilha.set(declaracao.simbolo.lexema, variavelEscopoObjetoLlvmFuncao);
 
+        const tipoRetornoAnterior = this.tipoRetornoFuncaoAtual;
+        this.tipoRetornoFuncaoAtual = declaracao.funcao.tipo ?? null;
+
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
         await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
         this.pilhaVariaveisEscopo.removerUltimo();
+
+        this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
     }
 
     /**
@@ -2454,16 +2459,37 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         let tipoEsquerdo = this.resolverTipoConstruto(expressao.esquerda);
         let tipoDireito = this.resolverTipoConstruto(expressao.direita);
 
-        // Quando um operando é inteiro e o outro é um literal numérico inteiro,
-        // trata o literal como inteiro para evitar promoção indevida a double.
-        if (this.tipoEhInteiroDelegua(tipoEsquerdo) && tipoDireito === 'número'
-            && expressao.direita instanceof Literal && Number.isInteger((expressao.direita as Literal).valor)) {
-            tipoDireito = tipoEsquerdo;
-            operandoDireito = ConstantInt.get(this.contexto, new APInt(tipoEsquerdo === 'longo' ? 64 : 32, (expressao.direita as Literal).valor as number));
-        } else if (this.tipoEhInteiroDelegua(tipoDireito) && tipoEsquerdo === 'número'
-            && expressao.esquerda instanceof Literal && Number.isInteger((expressao.esquerda as Literal).valor)) {
-            tipoEsquerdo = tipoDireito;
-            operandoEsquerdo = ConstantInt.get(this.contexto, new APInt(tipoDireito === 'longo' ? 64 : 32, (expressao.esquerda as Literal).valor as number));
+        // Quando um operando é inteiro (por tipo AST ou por tipo LLVM real) e o outro
+        // é um literal numérico inteiro, trata o literal como inteiro para evitar
+        // promoção indevida a double.
+        const esquerdoEhInteiro = this.tipoEhInteiroDelegua(tipoEsquerdo)
+            || (operandoEsquerdo instanceof VariavelEscopo && this.tipoEhInteiroDelegua(operandoEsquerdo.tipo))
+            || (!(operandoEsquerdo instanceof VariavelEscopo) && (operandoEsquerdo as llvm.Value).getType?.()?.constructor?.name === 'IntegerType');
+        const direitoEhInteiro = this.tipoEhInteiroDelegua(tipoDireito)
+            || (operandoDireito instanceof VariavelEscopo && this.tipoEhInteiroDelegua(operandoDireito.tipo))
+            || (!(operandoDireito instanceof VariavelEscopo) && (operandoDireito as llvm.Value).getType?.()?.constructor?.name === 'IntegerType');
+
+        const direitaEhLiteralInteiro = expressao.direita.constructor.name === 'Literal'
+            && typeof (expressao.direita as Literal).valor === 'number'
+            && Number.isInteger((expressao.direita as Literal).valor);
+        const esquerdaEhLiteralInteiro = expressao.esquerda.constructor.name === 'Literal'
+            && typeof (expressao.esquerda as Literal).valor === 'number'
+            && Number.isInteger((expressao.esquerda as Literal).valor);
+
+        if (esquerdoEhInteiro && tipoDireito === 'número' && direitaEhLiteralInteiro) {
+            if (!this.tipoEhInteiroDelegua(tipoEsquerdo)) {
+                tipoEsquerdo = 'inteiro';
+            }
+            const bits = tipoEsquerdo === 'longo' ? 64 : 32;
+            tipoDireito = tipoEsquerdo === 'longo' ? 'longo' : 'inteiro';
+            operandoDireito = ConstantInt.get(this.contexto, new APInt(bits, (expressao.direita as Literal).valor as number));
+        } else if (direitoEhInteiro && tipoEsquerdo === 'número' && esquerdaEhLiteralInteiro) {
+            if (!this.tipoEhInteiroDelegua(tipoDireito)) {
+                tipoDireito = 'inteiro';
+            }
+            const bits = tipoDireito === 'longo' ? 64 : 32;
+            tipoEsquerdo = tipoDireito === 'longo' ? 'longo' : 'inteiro';
+            operandoEsquerdo = ConstantInt.get(this.contexto, new APInt(bits, (expressao.esquerda as Literal).valor as number));
         }
 
         const operandoEsquerdoResolvido: OperandoInterface = this.resolverOperando(operandoEsquerdo, tipoEsquerdo);
@@ -3041,18 +3067,28 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tiposParametros = [];
             for (const parametro of construtoCorrespondente.parametros) {
                 tiposParametros.push(parametro.tipoDado);
-            }   
+            }
 
-            
+
             for (const [indice, argumento] of expressao.argumentos.entries()) {
                 const argumentoAjustado = this.resolverArgumentoChamada(argumento, tiposParametros[indice]);
-                const argumentoResolvido = await argumentoAjustado.aceitar(this);
+                let argumentoResolvido = await argumentoAjustado.aceitar(this);
+                if (argumentoResolvido instanceof VariavelEscopo) {
+                    const tipoParam = tiposParametros[indice] || argumentoResolvido.tipo || 'número';
+                    const tipoLlvm = this.obterTipoLlvm(tipoParam);
+                    argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                }
                 argumentos.push(argumentoResolvido);
             }
         } else {
             for (const argumento of expressao.argumentos) {
                 const argumentoAjustado = this.resolverArgumentoChamada(argumento, argumento.tipo || "texto")
-                const argumentoResolvido = await argumentoAjustado.aceitar(this);
+                let argumentoResolvido = await argumentoAjustado.aceitar(this);
+                if (argumentoResolvido instanceof VariavelEscopo) {
+                    const tipoParam = argumentoResolvido.tipo || argumento.tipo || 'número';
+                    const tipoLlvm = this.obterTipoLlvm(tipoParam);
+                    argumentoResolvido = this.montador.CreateLoad(tipoLlvm, argumentoResolvido.variavelLlvm, 'load_arg');
+                }
                 argumentos.push(argumentoResolvido)
             }
         }
