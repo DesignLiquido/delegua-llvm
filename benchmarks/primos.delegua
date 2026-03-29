@@ -1,0 +1,26 @@
+funcao ehPrimo(n: inteiro): inteiro {
+    se n <= 1 {
+        retorna 0
+    }
+    se n <= 3 {
+        retorna 1
+    }
+    se n % 2 == 0 {
+        retorna 0
+    }
+    var i: inteiro = 3
+    enquanto i * i <= n {
+        se n % i == 0 {
+            retorna 0
+        }
+        i = i + 2
+    }
+    retorna 1
+}
+
+var contagem: inteiro = 0
+para var j: inteiro = 2; j < 1000000; j++ {
+    contagem = contagem + ehPrimo(j)
+}
+
+escreva(contagem)

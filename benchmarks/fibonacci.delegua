@@ -1,0 +1,8 @@
+funcao fib(n: inteiro): inteiro {
+    se n <= 1 {
+        retorna n
+    }
+    retorna fib(n - 1) + fib(n - 2)
+}
+
+escreva(fib(40))

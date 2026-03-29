@@ -335,3 +335,17 @@ void delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double), Vetor* saida) {
     for (int i = 0; i < v->tamanho; i++) { resultado[i] = fn(elems[i]); }
     saida->ptr = resultado; saida->tamanho = v->tamanho;
 }
+
+// Mapeia elementos texto (char*→char*) — cria novo vetor em *saida.
+void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida) {
+    if (!v || v->tamanho == 0) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    char** elems = (char**)v->ptr;
+    char** resultado = (char**)calloc((size_t)v->tamanho, sizeof(char*));
+    if (!resultado) { saida->ptr = NULL; saida->tamanho = 0; return; }
+    for (int i = 0; i < v->tamanho; i++) { resultado[i] = fn(elems[i]); }
+    saida->ptr = resultado; saida->tamanho = v->tamanho;
+}
+
+int delegua_vetor_tamanho(Vetor* v) {
+    return v ? v->tamanho : 0;
+}

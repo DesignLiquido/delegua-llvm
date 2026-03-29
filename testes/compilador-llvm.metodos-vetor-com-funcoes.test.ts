@@ -40,6 +40,55 @@ describe('Compilador - Fase 5: Métodos de Vetor com funções de processamento'
     });
 
     // ──────────────────────────────────────────────────────────
+    // mapear — método de vetor
+    // ──────────────────────────────────────────────────────────
+
+    it('mapear (inteiro) como método chama delegua_vetor_mapear_inteiro', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var lista: inteiro[] = [1, 2, 3]',
+            'var dobro: inteiro[] = lista.mapear(funcao(n: inteiro): inteiro { retorna n })',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_mapear_inteiro');
+        expect(resultado).toContain('__lambda_0');
+    });
+
+    it('mapear (número) como método chama delegua_vetor_mapear_numero', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var lista: número[] = [1.0, 2.0, 3.0]',
+            'var resultado: número[] = lista.mapear(funcao(x: número): número { retorna x })',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_mapear_numero');
+        expect(resultado).toContain('__lambda_0');
+    });
+
+    it('mapear (texto) como método chama delegua_vetor_mapear_texto', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var lista: texto[] = ["a", "b", "c"]',
+            'var resultado: texto[] = lista.mapear(funcao(s: texto): texto { retorna s })',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_mapear_texto');
+        expect(resultado).toContain('__lambda_0');
+    });
+
+    it('mapear como método aceita referência a função nomeada', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao dobrar(n: inteiro): inteiro { retorna n }',
+            'var lista: inteiro[] = [1, 2, 3]',
+            'var resultado: inteiro[] = lista.mapear(dobrar)',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_mapear_inteiro');
+        expect(resultado).toContain('@dobrar');
+    });
+
+    // ──────────────────────────────────────────────────────────
     // mapear — função global
     // ──────────────────────────────────────────────────────────
 

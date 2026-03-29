@@ -122,6 +122,23 @@ describe('Compilador - Funções', () => {
         expect(resultado).toContain('  store i32 %0, ptr %c, align 4');
     });
 
+    it('Função recursiva (fibonacci)', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao fib(n: inteiro): inteiro {',
+            '    se n <= 1 {',
+            '        retorna n',
+            '    }',
+            '    retorna fib(n - 1) + fib(n - 2)',
+            '}',
+            'escreva(fib(10))',
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('define i32 @fib(i32 %0)');
+        expect(resultado).toContain('call i32 @fib(');
+    });
+
     it('Chamada de função, número', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
