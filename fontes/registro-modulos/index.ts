@@ -1,0 +1,9 @@
+export { registrarModuloMatematica } from './matematica';
+export { registrarModuloFisica } from './fisica';
+export { registrarModuloEstatistica } from './estatistica';
+export { registrarModuloArquivos } from './arquivos';
+export { registrarModuloCsv } from './csv';
+export { registrarModuloJson } from './json';
+export { registrarModuloHttp } from './http';
+export { registrarModuloCriptografia } from './criptografia';
+export { registrarModuloDados } from './dados';
