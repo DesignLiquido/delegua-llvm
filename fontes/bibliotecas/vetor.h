@@ -7,6 +7,9 @@ typedef struct {
     int tamanho;
 } Vetor;
 
+// Mapeia elementos texto (char*→char*) — cria novo vetor em *saida.
+void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida);
+
 // Adiciona um elemento ao final do vetor. Retorna o novo tamanho.
 int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem);
 

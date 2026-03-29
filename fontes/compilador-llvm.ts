@@ -81,6 +81,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoVetorFiltrarNumero: llvm.FunctionCallee;
     funcaoVetorMapearInteiro: llvm.FunctionCallee;
     funcaoVetorMapearNumero: llvm.FunctionCallee;
+    funcaoVetorMapearTexto: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -2769,6 +2770,24 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return alocSaida;
             }
 
+            case 'mapear': {
+                const tipoRetorno = tipoElem;
+                const fnPtr = await this.resolverPonteiroDeFuncao(
+                    argumentos[0],
+                    [tipoElem],
+                    tipoRetorno
+                );
+                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'mapeado');
+                if (tipoElem === 'inteiro') {
+                    this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
+                } else if (tipoElem === 'número' || tipoElem === 'numero') {
+                    this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
+                } else {
+                    this.montador.CreateCall(this.funcaoVetorMapearTexto, [vetorPtr, fnPtr, alocSaida]);
+                }
+                return alocSaida;
+            }
+
             default:
                 throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
         }
@@ -3390,6 +3409,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoVetorFiltrarNumero  = this.modulo.getOrInsertFunction('delegua_vetor_filtrar_numero',  tipoFuncaoVetorCallback);
         this.funcaoVetorMapearInteiro  = this.modulo.getOrInsertFunction('delegua_vetor_mapear_inteiro',  tipoFuncaoVetorCallback);
         this.funcaoVetorMapearNumero   = this.modulo.getOrInsertFunction('delegua_vetor_mapear_numero',   tipoFuncaoVetorCallback);
+        this.funcaoVetorMapearTexto    = this.modulo.getOrInsertFunction('delegua_vetor_mapear_texto',    tipoFuncaoVetorCallback);
 
         this.registrarModuloMatematica();
         this.registrarModuloFisica();
