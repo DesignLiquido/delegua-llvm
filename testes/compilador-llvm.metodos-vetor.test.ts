@@ -134,6 +134,30 @@ describe('Compilador - Métodos de Vetor (Fase 4)', () => {
     });
 
     // ──────────────────────────────────────────────────────────
+    // tamanho
+    // ──────────────────────────────────────────────────────────
+
+    it('tamanho chama delegua_vetor_tamanho', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var lista: inteiro[] = [1, 2, 3]',
+            'var t: inteiro = lista.tamanho()',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_tamanho');
+    });
+
+    it('tamanho funciona com vetor de texto', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var nomes: texto[] = ["a", "b"]',
+            'var t: inteiro = nomes.tamanho()',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_tamanho');
+    });
+
+    // ──────────────────────────────────────────────────────────
     // erro para método inexistente
     // ──────────────────────────────────────────────────────────
 

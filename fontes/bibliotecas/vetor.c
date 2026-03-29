@@ -345,3 +345,7 @@ void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida) {
     for (int i = 0; i < v->tamanho; i++) { resultado[i] = fn(elems[i]); }
     saida->ptr = resultado; saida->tamanho = v->tamanho;
 }
+
+int delegua_vetor_tamanho(Vetor* v) {
+    return v ? v->tamanho : 0;
+}

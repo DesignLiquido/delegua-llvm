@@ -82,6 +82,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoVetorMapearInteiro: llvm.FunctionCallee;
     funcaoVetorMapearNumero: llvm.FunctionCallee;
     funcaoVetorMapearTexto: llvm.FunctionCallee;
+    funcaoVetorTamanho: llvm.FunctionCallee; 
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
     private registroClasses: Map<string, llvm.StructType> = new Map();
@@ -2787,7 +2788,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
                 return alocSaida;
             }
-
+            case 'tamanho':                                                                                                                                  
+                return this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr]);
             default:
                 throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
         }
@@ -3344,6 +3346,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             false
         );
         this.funcaoVetorRemoverUltimo = this.modulo.getOrInsertFunction('delegua_vetor_remover_ultimo', tipoFuncaoVetorRemoverUltimo);
+
+        // int delegua_vetor_tamanho(Vetor* v)
+        const tipoFuncaoVetorTamanho = llvm.FunctionType.get(
+            this.montador.getInt32Ty(),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoVetorTamanho = this.modulo.getOrInsertFunction('delegua_vetor_tamanho', tipoFuncaoVetorTamanho);
 
         // int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem)
         const tipoFuncaoVetorRemoverPrimeiro = llvm.FunctionType.get(
