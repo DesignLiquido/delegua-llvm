@@ -2731,9 +2731,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
         if (funcaoConstrutor) {
             const args: llvm.Value[] = [objetoAlloc];
-            for (const argumento of argumentos) {
-                const argResolvido = await argumento.aceitar(this);
-                args.push(argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : argResolvido as llvm.Value);
+            for (let i = 0; i < argumentos.length; i++) {
+                const tipoEsperado = funcaoConstrutor.getArg(i + 1).getType();
+                const argResolvido = await argumentos[i].aceitar(this);
+                let valor: llvm.Value;
+                if (argResolvido instanceof VariavelEscopo) {
+                    const tipoLlvm = this.obterTipoLlvm(argResolvido.tipo ?? 'número');
+                    valor = this.montador.CreateLoad(tipoLlvm, argResolvido.variavelLlvm, 'load_arg_construtor');
+                } else {
+                    valor = argResolvido as llvm.Value;
+                }
+                // Conversão de tipos: i32 ↔ double conforme assinatura do construtor.
+                if (valor.getType() !== tipoEsperado) {
+                    if (tipoEsperado === this.montador.getDoubleTy()) {
+                        valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
+                    } else if (tipoEsperado === this.montador.getInt32Ty()) {
+                        valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
+                    }
+                }
+                args.push(valor);
             }
             this.montador.CreateCall(funcaoConstrutor, args);
         }
@@ -2854,7 +2870,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
     }
 
-    // Retorna o tamanho em bytes de um elemento de vetor segundo o tipo Delégua.
+    // Insere um alloca no bloco de entrada da função corrente, evitando
+    // que allocas emitidos dentro de loops consumam stack a cada iteração.
+    private criarAllocaNoBlocoEntrada(tipo: llvm.Type, nome: string): llvm.AllocaInst {
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+        const blocoEntrada = funcaoAtual.getEntryBlock();
+        const pontoInsercaoAtual = this.montador.GetInsertBlock();
+
+        const primeiraInstrucao = blocoEntrada.getFirstNonPHI();
+        if (primeiraInstrucao) {
+            this.montador.SetInsertPoint(primeiraInstrucao);
+        } else {
+            this.montador.SetInsertPoint(blocoEntrada);
+        }
+
+        const aloca = this.montador.CreateAlloca(tipo, null, nome);
+        this.montador.SetInsertPoint(pontoInsercaoAtual);
+        return aloca;
+    }
+
     // Carrega o ponteiro de elementos de um vetor, usando cache para evitar loads redundantes.
     protected carregarPonteiroElementosVetor(nomeVetor: string, vetorPtr: llvm.Value): llvm.Value {
         const blocoAtual = this.montador.GetInsertBlock();
@@ -2901,9 +2935,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         switch (nomeMetodo) {
             case 'adicionar':
             case 'empilhar': {
-                // Aloca um slot temporário para o elemento e passa seu endereço
+                // Aloca um slot temporário no bloco de entrada para evitar stack overflow em loops.
                 const tipoLlvmElem = this.obterTipoLlvm(tipoElem);
-                const alocElem = this.montador.CreateAlloca(tipoLlvmElem, null, 'novo_elem');
+                const alocElem = this.criarAllocaNoBlocoEntrada(tipoLlvmElem, 'novo_elem');
                 let valorElem: llvm.Value;
                 if (tipoElem === 'inteiro') {
                     valorElem = await this.carregarArgumentoInteiro(argumentos[0]);
@@ -2934,7 +2968,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const fim = argumentos[1]
                     ? await this.carregarArgumentoInteiro(argumentos[1])
                     : ConstantInt.get(this.contexto, new APInt(32, 0x7fffffff));
-                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'fatia');
+                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'fatia');
                 this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem, alocSaida]);
                 return alocSaida;
             }
@@ -2956,7 +2990,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     [tipoElem],
                     'inteiro'   // predicado retorna inteiro (0/1)
                 );
-                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'filtrado');
+                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'filtrado');
                 if (tipoElem === 'inteiro') {
                     this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
                 } else {
@@ -2972,7 +3006,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     [tipoElem],
                     tipoRetorno
                 );
-                const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'mapeado');
+                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
                 if (tipoElem === 'inteiro') {
                     this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
                 } else if (tipoElem === 'número' || tipoElem === 'numero') {
@@ -3147,7 +3181,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], tipoElem);
 
-        const alocSaida = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'mapeado');
+        const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
         if (ehNumero) {
             this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
         } else {

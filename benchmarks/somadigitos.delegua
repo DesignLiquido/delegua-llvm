@@ -1,0 +1,16 @@
+funcao somaDigitos(num: inteiro): inteiro {
+    var soma: inteiro = 0
+    var n: inteiro = num
+    enquanto n > 0 {
+        soma = soma + n % 10
+        n = n / 10
+    }
+    retorna soma
+}
+
+var total: inteiro = 0
+para var i: inteiro = 1; i <= 10000000; i++ {
+    total = total + somaDigitos(i)
+}
+
+escreva(total)

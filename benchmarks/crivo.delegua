@@ -1,0 +1,27 @@
+var n: inteiro = 1000000
+var crivo: inteiro[] = [0]
+
+para var k: inteiro = 1; k <= n; k++ {
+    crivo.adicionar(1)
+}
+
+crivo[1] = 0
+
+var i: inteiro = 2
+enquanto i * i <= n {
+    se crivo[i] == 1 {
+        var j: inteiro = i * i
+        enquanto j <= n {
+            crivo[j] = 0
+            j = j + i
+        }
+    }
+    i = i + 1
+}
+
+var contagem: inteiro = 0
+para var k: inteiro = 2; k <= n; k++ {
+    contagem = contagem + crivo[k]
+}
+
+escreva(contagem)
