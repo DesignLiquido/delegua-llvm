@@ -2736,16 +2736,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const argResolvido = await argumentos[i].aceitar(this);
                 let valor: llvm.Value;
                 if (argResolvido instanceof VariavelEscopo) {
-                    const tipoLlvm = this.obterTipoLlvm(argResolvido.tipo ?? 'número');
-                    valor = this.montador.CreateLoad(tipoLlvm, argResolvido.variavelLlvm, 'load_arg_construtor');
+                    const llvmValue = argResolvido.variavelLlvm;
+                    // Só faz load quando o valor encapsulado é ponteiro. Parâmetros de
+                    // função/método são armazenados como VariavelEscopo apontando direto
+                    // para o argumento LLVM (não-ponteiro) e devem ser usados diretamente.
+                    if (this.tipoEhPonteiro(llvmValue.getType())) {
+                        const tipoLlvm = this.obterTipoLlvm(argResolvido.tipo ?? 'número');
+                        valor = this.montador.CreateLoad(tipoLlvm, llvmValue, 'load_arg_construtor');
+                    } else {
+                        valor = llvmValue;
+                    }
                 } else {
                     valor = argResolvido as llvm.Value;
                 }
                 // Conversão de tipos: i32 ↔ double conforme assinatura do construtor.
-                if (valor.getType() !== tipoEsperado) {
-                    if (tipoEsperado === this.montador.getDoubleTy()) {
+                // Usa constructor.name em vez de identidade de objeto (===) porque os
+                // wrappers de Type no binding Napi não são singletons garantidos.
+                const nomeValor = valor.getType()?.constructor?.name;
+                const nomeTipoEsperado = tipoEsperado?.constructor?.name;
+                if (nomeValor !== nomeTipoEsperado) {
+                    const tipoEsperadoEhDouble = nomeTipoEsperado === 'Type';
+                    const tipoEsperadoEhInt = nomeTipoEsperado === 'IntegerType';
+                    const tipoValorEhInt = nomeValor === 'IntegerType';
+                    const tipoValorEhDouble = nomeValor === 'Type';
+                    if (tipoEsperadoEhDouble && tipoValorEhInt) {
                         valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
-                    } else if (tipoEsperado === this.montador.getInt32Ty()) {
+                    } else if (tipoEsperadoEhInt && tipoValorEhDouble) {
                         valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
                     }
                 }
@@ -2875,18 +2891,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     private criarAllocaNoBlocoEntrada(tipo: llvm.Type, nome: string): llvm.AllocaInst {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
         const blocoEntrada = funcaoAtual.getEntryBlock();
-        const pontoInsercaoAtual = this.montador.GetInsertBlock();
 
+        // Usa um IRBuilder temporário para não alterar o ponto de inserção de
+        // this.montador. SetInsertPoint(BasicBlock) só restauraria o bloco, não
+        // o ponto exato dentro dele, o que pode reordenar instruções ou gerar
+        // IR inválido quando há terminadores.
+        const montadorEntrada = new llvm.IRBuilder(this.contexto);
         const primeiraInstrucao = blocoEntrada.getFirstNonPHI();
         if (primeiraInstrucao) {
-            this.montador.SetInsertPoint(primeiraInstrucao);
+            montadorEntrada.SetInsertPoint(primeiraInstrucao);
         } else {
-            this.montador.SetInsertPoint(blocoEntrada);
+            montadorEntrada.SetInsertPoint(blocoEntrada);
         }
 
-        const aloca = this.montador.CreateAlloca(tipo, null, nome);
-        this.montador.SetInsertPoint(pontoInsercaoAtual);
-        return aloca;
+        return montadorEntrada.CreateAlloca(tipo, null, nome);
     }
 
     // Carrega o ponteiro de elementos de um vetor, usando cache para evitar loads redundantes.
