@@ -9,7 +9,10 @@
         "declaration": true,
         "declarationMap": true,
         "esModuleInterop": true,
-        "experimentalDecorators": true
+        "experimentalDecorators": true,
+        "strictNullChecks": false,
+        "strictPropertyInitialization": false,
+        "types": ["node", "jest"]
     },
     "exclude": [
         "babel.config.js", 
