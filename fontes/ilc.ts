@@ -3,8 +3,31 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 
+import { registrar } from '@designliquido/delprops';
+
 import { CompiladorLLVM } from './compilador-llvm';
 import { detectarModulosImportados, obterBibliotecasParaCompilacao } from './bibliotecas-compilacao';
+import esquemaCompilacao from './esquemas/compilacao';
+
+registrar('compilacao', '@designliquido/delegua-llvm', esquemaCompilacao);
+
+function lerConfiguracaoDelprops(diretorio: string): Record<string, string> {
+    const caminhoConfig = path.join(diretorio, 'configuracao.delprops');
+    if (!fs.existsSync(caminhoConfig)) return {};
+
+    const resultado: Record<string, string> = {};
+    const linhas = fs.readFileSync(caminhoConfig, 'utf-8').split(/\r?\n/);
+    for (const linha of linhas) {
+        const aparado = linha.trim();
+        if (!aparado || aparado.startsWith('#')) continue;
+        const indice = aparado.indexOf('=');
+        if (indice === -1) continue;
+        const chave = aparado.slice(0, indice).trim();
+        const valor = aparado.slice(indice + 1).trim();
+        resultado[chave] = valor;
+    }
+    return resultado;
+}
 
 const LOGO = `
 ╔══════════════════════════════════════════════════════════════════╗
@@ -120,8 +143,12 @@ async function principal() {
     }
 
     const nomeBase = path.basename(arquivoEntrada, path.extname(arquivoEntrada));
-    const nomeBinario = nomeSaida || nomeBase;
     const diretorioSaida = path.dirname(arquivoEntrada);
+
+    const configuracao = lerConfiguracaoDelprops(diretorioSaida);
+    const nomeSaidaConfig = configuracao['compilacao.arquivoSaida'];
+    const nomeBinario = nomeSaida || nomeSaidaConfig || nomeBase;
+    const origemNome = nomeSaida ? '-o' : nomeSaidaConfig ? 'configuracao.delprops' : 'nome do arquivo';
     const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario);
 
     logEtapa('Lendo código fonte');
@@ -129,6 +156,7 @@ async function principal() {
     const codigo = conteudo.split('\n');
     logSucesso(`Arquivo: ${arquivoEntrada}`);
     logInfo(`Linhas: ${codigo.length}`);
+    logInfo(`Nome de saída: ${nomeBinario} (via ${origemNome})`);
 
     const compilador = new CompiladorLLVM();
     const arquivosTemporarios: string[] = [];

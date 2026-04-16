@@ -722,11 +722,136 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoParaCada(declaracao: ParaCada): Promise<any> {
-        await this.executarCorpoParaCada(
-            (declaracao as any).variavelIteracao,
-            (declaracao as any).vetorOuDicionario ?? (declaracao as any).vetor ?? (declaracao as any).iteravel,
-            declaracao.corpo?.declaracoes || []
-        );
+        const variavelIteracao = (declaracao as any).variavelIteracao;
+        const iterable = (declaracao as any).vetorOuDicionario
+            ?? (declaracao as any).vetor
+            ?? (declaracao as any).iteravel;
+        const corpo = declaracao.corpo?.declaracoes || [];
+        const nomeElemento = this.extrairNomesVariaveisIteracao(variavelIteracao)[0] ?? 'elemento';
+
+        const iteravelResolvido = iterable?.aceitar ? await iterable.aceitar(this) : iterable;
+
+        // Fallback para iteráveis JS (caso não seja VariavelEscopo LLVM com variavelLlvm válida).
+        if (!(iteravelResolvido instanceof VariavelEscopo) || !iteravelResolvido.variavelLlvm) {
+            await this.executarCorpoParaCada(variavelIteracao, iterable, corpo);
+            return Promise.resolve();
+        }
+
+        const tipoIterable = iteravelResolvido.tipo ?? 'vetor';
+        const ehTexto = tipoIterable === 'texto';
+        const ehVetor = this.tipoEhVetor(tipoIterable);
+
+        if (!ehTexto && !ehVetor) {
+            // Tipo desconhecido: fallback.
+            await this.executarCorpoParaCada(variavelIteracao, iterable, corpo);
+            return Promise.resolve();
+        }
+
+        const funcaoAtual = this.montador.GetInsertBlock().getParent();
+
+        // Índice i = 0 na entrada da função.
+        const alocIndice = this.criarAllocaNoBlocoEntrada(this.montador.getInt32Ty(), 'para_cada_i');
+        this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(32, 0)), alocIndice);
+        this.contadoresNaoNegativos.add(nomeElemento + '_i');
+
+        // Determina se variavelLlvm já é o valor direto (ex.: argumento de função)
+        // ou um ponteiro para o valor que precisa ser carregado (ex.: alloca).
+        const ehArgumento = iteravelResolvido.variavelLlvm.constructor.name === 'Argument';
+
+        // Tamanho do iterável.
+        let tamanho: llvm.Value;
+        if (ehVetor) {
+            // Para vetor: se for argumento, o valor já é o struct-ptr; senão, carrega.
+            const vetorPtr = ehArgumento
+                ? iteravelResolvido.variavelLlvm
+                : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'vetor_ptr');
+            tamanho = this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr], 'para_cada_tam');
+        } else {
+            // texto: strlen retorna i64; trunca para i32.
+            const textoPtr = ehArgumento
+                ? iteravelResolvido.variavelLlvm
+                : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr');
+            const len64 = this.montador.CreateCall(this.funcaoStrlen, [textoPtr], 'strlen_res');
+            tamanho = this.montador.CreateTrunc(len64, this.montador.getInt32Ty(), 'para_cada_tam');
+        }
+
+        // Blocos.
+        const blocoCabeca = llvm.BasicBlock.Create(this.contexto, 'para_cada_cab', funcaoAtual);
+        const blocoCorpo  = llvm.BasicBlock.Create(this.contexto, 'para_cada_corpo', funcaoAtual);
+        const blocoInc    = llvm.BasicBlock.Create(this.contexto, 'para_cada_inc', funcaoAtual);
+        const blocoApos   = llvm.BasicBlock.Create(this.contexto, 'para_cada_apos', funcaoAtual);
+
+        this.montador.CreateBr(blocoCabeca);
+
+        // Cabeça: i < tamanho.
+        this.montador.SetInsertPoint(blocoCabeca);
+        const iAtual = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_atual');
+        const condicao = this.montador.CreateICmpSLT(iAtual, tamanho, 'para_cada_cond');
+        this.montador.CreateCondBr(condicao, blocoCorpo, blocoApos);
+
+        // Corpo: declara variável de elemento no escopo.
+        this.montador.SetInsertPoint(blocoCorpo);
+
+        let alocElemento: llvm.AllocaInst;
+        let tipoElementoStr: string;
+
+        if (ehVetor) {
+            tipoElementoStr = this.tipoElementoVetor(tipoIterable);
+            const tipoElemLlvm = this.obterTipoLlvm(tipoElementoStr);
+            alocElemento = this.criarAllocaNoBlocoEntrada(tipoElemLlvm, nomeElemento + '_val');
+
+            const iCorpo = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_corpo');
+            const nomeVetor = (iterable as any)?.simbolo?.lexema ?? nomeElemento + '_vec';
+            const ptrElems = this.carregarPonteiroElementosVetor(nomeVetor, iteravelResolvido.variavelLlvm);
+            const gepElem = this.montador.CreateInBoundsGEP(tipoElemLlvm, ptrElems, [iCorpo], 'ptr_elem', true);
+            const valorElem = this.montador.CreateLoad(tipoElemLlvm, gepElem, nomeElemento + '_carregado');
+            this.montador.CreateStore(valorElem, alocElemento);
+        } else {
+            // texto: cada elemento é um char, exposto como ptr para buffer [2 x i8] (char + '\0').
+            tipoElementoStr = 'texto';
+            const tipoBuf = llvm.ArrayType.get(this.montador.getInt8Ty(), 2);
+            // alocBuf: dados do char na pilha (reutilizado a cada iteração).
+            const alocBuf = this.criarAllocaNoBlocoEntrada(tipoBuf as unknown as llvm.Type, nomeElemento + '_buf');
+            // alocElemento: ptr para alocBuf (é o que o corpo carrega como "texto").
+            alocElemento = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), nomeElemento + '_ptr');
+
+            const iCorpo = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_corpo');
+            const textoPtr2 = ehArgumento
+                ? iteravelResolvido.variavelLlvm
+                : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr2');
+            const gepChar = this.montador.CreateInBoundsGEP(this.montador.getInt8Ty(), textoPtr2, [iCorpo], 'ptr_char', true);
+            const charVal = this.montador.CreateLoad(this.montador.getInt8Ty(), gepChar, 'char_val');
+            const idx0 = ConstantInt.get(this.contexto, new APInt(32, 0));
+            const gepBuf0 = this.montador.CreateInBoundsGEP(tipoBuf as unknown as llvm.Type, alocBuf, [idx0, idx0], 'buf0');
+            this.montador.CreateStore(charVal, gepBuf0);
+            const gepBuf1 = this.montador.CreateInBoundsGEP(tipoBuf as unknown as llvm.Type, alocBuf, [idx0, ConstantInt.get(this.contexto, new APInt(32, 1))], 'buf1');
+            this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(8, 0)), gepBuf1);
+            // Armazena endereço do buffer no ptr-alloca exposto ao escopo.
+            this.montador.CreateStore(gepBuf0, alocElemento);
+        }
+
+        const escopoIteracao = new Map<string, VariavelEscopo>();
+        escopoIteracao.set(nomeElemento, new VariavelEscopo(alocElemento as unknown as llvm.Value, undefined, tipoElementoStr));
+        this.pilhaVariaveisEscopo.empilhar(escopoIteracao);
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoInc });
+
+        await this.processarDeclaracoesBloco(corpo);
+
+        this.pilhaBlocosLoop.pop();
+        this.pilhaVariaveisEscopo.removerUltimo();
+
+        this.montador.CreateBr(blocoInc);
+
+        // Incremento: i++.
+        this.montador.SetInsertPoint(blocoInc);
+        const iInc = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_inc');
+        const iMais1 = this.montador.CreateAdd(iInc, ConstantInt.get(this.contexto, new APInt(32, 1)), 'i_prox');
+        this.montador.CreateStore(iMais1, alocIndice);
+        this.montador.CreateBr(blocoCabeca);
+
+        this.montador.SetInsertPoint(blocoApos);
+        this.contadoresNaoNegativos.delete(nomeElemento + '_i');
+
         return Promise.resolve();
     }
 
@@ -2023,7 +2148,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // referência aos argumentos da função só estão disponíveis depois que o 
         // objeto LLVM da função é criado.
         for (const [indice, parametro] of declaracao.funcao.parametros.entries()) {
-            const variavelEscopo = new VariavelEscopo(objetoLlvmFuncao.getArg(indice));
+            const variavelEscopo = new VariavelEscopo(objetoLlvmFuncao.getArg(indice), undefined, parametro.tipoDado);
             mapaVariaveis.set(parametro.nome.lexema, variavelEscopo);
         }
 

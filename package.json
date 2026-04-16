@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@designliquido/delegua": "^1.17.2",
+    "@designliquido/delprops": "^0.0.1",
     "@designliquido/llvm-bindings": "^9.1.0",
     "commander": "^12.1.0"
   },
