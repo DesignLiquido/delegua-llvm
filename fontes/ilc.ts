@@ -120,7 +120,7 @@ async function principal() {
 
     try {
         logEtapa('Gerando LLVM IR');
-        const ir = await compilador.compilar(codigo, true);
+        const ir = await compilador.compilar(codigo, true, diretorioSaida);
         
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
         fs.writeFileSync(irPath, ir);

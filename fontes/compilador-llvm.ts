@@ -40,6 +40,7 @@ import {
     registrarModuloArquivos, registrarModuloCsv, registrarModuloJson,
     registrarModuloHttp, registrarModuloCriptografia, registrarModuloDados,
 } from './registro-modulos';
+import { resolverEMesclarDeclaracoes, ehImportacaoArquivo } from './resolucao-importacoes';
 
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
     lexador: Lexador;
@@ -3760,7 +3761,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      * @param otimizar Quando verdadeiro, roda passes de otimização LLVM no IR (SROA, CSE, instcombine).
      * @returns A representação intermediária do código em LLVM.
      */
-    async compilar(codigo: string[], otimizar: boolean = false): Promise<string> {
+    async compilar(codigo: string[], otimizar: boolean = false, diretorioBase?: string): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
         this.registroClasses = new Map();
         this.indicesPropriedades = new Map();
@@ -3817,12 +3818,44 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             avaliadorSintaticoComTipagem.__ajusteInferenciaMembroAplicado = true;
         }
 
-        const resultadoLexador = this.lexador.mapear(codigo, -1);
+        // Resolve importações de arquivo (.delegua) parseando cada arquivo independentemente
+        // com um AvaliadorSintatico próprio (sem inferência de tipos cruzada entre arquivos).
+        let declaracoesImportadas: Declaracao[] = [];
+        let codigoPrincipal = codigo;
+        const avaliadorComTipagem = this.avaliadorSintatico as any;
+
+        if (diretorioBase) {
+            const registroClasses: { [nome: string]: Declaracao } = {};
+            declaracoesImportadas = await resolverEMesclarDeclaracoes(codigo, diretorioBase, new Set(), registroClasses);
+
+            // analisar() reseta tiposDefinidosEmCodigo logo de início; envolve
+            // inicializarPilhaEscopos (chamada depois do reset, antes do loop de parse)
+            // para injetar as classes importadas no momento certo.
+            const inicializarOriginal = avaliadorComTipagem.inicializarPilhaEscopos?.bind(avaliadorComTipagem);
+            if (inicializarOriginal) {
+                avaliadorComTipagem.inicializarPilhaEscopos = () => {
+                    inicializarOriginal();
+                    Object.assign(avaliadorComTipagem.tiposDefinidosEmCodigo, registroClasses);
+                };
+            }
+
+            // Remove linhas de importação de arquivo do código principal — já foram resolvidas.
+            codigoPrincipal = codigo.map(l => ehImportacaoArquivo(l) ? '' : l);
+        }
+
+        const resultadoLexador = this.lexador.mapear(codigoPrincipal, -1);
         const resultadoAvaliadorSintatico = await this.avaliadorSintatico.analisar(resultadoLexador, -1);
+
+        // Restaura inicializarPilhaEscopos para não afetar chamadas subsequentes.
+        if (diretorioBase) {
+            delete avaliadorComTipagem.inicializarPilhaEscopos;
+        }
 
         if (resultadoAvaliadorSintatico.erros.length > 0) {
             throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);
         }
+
+        const todasDeclaracoes: Declaracao[] = [...declaracoesImportadas, ...resultadoAvaliadorSintatico.declaracoes];
 
         // Detecta módulos importados para registrar apenas as funções necessárias.
         const modulosImportados = new Set<string>();
@@ -3842,7 +3875,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         topoDaPilhaDeVariaveis.set("aleatorioEntre", new VariavelEscopo(this.funcaoAleatorioEntre?.getCallee() as llvm.Value))
 
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
-        const declaracoesClasses = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof Classe);
+        const declaracoesClasses = todasDeclaracoes.filter(d => d instanceof Classe);
         for (const declaracao of declaracoesClasses) {
             await declaracao.aceitar(this);
         }
@@ -3850,12 +3883,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Declarações de funções durante o código.
         // Delégua permite declarar funções a qualquer momento do código, mas o montador LLVM
         // reclama se fizermos isso no ponto de entrada.
-        const declaracoesFuncoes = resultadoAvaliadorSintatico.declaracoes.filter(d => d instanceof FuncaoDeclaracao);
+        const declaracoesFuncoes = todasDeclaracoes.filter(d => d instanceof FuncaoDeclaracao);
         for (const declaracao of declaracoesFuncoes) {
             await declaracao.aceitar(this);
         }
 
-        const outrasDeclaracoes = resultadoAvaliadorSintatico.declaracoes.filter(
+        const outrasDeclaracoes = todasDeclaracoes.filter(
             d => !(d instanceof FuncaoDeclaracao) && !(d instanceof Classe)
         );
         await this.criarPontoEntrada(outrasDeclaracoes);
