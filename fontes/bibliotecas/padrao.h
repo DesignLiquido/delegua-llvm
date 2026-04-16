@@ -10,12 +10,14 @@
 extern "C" {
 #endif
 
+#ifndef _WIN32
 void* __cxa_allocate_exception(size_t thrown_size);
 void  __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*));
 void* __cxa_begin_catch(void* exception_header);
 void  __cxa_end_catch(void);
 
 extern void* _ZTIPc;
+#endif
 
 #ifdef __cplusplus
 }

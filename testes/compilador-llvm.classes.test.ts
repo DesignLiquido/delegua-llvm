@@ -109,6 +109,25 @@ describe('Compilador - Classes', () => {
         expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 
+    it('Instanciação passa vetores para construtor com load do struct', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'classe RetornoLexador {',
+            '    simbolos: texto[]',
+            '    erros: texto[]',
+            '    construtor(simbolos: texto[], erros: texto[]) {',
+            '        isto.simbolos = simbolos',
+            '        isto.erros = erros',
+            '    }',
+            '}',
+            'var retorno = RetornoLexador([], [])'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('call void @RetornoLexador_construtor(ptr');
+        expect(resultado).toContain('load %Vetor');
+    });
+
     it('Chamada de método de instância', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([

@@ -67,6 +67,21 @@ function limparArquivosTemporarios(arquivos: string[]) {
     }
 }
 
+function determinarCaminhoBinario(diretorioSaida: string, nomeBinario: string): string {
+    const extensaoExecutavel = process.platform === 'win32' ? '.exe' : '';
+    const nomeComExtensao = path.extname(nomeBinario) || !extensaoExecutavel
+        ? nomeBinario
+        : `${nomeBinario}${extensaoExecutavel}`;
+
+    let caminhoBinario = path.join(diretorioSaida, nomeComExtensao);
+    if (fs.existsSync(caminhoBinario) && fs.statSync(caminhoBinario).isDirectory()) {
+        const extensaoAlternativa = extensaoExecutavel || '.out';
+        caminhoBinario = path.join(diretorioSaida, `${nomeBinario}${extensaoAlternativa}`);
+    }
+
+    return caminhoBinario;
+}
+
 async function principal() {
     console.log(CORES.magenta + LOGO + CORES.reset);
 
@@ -107,7 +122,7 @@ async function principal() {
     const nomeBase = path.basename(arquivoEntrada, path.extname(arquivoEntrada));
     const nomeBinario = nomeSaida || nomeBase;
     const diretorioSaida = path.dirname(arquivoEntrada);
-    const caminhoBinario = path.join(diretorioSaida, nomeBinario);
+    const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario);
 
     logEtapa('Lendo código fonte');
     const conteudo = fs.readFileSync(arquivoEntrada, 'utf-8');

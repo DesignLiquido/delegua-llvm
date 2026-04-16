@@ -372,6 +372,23 @@ describe('Compilador LLVM - visitantes', () => {
             expect(aceitarCorpo).toHaveBeenCalledTimes(1);
         });
 
+        it('Declaracao ParaCada registra variavel de iteracao no escopo', async () => {
+            compilador.pilhaVariaveisEscopo.empilhar(new Map());
+            const aceitarCorpo = jest.fn().mockImplementation(async () => {
+                expect(compilador.pilhaVariaveisEscopo.obterValor('elemento')).toBeDefined();
+            });
+
+            await expect(
+                compilador.visitarDeclaracaoParaCada({
+                    variavelIteracao: { simbolo: { lexema: 'elemento' } },
+                    vetorOuDicionario: { aceitar: jest.fn().mockResolvedValue(new VariavelEscopo(null as any, undefined, 'texto')) },
+                    corpo: { declaracoes: [{ aceitar: aceitarCorpo }] },
+                } as any)
+            ).resolves.toBeUndefined();
+
+            expect(aceitarCorpo).toHaveBeenCalledTimes(1);
+        });
+
         it('Expressao Para processa inicializador, condicao e corpo', async () => {
             const aceitarInit = jest.fn().mockResolvedValue(undefined);
             const aceitarCondicao = jest.fn().mockResolvedValue(undefined);

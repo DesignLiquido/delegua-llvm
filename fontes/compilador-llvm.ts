@@ -85,6 +85,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoVetorMapearNumero: llvm.FunctionCallee;
     funcaoVetorMapearTexto: llvm.FunctionCallee;
     funcaoVetorTamanho: llvm.FunctionCallee;
+    funcaoStrlen: llvm.FunctionCallee;
     funcaoMalloc: llvm.FunctionCallee;
     pontoPousoAtual: llvm.BasicBlock | null = null;
 
@@ -204,6 +205,70 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Retorna verdadeiro se o tipo representa um vetor (qualquer notação).
     protected tipoEhVetor(tipo: string): boolean {
         return tipo?.startsWith('vetor<') || tipo === 'vetor' || tipo?.endsWith('[]');
+    }
+
+    protected extrairNomesVariaveisIteracao(variavelIteracao: any): string[] {
+        if (!variavelIteracao) {
+            return [];
+        }
+
+        if (variavelIteracao.simbolo?.lexema) {
+            return [variavelIteracao.simbolo.lexema];
+        }
+
+        if (variavelIteracao.primeiro && variavelIteracao.segundo) {
+            return [variavelIteracao.primeiro?.valor, variavelIteracao.segundo?.valor].filter(Boolean);
+        }
+
+        return [];
+    }
+
+    protected criarVariavelEscopoIteracao(valor: any): VariavelEscopo {
+        if (valor instanceof VariavelEscopo) {
+            return valor;
+        }
+
+        if (valor?.variavelLlvm) {
+            return valor as VariavelEscopo;
+        }
+
+        if (valor?.getType) {
+            return new VariavelEscopo(valor as llvm.Value, undefined, 'qualquer');
+        }
+
+        return new VariavelEscopo(null as unknown as llvm.Value, undefined, 'qualquer');
+    }
+
+    protected async executarCorpoParaCada(
+        variavelIteracao: any,
+        vetorOuDicionario: any,
+        corpo: Declaracao[] = []
+    ): Promise<void> {
+        const iteravelResolvido = vetorOuDicionario?.aceitar ? await vetorOuDicionario.aceitar(this) : vetorOuDicionario;
+        const nomesIteracao = this.extrairNomesVariaveisIteracao(variavelIteracao);
+        const iteracoes = Array.isArray(iteravelResolvido) && iteravelResolvido.length > 0
+            ? iteravelResolvido
+            : [iteravelResolvido];
+
+        for (const item of iteracoes) {
+            const escopoIteracao = new Map<string, VariavelEscopo>();
+
+            if (nomesIteracao.length >= 1) {
+                escopoIteracao.set(nomesIteracao[0], this.criarVariavelEscopoIteracao(item));
+            }
+
+            if (nomesIteracao.length >= 2) {
+                escopoIteracao.set(nomesIteracao[1], this.criarVariavelEscopoIteracao(item));
+            }
+
+            this.pilhaVariaveisEscopo.empilhar(escopoIteracao);
+
+            try {
+                await this.aceitarListaDeclaracoes(corpo);
+            } finally {
+                this.pilhaVariaveisEscopo.removerUltimo();
+            }
+        }
     }
 
     // Verifica se um llvm.Type é um ponteiro (PointerType).
@@ -657,9 +722,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoParaCada(declaracao: ParaCada): Promise<any> {
-        // Implementação simples: aceita expressão iterável e corpo.
-        // Implementar iteração real depende do tipo do iterável; aqui apenas percorre o corpo.
-        await this.aceitarListaDeclaracoes(declaracao.corpo.declaracoes);
+        await this.executarCorpoParaCada(
+            (declaracao as any).variavelIteracao,
+            (declaracao as any).vetorOuDicionario ?? (declaracao as any).vetor ?? (declaracao as any).iteravel,
+            declaracao.corpo?.declaracoes || []
+        );
         return Promise.resolve();
     }
 
@@ -1466,19 +1533,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoParaCada(expressao: ParaCadaComoConstruto): Promise<any> {
-        const expressaoTipada = expressao as any;
-        const iteravel = expressaoTipada.vetor ?? expressaoTipada.iteravel ?? [];
-        const iteravelResolvido = iteravel?.aceitar ? await iteravel.aceitar(this) : iteravel;
-        const corpo = expressaoTipada.corpo?.declaracoes || [];
-
-        if (Array.isArray(iteravelResolvido) && iteravelResolvido.length > 0) {
-            for (const _ of iteravelResolvido) {
-                await this.aceitarListaDeclaracoes(corpo);
-            }
-        } else {
-            await this.aceitarListaDeclaracoes(corpo);
-        }
-
+        await this.executarCorpoParaCada(
+            (expressao as any).variavelIteracao,
+            (expressao as any).vetorOuDicionario ?? (expressao as any).vetor ?? (expressao as any).iteravel,
+            (expressao as any).corpo?.declaracoes || []
+        );
         return Promise.resolve();
     }
 
@@ -2749,6 +2808,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     }
                 } else {
                     valor = argResolvido as llvm.Value;
+                    if (valor && this.tipoEhPonteiro(valor.getType()) && !this.tipoEhPonteiro(tipoEsperado)) {
+                        valor = this.montador.CreateLoad(tipoEsperado, valor, 'load_arg_construtor_bruto');
+                    }
                 }
                 // Conversão de tipos: i32 ↔ double conforme assinatura do construtor.
                 // Usa constructor.name em vez de identidade de objeto (===) porque os
@@ -3595,6 +3657,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             true  // variadic
         );
         this.funcaoFormatar = this.modulo.getOrInsertFunction('delegua_formatar', tipoFuncaoFormatar);
+
+        // size_t strlen(const char*)
+        const tipoFuncaoStrlen = llvm.FunctionType.get(
+            llvm.Type.getInt64Ty(this.contexto),
+            [this.montador.getPtrTy()],
+            false
+        );
+        this.funcaoStrlen = this.modulo.getOrInsertFunction('strlen', tipoFuncaoStrlen);
 
         // void* malloc(size_t)
         const tipoFuncaoMalloc = llvm.FunctionType.get(

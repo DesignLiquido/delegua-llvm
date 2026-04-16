@@ -152,8 +152,14 @@ char* delegua_formatar(const char* fmt, ...) {
 }
 
 void falhar(const char *msg) {
+#ifdef _WIN32
+  fputs(msg ? msg : "Falha desconhecida.", stderr);
+  fputc('\n', stderr);
+  abort();
+#else
   size_t tamanho = strlen(msg) + 1;
   void* exc = __cxa_allocate_exception(tamanho);
   memcpy(exc, msg, tamanho);
   __cxa_throw(exc, &_ZTIPc, NULL);
+#endif
 }
