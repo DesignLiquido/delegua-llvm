@@ -277,20 +277,20 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@designliquido/delegua@^1.17.2":
-  version "1.17.2"
-  resolved "https://registry.yarnpkg.com/@designliquido/delegua/-/delegua-1.17.2.tgz#d1316dff988053a55c0eb7dfef440b5b44f218bb"
-  integrity sha512-vZLOctAwqG5WbDBMMOpma03SRAiar02vbfNNF1M7qCJLZqUtg+XVvFq+WjXvp+XiZmn+N9Al1YpPZ7EtCO842w==
+"@designliquido/delegua@^1.18.2":
+  version "1.18.2"
+  resolved "https://registry.yarnpkg.com/@designliquido/delegua/-/delegua-1.18.2.tgz#72f3c4ddc2bfe68d355562e315dbb3f562490aec"
+  integrity sha512-EUltNVRBgTBXaTryIzLJZ0RsIre6YljHapWkC7mkurPpeS95ej8QXs2PymmNCQJAaA3WoFFrP8dJQzAzroEUEw==
   dependencies:
     antlr4ts "^0.5.0-alpha.4"
     browser-process-hrtime "^1.0.0"
     esprima "^4.0.1"
     lodash.clonedeep "^4.5.0"
 
-"@designliquido/delprops@^0.0.1":
-  version "0.0.1"
-  resolved "https://registry.yarnpkg.com/@designliquido/delprops/-/delprops-0.0.1.tgz#9e6108dfd67062eb1649ef4c3741424167c79dc3"
-  integrity sha512-+jOfrR3oayDuuGtCjH9ZtWxz2XhJ5DyHE+z+paiPY2xREjzqEA1NK5eBNoJ834oO9+fjvWLltE45yovx291h8A==
+"@designliquido/delprops@^0.0.2":
+  version "0.0.2"
+  resolved "https://registry.yarnpkg.com/@designliquido/delprops/-/delprops-0.0.2.tgz#ff76449742e6109d44de74113257662195796fcd"
+  integrity sha512-BZ1D+Mil60Sn0XH9y9QjurjN9TpY5qnGhpUx8T7fuqjYU8MI/LDLFDzI9wLzyXRpqh5u7IoKngKS8qftOJf41Q==
 
 "@designliquido/llvm-bindings@^9.1.0":
   version "9.1.0"
@@ -2455,10 +2455,10 @@ type-fest@^4.41.0:
   resolved "https://registry.yarnpkg.com/type-fest/-/type-fest-4.41.0.tgz#6ae1c8e5731273c2bf1f58ad39cbae2c91a46c58"
   integrity sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==
 
-typescript@^6.0.2:
-  version "6.0.2"
-  resolved "https://registry.yarnpkg.com/typescript/-/typescript-6.0.2.tgz#0b1bfb15f68c64b97032f3d78abbf98bdbba501f"
-  integrity sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==
+typescript@^6.0.3:
+  version "6.0.3"
+  resolved "https://registry.yarnpkg.com/typescript/-/typescript-6.0.3.tgz#90251dc007916e972786cb94d74d15b185577d21"
+  integrity sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==
 
 uglify-js@^3.1.4:
   version "3.19.3"
