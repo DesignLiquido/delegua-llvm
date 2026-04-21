@@ -24,13 +24,23 @@ npm i -g yarn
 O script de instalação abaixo supõe uma distribuição Linux compatível com Ubuntu e Debian:
 
 ```sh
+# Bibliotecas necessárias para adicionar o repositório do LLVM e instalar o LLVM
+sudo apt-get update
+sudo apt-get install -y wget gnupg lsb-release ca-certificates cmake zlib1g-dev build-essential python3
+
 # Descarregar o script de instalação do LLVM
 wget https://apt.llvm.org/llvm.sh
-sudo chmod +x llvm.sh
-sudo ./llvm.sh 17
+chmod +x llvm.sh
+sudo ./llvm.sh 22
 
-# Instalar bibliotecas dependentes
-sudo apt-get install cmake zlib1g-dev
+# Verificar se o LLVM foi instalado corretamente
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 220
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 220
+sudo update-alternatives --install /usr/bin/opt opt /usr/bin/opt-22 220
+sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-22 220
+clang --version
+opt --version
+llvm-config --version
 
 # Após clonar este projeto, navegar para o diretório raiz e usar o comando
 yarn

@@ -271,26 +271,29 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
     }
 
-    // Verifica se um llvm.Type é um ponteiro (PointerType).
-    // Usa constructor.name em vez de isPointerTy() porque o binding LLVM só registra
-    // isPointerTy() na classe Type base; chamá-la em subclasses como IntegerType via
+    // Verifica se um `llvm.Type` é um ponteiro (PointerType).
+    // Usa constructor.name em vez de `isPointerTy()` porque o binding LLVM só registra
+    // `isPointerTy()` na classe `Type` base; chamá-la em subclasses como `IntegerType` via
     // herança de protótipo falha com "Illegal invocation" no runtime do Node.js.
     protected tipoEhPonteiro(tipo: llvm.Type): boolean {
         return tipo?.constructor?.name === 'PointerType';
     }
 
-    protected garantirCondicaoI1(valor: llvm.Value, tipoDelegua?: string): llvm.Value {
-        // Double used as condition: compare with 0.0
-        if (tipoDelegua === 'número' || tipoDelegua === 'numero' || valor?.getType()?.constructor?.name === 'Type') {
+    protected garantirCondicaoI1(valor: llvm.Value): llvm.Value {
+        const nomeTipo = valor?.getType()?.constructor?.name;
+        // Double (construtor LLVM 'Type') usado como condição: comparar com 0.0
+        if (nomeTipo === 'Type') {
             const zero = ConstantFP.get(this.contexto, new APFloat(0.0));
             return this.montador.CreateFCmpONE(valor, zero, 'cond_i1');
         }
-        // inteiro (i32) used as condition: compare with 0
-        if (tipoDelegua === 'inteiro') {
-            const zero = ConstantInt.get(this.contexto, new APInt(32, 0, true));
+        if (nomeTipo === 'IntegerType') {
+            // Verifica largura de bit para evitar converter valores já-i1 (comparações produzem i1)
+            const largura: number = (valor.getType() as any).getIntegerBitWidth?.() ?? 1;
+            if (largura === 1) return valor; // já é i1
+            const zero = ConstantInt.get(this.contexto, new APInt(largura, 0, true));
             return this.montador.CreateICmpNE(valor, zero, 'cond_i1');
         }
-        // lógico (i1) and other cases: pass through
+        // ponteiro ou outro: passar adiante
         return valor;
     }
 
@@ -2464,7 +2467,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             declaracao.condicao.tipo,
             this.NOMES_BLOCOS.LOAD_CONDICAO_SE
         );
-        const condicao = this.garantirCondicaoI1(condicaoCarregada, declaracao.condicao.tipo);
+        const condicao = this.garantirCondicaoI1(condicaoCarregada);
 
         const blocoEntao = llvm.BasicBlock.Create(
             this.contexto,

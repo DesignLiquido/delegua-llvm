@@ -13,6 +13,26 @@ echo " Benchmark Suite: Delegua vs C vs Rust"
 echo " Execuções por linguagem: $RUNS"
 echo "========================================"
 
+verificar_dependencias_nativas() {
+    if ! (cd "$ROOT" && node -e "require('@designliquido/llvm-bindings')") > /dev/null 2>&1; then
+        echo ""
+        echo "ERRO: Não foi possível carregar @designliquido/llvm-bindings neste ambiente."
+        echo ""
+        echo "Isso normalmente acontece quando o node_modules foi instalado no Windows"
+        echo "(DLL/PE) e o script está rodando no Linux/WSL (ELF)."
+        echo ""
+        echo "No WSL, execute:"
+        echo "  rm -rf node_modules"
+        echo "  yarn install"
+        echo ""
+        echo "Depois rode novamente:"
+        echo "  ./benchmarks/executar.sh"
+        exit 1
+    fi
+}
+
+verificar_dependencias_nativas
+
 benchmark() {
     local name="$1"
     local cmd="$2"
@@ -49,7 +69,8 @@ run_benchmark() {
     rustc -C opt-level=2 "$DIR/${ARQUIVO}.rs" -o "$OUT/${ARQUIVO}_rust"
     echo "  Rust (-C opt-level=2): ok"
 
-    (cd "$ROOT" && yarn executar "$DIR/${ARQUIVO}.delegua" -o "${ARQUIVO}_delegua") > /dev/null 2>&1
+    echo "  Delegua: compilando..."
+    (cd "$ROOT" && yarn executar "$DIR/${ARQUIVO}.delegua" -o "${ARQUIVO}_delegua")
     mv "$DIR/${ARQUIVO}_delegua" "$OUT/${ARQUIVO}_delegua"
     echo "  Delegua (LLVM -O2): ok"
 

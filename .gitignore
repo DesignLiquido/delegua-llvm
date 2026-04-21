@@ -4,5 +4,9 @@ coverage/
 dist/
 node_modules/
 
+# Claude
 .claude/
 CLAUDE.md
+
+# Builds de Benchmarks
+benchmarks/build/
