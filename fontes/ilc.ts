@@ -62,23 +62,23 @@ const CORES = {
     negrito: '\x1b[1m',
 };
 
-function log(mensagem: string, cor: string = CORES.reset) {
+function taquigrafar(mensagem: string, cor: string = CORES.reset) {
     console.log(`${cor}${mensagem}${CORES.reset}`);
 }
 
-function logEtapa(etapa: string) {
+function taquigrafarEtapa(etapa: string) {
     console.log(`\n${CORES.ciano}${CORES.negrito}▶ ${etapa}${CORES.reset}`);
 }
 
-function logSucesso(mensagem: string) {
+function taquigrafarSucesso(mensagem: string) {
     console.log(`${CORES.verde}  ✓ ${mensagem}${CORES.reset}`);
 }
 
-function logInfo(mensagem: string) {
+function taquigrafarInfo(mensagem: string) {
     console.log(`${CORES.azul}  ℹ ${mensagem}${CORES.reset}`);
 }
 
-function logErro(mensagem: string) {
+function taquigrafarErro(mensagem: string) {
     console.log(`${CORES.vermelho}  ✗ ${mensagem}${CORES.reset}`);
 }
 
@@ -109,75 +109,92 @@ async function principal() {
     console.log(CORES.magenta + LOGO + CORES.reset);
 
     const args = process.argv.slice(2);
-    
-    if (args.length === 0) {
-        log('Uso:', CORES.amarelo);
-        log('  npx @designliquido/delegua-llvm <arquivo.delegua>', CORES.reset);
-        console.log('');
-        log('Opções:', CORES.amarelo);
-        log('  -o <nome>    Nome do binário de saída', CORES.reset);
-        console.log('');
-        process.exit(1);
-    }
 
-    let arquivoEntrada: string = '';
+    let arquivoEntradaIlc: string = '';
     let nomeSaida: string = '';
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '-o' && args[i + 1]) {
             nomeSaida = args[i + 1];
             i++;
-        } else if (!arquivoEntrada) {
-            arquivoEntrada = args[i];
+        } else if (!arquivoEntradaIlc) {
+            arquivoEntradaIlc = args[i];
         }
     }
 
-    if (!arquivoEntrada) {
-        logErro('Arquivo de entrada não especificado');
-        process.exit(1);
-    }
+    const entradaResolvidaCli = arquivoEntradaIlc ? path.resolve(arquivoEntradaIlc) : '';
+    const entradaEhDiretorio = entradaResolvidaCli && fs.existsSync(entradaResolvidaCli) && fs.statSync(entradaResolvidaCli).isDirectory();
+
+    const diretorioProjeto = entradaEhDiretorio
+        ? entradaResolvidaCli
+        : arquivoEntradaIlc
+            ? path.resolve(path.dirname(arquivoEntradaIlc))
+            : process.cwd();
+
+    const configuracao = lerConfiguracaoDelprops(diretorioProjeto);
+    const pontoEntradaConfig = configuracao['compilacao.pontoEntrada'];
+
+    const arquivoEntrada = (!entradaEhDiretorio && arquivoEntradaIlc)
+        || (pontoEntradaConfig ? path.join(diretorioProjeto, pontoEntradaConfig) : '')
+        || path.join(diretorioProjeto, 'inicial.delegua');
+
+    const origemEntrada = (entradaEhDiretorio || !arquivoEntradaIlc)
+        ? (pontoEntradaConfig ? 'configuracao.delprops' : 'padrão')
+        : 'argumento';
 
     if (!fs.existsSync(arquivoEntrada)) {
-        logErro(`Arquivo não encontrado: ${arquivoEntrada}`);
+        if (!arquivoEntradaIlc && !pontoEntradaConfig) {
+            taquigrafar('Uso:', CORES.amarelo);
+            taquigrafar('  npx @designliquido/delegua-llvm <arquivo.delegua>', CORES.reset);
+            console.log('');
+            taquigrafar('Opções:', CORES.amarelo);
+            taquigrafar('  -o <nome>    Nome do binário de saída', CORES.reset);
+            console.log('');
+            taquigrafar('Ou adicione compilacao.pontoEntrada em configuracao.delprops.', CORES.reset);
+            console.log('');
+        } else {
+            taquigrafarErro(`Arquivo não encontrado: ${arquivoEntrada}`);
+        }
         process.exit(1);
     }
 
     const nomeBase = path.basename(arquivoEntrada, path.extname(arquivoEntrada));
     const diretorioSaida = path.dirname(arquivoEntrada);
 
-    const configuracao = lerConfiguracaoDelprops(diretorioSaida);
     const nomeSaidaConfig = configuracao['compilacao.arquivoSaida'];
     const nomeBinario = nomeSaida || nomeSaidaConfig || nomeBase;
     const origemNome = nomeSaida ? '-o' : nomeSaidaConfig ? 'configuracao.delprops' : 'nome do arquivo';
     const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario);
 
-    logEtapa('Lendo código fonte');
+    taquigrafarEtapa('Lendo código fonte');
     const conteudo = fs.readFileSync(arquivoEntrada, 'utf-8');
     const codigo = conteudo.split('\n');
-    logSucesso(`Arquivo: ${arquivoEntrada}`);
-    logInfo(`Linhas: ${codigo.length}`);
-    logInfo(`Nome de saída: ${nomeBinario} (via ${origemNome})`);
+    taquigrafarSucesso(`Arquivo: ${arquivoEntrada} (via ${origemEntrada})`);
+    taquigrafarInfo(`Linhas: ${codigo.length}`);
+    taquigrafarInfo(`Nome de saída: ${nomeBinario} (via ${origemNome})`);
 
     const compilador = new CompiladorLLVM();
     const arquivosTemporarios: string[] = [];
 
     try {
-        logEtapa('Gerando LLVM IR');
+        taquigrafarEtapa('Gerando LLVM IR');
         const ir = await compilador.compilar(codigo, true, diretorioSaida);
         
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
-        fs.writeFileSync(irPath, ir);
+        // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
+        const irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
+        fs.writeFileSync(irPath, irCompativel);
         arquivosTemporarios.push(irPath);
-        logSucesso(`IR gerado`);
+        taquigrafarSucesso(`IR gerado`);
 
         if (process.env.DELEGUA_DEBUG === 'true') {
             console.log('');
-            log('=== LLVM IR ===', CORES.amarelo);
+            taquigrafar('=== LLVM IR ===', CORES.amarelo);
             console.log(ir);
-            log('===============', CORES.amarelo);
+            taquigrafar('===============', CORES.amarelo);
         }
 
-        logEtapa('Compilando bibliotecas nativas');
+        taquigrafarEtapa('Compilando bibliotecas nativas');
         const bibliotecasDir = path.join(__dirname, 'bibliotecas');
         const modulos = detectarModulosImportados(codigo);
         const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir);
@@ -190,33 +207,34 @@ async function principal() {
             execSync(`clang -O2 -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
-            logSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
+            taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
         }
 
-        logEtapa('Linkando binário');
+        taquigrafarEtapa('Linkando binário');
         const objetosStr = arquivosObj.map(o => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
         execSync(`clang++ -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
-        logSucesso(`Binário gerado: ${caminhoBinario}`);
+        taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
-        logEtapa('Limpando arquivos temporários');
+        taquigrafarEtapa('Limpando arquivos temporários');
         limparArquivosTemporarios(arquivosTemporarios);
-        logSucesso(`${arquivosTemporarios.length} arquivos removidos`);
+        taquigrafarSucesso(`${arquivosTemporarios.length} arquivos removidos`);
 
         console.log('');
         console.log(`${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`);
         console.log(`${CORES.verde}${CORES.negrito}  ✓ Compilação concluída com sucesso!${CORES.reset}`);
         console.log(`${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`);
         console.log('');
-        logInfo(`Binário: ${CORES.negrito}${caminhoBinario}${CORES.reset}`);
-        logInfo(`Para executar: ${CORES.negrito}./${path.relative('.', caminhoBinario)}${CORES.reset}`);
+        taquigrafarInfo(`Binário: ${CORES.negrito}${caminhoBinario}${CORES.reset}`);
+        taquigrafarInfo(`Para executar: ${CORES.negrito}./${path.relative('.', caminhoBinario)}${CORES.reset}`);
         console.log('');
 
     } catch (error: any) {
-        logErro('Erro durante compilação:');
+        taquigrafarErro('Erro durante compilação:');
         console.error(error.message || error);
+        if (error.stack) console.error(error.stack);
         
-        logEtapa('Limpando arquivos temporários');
+        taquigrafarEtapa('Limpando arquivos temporários');
         limparArquivosTemporarios(arquivosTemporarios);
         
         process.exit(1);

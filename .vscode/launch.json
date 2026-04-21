@@ -2,6 +2,25 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Delegua > Compilar delegua-delegua",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--require",
+        "ts-node/register"
+      ],
+      "args": [
+        "${workspaceRoot}/fontes/ilc.ts",
+        "D:\\Delegua\\delegua-delegua"
+      ],
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceRoot}/tsconfig.json"
+      },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "cwd": "${workspaceRoot}"
+    },
+    {
       "name": "Delegua > Testes",
       "type": "node",
       "request": "launch",

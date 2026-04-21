@@ -279,6 +279,34 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return tipo?.constructor?.name === 'PointerType';
     }
 
+    protected garantirCondicaoI1(valor: llvm.Value, tipoDelegua?: string): llvm.Value {
+        // Double used as condition: compare with 0.0
+        if (tipoDelegua === 'número' || tipoDelegua === 'numero' || valor?.getType()?.constructor?.name === 'Type') {
+            const zero = ConstantFP.get(this.contexto, new APFloat(0.0));
+            return this.montador.CreateFCmpONE(valor, zero, 'cond_i1');
+        }
+        // inteiro (i32) used as condition: compare with 0
+        if (tipoDelegua === 'inteiro') {
+            const zero = ConstantInt.get(this.contexto, new APInt(32, 0, true));
+            return this.montador.CreateICmpNE(valor, zero, 'cond_i1');
+        }
+        // lógico (i1) and other cases: pass through
+        return valor;
+    }
+
+    protected inferirTipoRetornoCorpo(corpo: any[]): string {
+        if (!corpo) return 'vazio';
+        for (const instr of corpo) {
+            if (instr instanceof Retorna && instr.valor != null) return 'lógico';
+            const sub = (instr as any)?.corpo?.declaracoes ?? (instr as any)?.declaracoes ?? [];
+            if (Array.isArray(sub) && sub.length > 0) {
+                const tipo = this.inferirTipoRetornoCorpo(sub);
+                if (tipo !== 'vazio') return tipo;
+            }
+        }
+        return 'vazio';
+    }
+
     // Guarda um valor em uma VariavelEscopo (ou faz nothing se o destino não for ponteiro).
     // Faz conversões simples entre inteiro/número se necessário.
     protected armazenarEmVariavel(
@@ -419,7 +447,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 tiposParametros.push(this.obterTipoLlvm(parametro.tipoDado));
             }
 
-            const tipoRetornoStr: string = ehConstrutor ? 'vazio' : (metodo.funcao.tipo ?? 'vazio');
+            const tipoRetornoStr: string = ehConstrutor
+                ? 'vazio'
+                : (metodo.funcao.tipo ?? this.inferirTipoRetornoCorpo(metodo.funcao.corpo));
             const tipoRetorno = (tipoRetornoStr === 'vazio')
                 ? llvm.Type.getVoidTy(this.contexto)
                 : this.obterTipoLlvm(tipoRetornoStr);
@@ -447,8 +477,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoRetornoAnteriorMetodo = this.tipoRetornoFuncaoAtual;
             this.tipoRetornoFuncaoAtual = tipoRetornoStr;
             await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
-            if (tipoRetornoStr === 'vazio') {
-                this.montador.CreateRetVoid();
+            const blocoAtualMetodo = this.montador.GetInsertBlock();
+            if (blocoAtualMetodo && !blocoAtualMetodo.getTerminator()) {
+                if (tipoRetornoStr === 'vazio') {
+                    this.montador.CreateRetVoid();
+                } else {
+                    this.montador.CreateUnreachable();
+                }
             }
             this.tipoRetornoFuncaoAtual = tipoRetornoAnteriorMetodo;
             this.pilhaIsto.pop();
@@ -1982,14 +2017,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.getPtrTy();
             case 'lógico':
             case 'logico':
-                return this.montador.getInt32Ty();
+                return llvm.Type.getInt1Ty(this.contexto);
             default:
                 if (this.tipoEhVetor(tipoDelegua)) {
                     return this.tipoEstruturaVetor ?? llvm.PointerType.get(this.contexto, 0);
                 }
-                if (this.registroClasses.has(tipoDelegua)) {
-                    return llvm.PointerType.get(this.contexto, 0);
-                }
+                // Tipos de classe conhecidos ou desconhecidos: ponteiro opaco.
+                return llvm.PointerType.get(this.contexto, 0);
         }
     }
 
@@ -2237,13 +2271,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
                 this.montador.SetInsertPoint(blocoCorpo);
                 await this.processarDeclaracoesBloco(caso.declaracoes);
-                this.montador.CreateBr(blocoApos);
+                if (!this.montador.GetInsertBlock().getTerminator()) {
+                    this.montador.CreateBr(blocoApos);
+                }
             }
 
             if (blocoPadrao) {
                 this.montador.SetInsertPoint(blocoPadrao);
                 await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
-                this.montador.CreateBr(blocoApos);
+                if (!this.montador.GetInsertBlock().getTerminator()) {
+                    this.montador.CreateBr(blocoApos);
+                }
             }
 
             this.montador.SetInsertPoint(blocoApos);
@@ -2284,13 +2322,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
                 this.montador.SetInsertPoint(blocoCorpo);
                 await this.processarDeclaracoesBloco(caso.declaracoes);
-                this.montador.CreateBr(blocoApos);
+                if (!this.montador.GetInsertBlock().getTerminator()) {
+                    this.montador.CreateBr(blocoApos);
+                }
             }
 
             if (blocoPadrao) {
                 this.montador.SetInsertPoint(blocoPadrao);
                 await this.processarDeclaracoesBloco(declaracao.caminhoPadrao.declaracoes);
-                this.montador.CreateBr(blocoApos);
+                if (!this.montador.GetInsertBlock().getTerminator()) {
+                    this.montador.CreateBr(blocoApos);
+                }
             }
 
             this.montador.SetInsertPoint(blocoApos);
@@ -2417,11 +2459,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
         const condicaoRaw = await declaracao.condicao.aceitar(this);
-        const condicao = this.carregarValorSeNecessario(
+        const condicaoCarregada = this.carregarValorSeNecessario(
             condicaoRaw,
             declaracao.condicao.tipo,
             this.NOMES_BLOCOS.LOAD_CONDICAO_SE
         );
+        const condicao = this.garantirCondicaoI1(condicaoCarregada, declaracao.condicao.tipo);
 
         const blocoEntao = llvm.BasicBlock.Create(
             this.contexto,
@@ -2723,11 +2766,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve(this.montador.CreateFRem(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
+    protected operandoEhPonteiroOuTexto(operando: OperandoInterface): boolean {
+        return operando.tipo === 'texto' || this.tipoEhPonteiro(operando.valor?.getType?.());
+    }
+
     protected resolverIgualdade(operandoEsquerdo: OperandoInterface, operandoDireito: OperandoInterface): Promise<llvm.Value> {
         if (this.tipoEhInteiroDelegua(operandoEsquerdo.tipo) && this.tipoEhInteiroDelegua(operandoDireito.tipo)) {
             return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
         }
-
+        if (this.operandoEhPonteiroOuTexto(operandoEsquerdo) || this.operandoEhPonteiroOuTexto(operandoDireito)) {
+            return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
+        }
         return Promise.resolve(this.montador.CreateFCmpOEQ(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
@@ -2822,25 +2871,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'MODULO':
                 return this.resolverModulo(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'MENOR':
-                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente) || this.operandoEhPonteiroOuTexto(operandoEsquerdoResolvido) || this.operandoEhPonteiroOuTexto(operandoDireitoResolvido)) {
                     return Promise.resolve(this.montador.CreateICmpSLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOLT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MENOR_IGUAL':
-                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente) || this.operandoEhPonteiroOuTexto(operandoEsquerdoResolvido) || this.operandoEhPonteiroOuTexto(operandoDireitoResolvido)) {
                     return Promise.resolve(this.montador.CreateICmpSLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOLE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MAIOR':
-                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente) || this.operandoEhPonteiroOuTexto(operandoEsquerdoResolvido) || this.operandoEhPonteiroOuTexto(operandoDireitoResolvido)) {
                     return Promise.resolve(this.montador.CreateICmpSGT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGT(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 }
             case 'MAIOR_IGUAL':
-                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente) || this.operandoEhPonteiroOuTexto(operandoEsquerdoResolvido) || this.operandoEhPonteiroOuTexto(operandoDireitoResolvido)) {
                     return Promise.resolve(this.montador.CreateICmpSGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpOGE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
@@ -2848,7 +2897,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'IGUAL_IGUAL':
                 return this.resolverIgualdade(operandoEsquerdoResolvido, operandoDireitoResolvido);
             case 'DIFERENTE':
-                if (this.tipoEhInteiroDelegua(tipoPrevalente)) {
+                if (this.tipoEhInteiroDelegua(tipoPrevalente) || this.operandoEhPonteiroOuTexto(operandoEsquerdoResolvido) || this.operandoEhPonteiroOuTexto(operandoDireitoResolvido)) {
                     return Promise.resolve(this.montador.CreateICmpNE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
                 } else {
                     return Promise.resolve(this.montador.CreateFCmpONE(operandoEsquerdoResolvido.valor, operandoDireitoResolvido.valor));
@@ -2950,7 +2999,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     if (tipoEsperadoEhDouble && tipoValorEhInt) {
                         valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
                     } else if (tipoEsperadoEhInt && tipoValorEhDouble) {
-                        valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
+                        valor = this.montador.CreateFPToSI(valor, tipoEsperado, 'double_para_int');
                     }
                 }
                 args.push(valor);
@@ -4089,8 +4138,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         await this.criarPontoEntrada(outrasDeclaracoes);
 
         if (llvm.verifyModule(this.modulo)) {
-            console.error('Falha ao verificar módulo.');
-            return;
+            throw new Error('Falha ao verificar módulo LLVM.');
         }
 
         if (otimizar) {

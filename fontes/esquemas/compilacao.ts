@@ -6,6 +6,12 @@ const esquemaCompilacao: DefinicaoPropriedade[] = [
         tipo: 'texto',
         detalhe: 'Nome do arquivo executável gerado pela compilação.',
     },
+    {
+        nome: 'pontoEntrada',
+        tipo: 'texto',
+        detalhe: 'Caminho do arquivo de entrada do projeto, relativo à raiz.',
+        padrao: 'inicial.delegua',
+    },
 ];
 
 export default esquemaCompilacao;
