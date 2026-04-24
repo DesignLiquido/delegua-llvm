@@ -349,3 +349,12 @@ void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida) {
 int delegua_vetor_tamanho(Vetor* v) {
     return v ? v->tamanho : 0;
 }
+
+int delegua_vetor_inclui_texto(Vetor* v, const char* s) {
+    if (!v || !s) return 0;
+    char** elems = (char**)v->ptr;
+    for (int i = 0; i < v->tamanho; i++) {
+        if (elems[i] && strcmp(elems[i], s) == 0) return 1;
+    }
+    return 0;
+}

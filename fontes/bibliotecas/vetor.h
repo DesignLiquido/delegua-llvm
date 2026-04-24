@@ -51,3 +51,6 @@ void delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int), Vetor* saida);
 
 // Mapeia elementos número (double→double) — cria novo vetor em *saida.
 void delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double), Vetor* saida);
+
+// Verifica se o vetor de char* contém a string s (strcmp). Retorna 1 se sim, 0 caso contrário.
+int delegua_vetor_inclui_texto(Vetor* v, const char* s);
