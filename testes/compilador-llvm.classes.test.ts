@@ -186,4 +186,42 @@ describe('Compilador - Classes', () => {
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('declare void @__delegua_tipo_Dado');
     });
+
+    it('isto.método() chamando método definido anteriormente na classe', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'classe Calculadora {',
+            '    dobrar(n: número): número {',
+            '        retorna n * 2',
+            '    }',
+            '    quadruplicar(n: número): número {',
+            '        retorna isto.dobrar(isto.dobrar(n))',
+            '    }',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('define double @Calculadora_dobrar');
+        expect(resultado).toContain('define double @Calculadora_quadruplicar');
+        expect(resultado).toContain('call double @Calculadora_dobrar');
+    });
+
+    it('isto.método() chamando método definido posteriormente na classe', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'classe Calculadora {',
+            '    quadruplicar(n: número): número {',
+            '        retorna isto.dobrar(isto.dobrar(n))',
+            '    }',
+            '    dobrar(n: número): número {',
+            '        retorna n * 2',
+            '    }',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('define double @Calculadora_dobrar');
+        expect(resultado).toContain('define double @Calculadora_quadruplicar');
+        expect(resultado).toContain('call double @Calculadora_dobrar');
+    });
 });

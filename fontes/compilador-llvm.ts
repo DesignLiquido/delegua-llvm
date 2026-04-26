@@ -3597,6 +3597,30 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return alocSaida;
     }
 
+    protected async chamarEncontrar(argumentos: Construto[]): Promise<llvm.Value> {
+        // encontrar(lista, fn) → novo vetor com todos os elementos que satisfazem fn
+        const vetorArg = argumentos[0];
+        const fnArg = argumentos[1];
+
+        const vetorResolvido = await vetorArg.aceitar(this);
+        const vetorPtr: llvm.Value = vetorResolvido instanceof VariavelEscopo
+            ? vetorResolvido.variavelLlvm
+            : vetorResolvido as llvm.Value;
+
+        const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
+        const tipoElem = this.tipoElementoVetor(tipoVetor);
+
+        const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], 'inteiro');
+
+        const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'encontrado');
+        if (tipoElem === 'inteiro') {
+            this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
+        } else {
+            this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
+        }
+        return alocSaida;
+    }
+
     protected async carregarArgumentoNumero(argumento: Construto): Promise<llvm.Value> {
         const resolvido = await argumento.aceitar(this);
         let valor: llvm.Value;
@@ -3631,6 +3655,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // mapear(lista, fn) — função global que mapeia elementos de um vetor
             if (nomeCallee === 'mapear') {
                 return await this.chamarMapear(expressao.argumentos);
+            }
+            // encontrar(lista, fn) — retorna todos os elementos que satisfazem o predicado
+            if (nomeCallee === 'encontrar') {
+                return await this.chamarEncontrar(expressao.argumentos);
             }
             if (nomeCallee === 'maximo' || nomeCallee === 'minimo') {
                 const a = await this.carregarArgumentoInteiro(expressao.argumentos[0]);

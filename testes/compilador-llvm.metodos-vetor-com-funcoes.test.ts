@@ -145,4 +145,42 @@ describe('Compilador - Fase 5: Métodos de Vetor com funções de processamento'
         // ZExt converte i1 para i32
         expect(resultado).toContain('zext i1');
     });
+
+    // ──────────────────────────────────────────────────────────
+    // encontrar — função global (retorna todos os elementos que satisfazem o predicado)
+    // ──────────────────────────────────────────────────────────
+
+    it('encontrar (inteiro) compila lambda e chama delegua_vetor_filtrar_inteiro', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var numeros: inteiro[] = [1, 2, 3, 4, 5]',
+            'var pares: inteiro[] = encontrar(numeros, funcao(n: inteiro): inteiro { retorna n })',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_filtrar_inteiro');
+        expect(resultado).toContain('__lambda_0');
+    });
+
+    it('encontrar (número) compila lambda e chama delegua_vetor_filtrar_numero', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var lista: número[] = [1.0, 2.0, 3.0]',
+            'var resultado: número[] = encontrar(lista, funcao(x: número): inteiro { retorna 1 })',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_filtrar_numero');
+        expect(resultado).toContain('__lambda_0');
+    });
+
+    it('encontrar aceita referência a função nomeada', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao ehPositivo(n: inteiro): inteiro { retorna n }',
+            'var lista: inteiro[] = [1, 2, 3]',
+            'var resultado: inteiro[] = encontrar(lista, ehPositivo)',
+        ]);
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('delegua_vetor_filtrar_inteiro');
+        expect(resultado).toContain('@ehPositivo');
+    });
 });
