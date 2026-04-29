@@ -1,5 +1,5 @@
-import { PilhaInterface } from "@designliquido/delegua";
-import { VariavelEscopo } from "./variavel-escopo";
+import { PilhaInterface } from '@designliquido/delegua';
+import { VariavelEscopo } from './variavel-escopo';
 
 export class PilhaVariaveisEscopo implements PilhaInterface<Map<string, VariavelEscopo>> {
     pilha: Map<string, VariavelEscopo>[];

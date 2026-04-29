@@ -1,6 +1,7 @@
 {
     "cmake.sourceDirectory": "D:/Delegua/delegua-llvm/node_modules/@designliquido/llvm-bindings",
     "chat.tools.terminal.autoApprove": {
-        "yarn build": true
+        "yarn build": true,
+        "yarn tsc": true
     }
 }

@@ -14,9 +14,9 @@ export function registrarModuloFisica(this: CompiladorLLVM): void {
 
     const funcoes = new Map<string, EntradaFuncaoModulo>([
         ['velocidadeMedia', reg('delegua_fis_velocidade_media', ['numero', 'numero'])],
-        ['deltaS',          reg('delegua_fis_delta_s',          ['numero', 'numero'])],
-        ['deltaT',          reg('delegua_fis_delta_t',          ['numero', 'numero'])],
-        ['aceleracao',      reg('delegua_fis_aceleracao',       ['numero', 'numero', 'numero', 'numero'])],
+        ['deltaS', reg('delegua_fis_delta_s', ['numero', 'numero'])],
+        ['deltaT', reg('delegua_fis_delta_t', ['numero', 'numero'])],
+        ['aceleracao', reg('delegua_fis_aceleracao', ['numero', 'numero', 'numero', 'numero'])],
     ]);
 
     this.mapaModulos.set('fisica', funcoes);

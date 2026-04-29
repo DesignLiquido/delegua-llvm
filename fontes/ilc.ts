@@ -92,9 +92,8 @@ function limparArquivosTemporarios(arquivos: string[]) {
 
 function determinarCaminhoBinario(diretorioSaida: string, nomeBinario: string): string {
     const extensaoExecutavel = process.platform === 'win32' ? '.exe' : '';
-    const nomeComExtensao = path.extname(nomeBinario) || !extensaoExecutavel
-        ? nomeBinario
-        : `${nomeBinario}${extensaoExecutavel}`;
+    const nomeComExtensao =
+        path.extname(nomeBinario) || !extensaoExecutavel ? nomeBinario : `${nomeBinario}${extensaoExecutavel}`;
 
     let caminhoBinario = path.join(diretorioSaida, nomeComExtensao);
     if (fs.existsSync(caminhoBinario) && fs.statSync(caminhoBinario).isDirectory()) {
@@ -123,24 +122,29 @@ async function principal() {
     }
 
     const entradaResolvidaCli = arquivoEntradaIlc ? path.resolve(arquivoEntradaIlc) : '';
-    const entradaEhDiretorio = entradaResolvidaCli && fs.existsSync(entradaResolvidaCli) && fs.statSync(entradaResolvidaCli).isDirectory();
+    const entradaEhDiretorio =
+        entradaResolvidaCli && fs.existsSync(entradaResolvidaCli) && fs.statSync(entradaResolvidaCli).isDirectory();
 
     const diretorioProjeto = entradaEhDiretorio
         ? entradaResolvidaCli
         : arquivoEntradaIlc
-            ? path.resolve(path.dirname(arquivoEntradaIlc))
-            : process.cwd();
+          ? path.resolve(path.dirname(arquivoEntradaIlc))
+          : process.cwd();
 
     const configuracao = lerConfiguracaoDelprops(diretorioProjeto);
     const pontoEntradaConfig = configuracao['compilacao.pontoEntrada'];
 
-    const arquivoEntrada = (!entradaEhDiretorio && arquivoEntradaIlc)
-        || (pontoEntradaConfig ? path.join(diretorioProjeto, pontoEntradaConfig) : '')
-        || path.join(diretorioProjeto, 'inicial.delegua');
+    const arquivoEntrada =
+        (!entradaEhDiretorio && arquivoEntradaIlc) ||
+        (pontoEntradaConfig ? path.join(diretorioProjeto, pontoEntradaConfig) : '') ||
+        path.join(diretorioProjeto, 'inicial.delegua');
 
-    const origemEntrada = (entradaEhDiretorio || !arquivoEntradaIlc)
-        ? (pontoEntradaConfig ? 'configuracao.delprops' : 'padrão')
-        : 'argumento';
+    const origemEntrada =
+        entradaEhDiretorio || !arquivoEntradaIlc
+            ? pontoEntradaConfig
+                ? 'configuracao.delprops'
+                : 'padrão'
+            : 'argumento';
 
     if (!fs.existsSync(arquivoEntrada)) {
         if (!arquivoEntradaIlc && !pontoEntradaConfig) {
@@ -179,7 +183,7 @@ async function principal() {
     try {
         taquigrafarEtapa('Gerando LLVM IR');
         const ir = await compilador.compilar(codigo, true, diretorioSaida);
-        
+
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
         const irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
@@ -212,7 +216,7 @@ async function principal() {
         }
 
         taquigrafarEtapa('Linkando binário');
-        const objetosStr = arquivosObj.map(o => `"${o}"`).join(' ');
+        const objetosStr = arquivosObj.map((o) => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
         execSync(`clang -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
@@ -222,22 +226,25 @@ async function principal() {
         taquigrafarSucesso(`${arquivosTemporarios.length} arquivos removidos`);
 
         console.log('');
-        console.log(`${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`);
+        console.log(
+            `${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`
+        );
         console.log(`${CORES.verde}${CORES.negrito}  ✓ Compilação concluída com sucesso!${CORES.reset}`);
-        console.log(`${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`);
+        console.log(
+            `${CORES.verde}${CORES.negrito}════════════════════════════════════════════════════════════════${CORES.reset}`
+        );
         console.log('');
         taquigrafarInfo(`Binário: ${CORES.negrito}${caminhoBinario}${CORES.reset}`);
         taquigrafarInfo(`Para executar: ${CORES.negrito}./${path.relative('.', caminhoBinario)}${CORES.reset}`);
         console.log('');
-
     } catch (error: any) {
         taquigrafarErro('Erro durante compilação:');
         console.error(error.message || error);
         if (error.stack) console.error(error.stack);
-        
+
         taquigrafarEtapa('Limpando arquivos temporários');
         limparArquivosTemporarios(arquivosTemporarios);
-        
+
         process.exit(1);
     }
 }

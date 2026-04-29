@@ -18,11 +18,11 @@ export function registrarModuloEstatistica(this: CompiladorLLVM): void {
     };
 
     const funcoes = new Map<string, EntradaFuncaoModulo>([
-        ['max',         reg1('delegua_est_max')],
-        ['min',         reg1('delegua_est_min')],
-        ['media',       reg1('delegua_est_media')],
-        ['mediana',     reg1('delegua_est_mediana')],
-        ['ve',          reg1('delegua_est_variancia')],
+        ['max', reg1('delegua_est_max')],
+        ['min', reg1('delegua_est_min')],
+        ['media', reg1('delegua_est_media')],
+        ['mediana', reg1('delegua_est_mediana')],
+        ['ve', reg1('delegua_est_variancia')],
         ['covariancia', reg2('delegua_est_covariancia')],
     ]);
 

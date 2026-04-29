@@ -842,7 +842,7 @@ describe('Compilador LLVM - visitantes', () => {
             expect((compiladorLocal as any).avaliadorSintatico.__ajusteInferenciaMembroAplicado).toBe(true);
         });
 
-        it('Compilar retorna indefinido quando verifyModule falha', async () => {
+        it('Compilar lança erro quando verifyModule falha', async () => {
             const compiladorLocal = new CompiladorLLVM();
 
             (compiladorLocal as any).lexador = {
@@ -857,15 +857,10 @@ describe('Compilador LLVM - visitantes', () => {
             (compiladorLocal as any).criarPontoEntrada = jest.fn().mockResolvedValue(undefined);
 
             const spyVerifyModule = jest.spyOn(llvm as any, 'verifyModule').mockReturnValue(true);
-            const spyConsoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-            const resultado = await compiladorLocal.compilar([]);
-
-            expect(resultado).toBeUndefined();
-            expect(spyConsoleError).toHaveBeenCalledWith('Falha ao verificar módulo.');
+            await expect(compiladorLocal.compilar([])).rejects.toThrow('Falha ao verificar módulo LLVM.');
 
             spyVerifyModule.mockRestore();
-            spyConsoleError.mockRestore();
         });
 
         it('Compilar registra erro quando verifyFunction falha no ponto de entrada', async () => {

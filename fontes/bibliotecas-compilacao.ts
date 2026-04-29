@@ -18,10 +18,13 @@ const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([
     ['csv', { arquivosC: ['csv.c'], flagsLink: [] }],
     ['json', { arquivosC: ['json.c'], flagsLink: [] }],
     ['http', { arquivosC: ['http.c'], flagsLink: ['-lcurl'] }],
-    ['criptografia', {
-        arquivosC: ['criptografia.c', 'criptografia-hashes.c', 'criptografia-aes-rsa.c'],
-        flagsLink: ['-lssl', '-lcrypto'],
-    }],
+    [
+        'criptografia',
+        {
+            arquivosC: ['criptografia.c', 'criptografia-hashes.c', 'criptografia-aes-rsa.c'],
+            flagsLink: ['-lssl', '-lcrypto'],
+        },
+    ],
     ['dados', { arquivosC: ['dados.c'], flagsLink: [] }],
 ]);
 

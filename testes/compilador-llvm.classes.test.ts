@@ -105,7 +105,7 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('alloca %Ponto');
+        expect(resultado).toContain('call ptr @malloc(i64');
         expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 

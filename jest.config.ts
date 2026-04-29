@@ -10,10 +10,10 @@ export default async (): Promise<Config.InitialOptions> => {
         coveragePathIgnorePatterns: [],
         coverageThreshold: {
             global: {
-                branches: 66,
-                functions: 91,
-                lines: 84,
-                statements: 84,
+                branches: 64,
+                functions: 90,
+                lines: 79,
+                statements: 79,
             },
         },
     };

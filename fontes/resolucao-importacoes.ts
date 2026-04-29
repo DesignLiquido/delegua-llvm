@@ -124,7 +124,7 @@ export async function resolverEMesclarDeclaracoes(
         // Parseia o arquivo com as classes já descobertas pré-registradas.
         // analisar() reseta tiposDefinidosEmCodigo internamente; usa o mesmo hook de
         // inicializarPilhaEscopos para injetar o registroClasses após o reset.
-        const linhasSemImportacoes = linhasArquivo.map(l => ehImportacaoArquivo(l) ? '' : l);
+        const linhasSemImportacoes = linhasArquivo.map((l) => (ehImportacaoArquivo(l) ? '' : l));
         const hashArquivo = cyrb53(caminhoAbsoluto.toLowerCase());
 
         const lexador = new Lexador();
