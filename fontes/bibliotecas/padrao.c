@@ -1,6 +1,28 @@
 #include "./padrao.h"
 #include <time.h>
 
+#ifdef _WIN32
+#include <wchar.h>
+
+static void _delegua_handler_parametro_invalido(
+    const wchar_t* expressao,
+    const wchar_t* funcao,
+    const wchar_t* arquivo,
+    unsigned int linha,
+    uintptr_t reservado
+) {
+    fprintf(stderr, "\n[DELEGUA ERRO] Parametro invalido no tempo de execucao (CRT).\n");
+    fprintf(stderr, "  Causa provavel: realloc/free de ponteiro invalido.\n");
+    fprintf(stderr, "  O vetor pode ter sido atribuido sem inicializacao adequada.\n");
+    fflush(stderr);
+}
+
+__attribute__((constructor))
+static void _delegua_registrar_handlers(void) {
+    _set_invalid_parameter_handler(_delegua_handler_parametro_invalido);
+}
+#endif
+
 // Utilidades
 
 static void remove_nova_linha(char *s)

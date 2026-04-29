@@ -184,6 +184,7 @@ async function principal() {
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
         const irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
         fs.writeFileSync(irPath, irCompativel);
+        fs.writeFileSync(irPath.replace(/\.ll$/, '_debug.ll'), irCompativel);
         arquivosTemporarios.push(irPath);
         taquigrafarSucesso(`IR gerado`);
 
@@ -213,7 +214,7 @@ async function principal() {
         taquigrafarEtapa('Linkando binário');
         const objetosStr = arquivosObj.map(o => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
-        execSync(`clang++ -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        execSync(`clang -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
         taquigrafarEtapa('Limpando arquivos temporários');

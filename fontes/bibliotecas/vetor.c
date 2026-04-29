@@ -24,6 +24,18 @@ static int comparar_numero(const void* a, const void* b) {
 // ───────────────────────────────────────────────────────────
 
 int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem) {
+    if (!v || !elem || tam_elem <= 0) {
+        fprintf(stderr, "[DELEGUA ERRO] delegua_vetor_adicionar: argumento invalido"
+                        " (v=%p, elem=%p, tam_elem=%d)\n", (void*)v, elem, tam_elem);
+        fflush(stderr);
+        return v ? v->tamanho : -1;
+    }
+    if (v->tamanho < 0) {
+        fprintf(stderr, "[DELEGUA ERRO] delegua_vetor_adicionar: vetor corrompido"
+                        " (tamanho=%d)\n", v->tamanho);
+        fflush(stderr);
+        return -1;
+    }
     int novo_tam = v->tamanho + 1;
     /* Redimensiona o buffer existente, evitando vazamento de memória */
     void* novo_ptr = realloc(v->ptr, (size_t)novo_tam * (size_t)tam_elem);
