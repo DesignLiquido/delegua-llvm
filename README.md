@@ -130,12 +130,29 @@ O binário gerado ficará no mesmo diretório do arquivo de entrada, com o mesmo
 | Opção | Descrição |
 |-------|-----------|
 | `-o <nome>` | Define o nome do binário de saída |
+| `-g`, `--debug` | Emite símbolos de depuração DWARF no binário |
 
 Exemplo com nome de saída personalizado:
 
 ```sh
 npx @designliquido/delegua-llvm meu_programa.delegua -o saida
 ```
+
+### Depuração simbólica
+
+A flag `-g` (ou `--debug`) ativa a emissão de metadados [DWARF](https://dwarfstd.org/) no arquivo `.ll` gerado e passa `-g` para o Clang ao compilar o binário final. Com isso, depuradores como `gdb` e `lldb` conseguem relacionar as instruções do binário ao código-fonte `.delegua` original (nomes de variáveis, funções e números de linha).
+
+```sh
+npx @designliquido/delegua-llvm -g meu_programa.delegua
+gdb ./meu_programa
+```
+
+```
+(gdb) break meu_programa.delegua:10
+(gdb) run
+```
+
+> **Nota:** O uso de `-g` desativa a otimização `-O2` no binário gerado. Para produção, omita a flag.
 
 ### Variáveis de ambiente
 

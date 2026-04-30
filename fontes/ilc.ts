@@ -136,6 +136,7 @@ async function principal() {
 
     const configuracao = lerConfiguracaoDelprops(diretorioProjeto);
     const pontoEntradaConfig = configuracao['compilacao.pontoEntrada'];
+    emitirDebug = emitirDebug || configuracao['compilacao.emitirDebug'] === 'verdadeiro';
 
     const arquivoEntrada =
         (!entradaEhDiretorio && arquivoEntradaIlc) ||

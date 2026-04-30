@@ -12,6 +12,12 @@ const esquemaCompilacao: DefinicaoPropriedade[] = [
         detalhe: 'Caminho do arquivo de entrada do projeto, relativo à raiz.',
         padrao: 'inicial.delegua',
     },
+    {
+        nome: 'emitirDebug',
+        tipo: 'logico',
+        detalhe: 'Emite símbolos de depuração DWARF no binário gerado. Equivalente à flag -g na linha de comando.',
+        padrao: 'falso',
+    },
 ];
 
 export default esquemaCompilacao;
