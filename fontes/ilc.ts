@@ -111,11 +111,14 @@ async function principal() {
 
     let arquivoEntradaIlc: string = '';
     let nomeSaida: string = '';
+    let emitirDebug: boolean = false;
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '-o' && args[i + 1]) {
             nomeSaida = args[i + 1];
             i++;
+        } else if (args[i] === '--debug' || args[i] === '-g') {
+            emitirDebug = true;
         } else if (!arquivoEntradaIlc) {
             arquivoEntradaIlc = args[i];
         }
@@ -153,6 +156,7 @@ async function principal() {
             console.log('');
             taquigrafar('Opções:', CORES.amarelo);
             taquigrafar('  -o <nome>    Nome do binário de saída', CORES.reset);
+            taquigrafar('  -g, --debug  Emite símbolos de depuração DWARF no binário', CORES.reset);
             console.log('');
             taquigrafar('Ou adicione compilacao.pontoEntrada em configuracao.delprops.', CORES.reset);
             console.log('');
@@ -182,7 +186,14 @@ async function principal() {
 
     try {
         taquigrafarEtapa('Gerando LLVM IR');
-        const ir = await compilador.compilar(codigo, true, diretorioSaida);
+        const ir = await compilador.compilar(
+            codigo,
+            !emitirDebug,
+            diretorioSaida,
+            path.basename(arquivoEntrada),
+            path.dirname(arquivoEntrada),
+            emitirDebug
+        );
 
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
@@ -218,7 +229,8 @@ async function principal() {
         taquigrafarEtapa('Linkando binário');
         const objetosStr = arquivosObj.map((o) => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
-        execSync(`clang -O2 "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        const flagDebugClang = emitirDebug ? ' -g' : '';
+        execSync(`clang -O2${flagDebugClang} "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
         taquigrafarEtapa('Limpando arquivos temporários');

@@ -255,6 +255,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Bloco básico onde o cache é válido.
     protected cacheBlocoAtual: llvm.BasicBlock | null = null;
 
+    // Metadados de depuração DWARF (populados apenas quando emitirDebug=true em compilar()).
+    protected construtorDebug: llvm.DIBuilder | null = null;
+    protected arquivoDebug: llvm.DIFile | null = null;
+    protected unidadeCompilacaoDebug: llvm.DICompileUnit | null = null;
+    // Pilha de subprogramas ativos — o topo é o escopo de depuração corrente.
+    protected pilhaSubprogramas: llvm.DISubprogram[] = [];
+
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
         ['longo', '%ld'],
@@ -519,6 +526,129 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return resolvido as llvm.Value | VariavelEscopo;
     }
 
+    // ─── Auxiliares de depuração DWARF ───────────────────────────────────────
+
+    // Mapeia o nome de tipo Delégua para o DIBasicType correspondente.
+    protected obterTipoDebug(nomeTipo: string): llvm.DIBasicType | null {
+        if (!this.construtorDebug) return null;
+        switch (nomeTipo) {
+            case 'inteiro':
+                return this.construtorDebug.createBasicType('inteiro', 32, llvm.dwarf.TypeKind.DW_ATE_signed);
+            case 'longo':
+                return this.construtorDebug.createBasicType('longo', 64, llvm.dwarf.TypeKind.DW_ATE_signed);
+            case 'número':
+                return this.construtorDebug.createBasicType('numero', 64, llvm.dwarf.TypeKind.DW_ATE_float);
+            case 'lógico':
+                return this.construtorDebug.createBasicType('logico', 1, llvm.dwarf.TypeKind.DW_ATE_boolean);
+            case 'texto':
+                return this.construtorDebug.createBasicType('texto', 64, llvm.dwarf.TypeKind.DW_ATE_address);
+            default:
+                return null;
+        }
+    }
+
+    // Define a localização de depuração atual para a próxima instrução emitida.
+    // Não faz nada se não há subprograma ativo ou debug desabilitado.
+    protected definirLocalizacaoDebug(linha: number, coluna: number): void {
+        if (!this.construtorDebug || this.pilhaSubprogramas.length === 0) return;
+        const escopoAtual = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
+        const loc = llvm.DILocation.get(this.contexto, linha, coluna, escopoAtual);
+        this.montador.SetCurrentDebugLocation(loc);
+    }
+
+    // Cria um DISubprogram e o associa a uma Function LLVM.
+    // Empilha o subprograma para uso nas instruções internas.
+    protected criarSubprogramaDebug(
+        funcaoLlvm: llvm.Function,
+        nome: string,
+        linha: number
+    ): void {
+        if (!this.construtorDebug || !this.arquivoDebug) return;
+        const tipoSubrotina = this.construtorDebug.createSubroutineType(
+            this.construtorDebug.getOrCreateTypeArray([null])
+        );
+        const spFlags = llvm.DISubprogram.DISPFlags.SPFlagDefinition;
+        const diFlags = llvm.DINode.DIFlags.FlagPrototyped;
+        const subprograma = this.construtorDebug.createFunction(
+            this.arquivoDebug,
+            nome,
+            nome,
+            this.arquivoDebug,
+            linha,
+            tipoSubrotina,
+            linha,
+            diFlags,
+            spFlags
+        );
+        funcaoLlvm.setSubprogram(subprograma);
+        this.pilhaSubprogramas.push(subprograma);
+    }
+
+    // Finaliza o subprograma no topo da pilha e o remove.
+    protected finalizarSubprogramaDebug(): void {
+        if (!this.construtorDebug) return;
+        const sp = this.pilhaSubprogramas.pop();
+        if (sp) this.construtorDebug.finalizeSubprogram(sp);
+    }
+
+    // Emite llvm.dbg.declare para uma variável local alocada via alloca.
+    protected emitirDeclaracaoVariavelDebug(
+        alocacao: llvm.Value,
+        nome: string,
+        tipo: string,
+        linha: number
+    ): void {
+        if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
+        const sp = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
+        const tipoDebug = this.obterTipoDebug(tipo);
+        const varDebug = this.construtorDebug.createAutoVariable(
+            sp,
+            nome,
+            this.arquivoDebug,
+            linha,
+            tipoDebug
+        );
+        const loc = llvm.DILocation.get(this.contexto, linha, 0, sp);
+        this.construtorDebug.insertDeclare(
+            alocacao,
+            varDebug,
+            this.construtorDebug.createExpression(),
+            loc,
+            this.montador.GetInsertBlock()
+        );
+    }
+
+    // Emite llvm.dbg.declare para um parâmetro de função (argNo é 1-based).
+    protected emitirDeclaracaoParametroDebug(
+        alocacao: llvm.Value,
+        nome: string,
+        tipo: string,
+        linha: number,
+        argNo: number
+    ): void {
+        if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
+        const sp = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
+        const tipoDebug = this.obterTipoDebug(tipo);
+        const varDebug = this.construtorDebug.createParameterVariable(
+            sp,
+            nome,
+            argNo,
+            this.arquivoDebug,
+            linha,
+            tipoDebug
+        );
+        const loc = llvm.DILocation.get(this.contexto, linha, 0, sp);
+        this.construtorDebug.insertDeclare(
+            alocacao,
+            varDebug,
+            this.construtorDebug.createExpression(),
+            loc,
+            this.montador.GetInsertBlock()
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
      * Implementações úteis padrão para visitantes que eram stubs.
      *
@@ -690,6 +820,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoVariavel =
             declaracao.tipo === 'qualquer' ? this.resolverTipoConstruto(declaracao.inicializador) : declaracao.tipo;
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
+        const linhaConst = (declaracao.simbolo as any).linha ?? 0;
+        this.definirLocalizacaoDebug(linhaConst, 0);
         const aloc = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
         let valor = await declaracao.inicializador.aceitar(this);
 
@@ -705,6 +837,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         this.montador.CreateStore(valor, aloc);
+        this.emitirDeclaracaoVariavelDebug(aloc, declaracao.simbolo.lexema, tipoVariavel, linhaConst);
 
         const topo = this.pilhaVariaveisEscopo.topoDaPilha();
         const variavelEscopo = new VariavelEscopo(aloc, declaracao, tipoVariavel, true);
@@ -2105,6 +2238,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoRetornar(declaracao: Retorna): Promise<any> {
+        const linhaRetorna = declaracao.linha ?? 0;
+        this.definirLocalizacaoDebug(linhaRetorna, 0);
         if (!declaracao.valor) {
             this.montador.CreateRetVoid();
             return Promise.resolve();
@@ -2555,6 +2690,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.NoUnwind));
         objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.WillReturn));
 
+        // Metadados de depuração: cria DISubprogram para esta função.
+        const linhaFuncao = (declaracao.simbolo as any).linha ?? 0;
+        this.criarSubprogramaDebug(objetoLlvmFuncao, declaracao.simbolo.lexema, linhaFuncao);
+
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
         // Aqui temos que iterar de novo os parâmetros da função, dado que a
         // referência aos argumentos da função só estão disponíveis depois que o
@@ -2576,6 +2715,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
         this.pilhaVariaveisEscopo.removerUltimo();
 
+        this.finalizarSubprogramaDebug();
         this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
     }
 
@@ -2711,6 +2851,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
+        this.definirLocalizacaoDebug((declaracao as any).linha ?? 0, 0);
         const argumentosResolvidos: llvm.Value[] = [];
 
         const formatosTexto: string[] = [];
@@ -2745,6 +2886,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoPara(declaracao: Para): Promise<Promise<any> | void> {
+        this.definirLocalizacaoDebug((declaracao as any).linha ?? 0, 0);
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
         // Detecta contadores garantidamente não-negativos para habilitar flags GEP nuw/nusw.
@@ -2808,6 +2950,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoSe(declaracao: Se): Promise<any> {
+        this.definirLocalizacaoDebug((declaracao as any).linha ?? 0, 0);
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
         const condicaoRaw = await declaracao.condicao.aceitar(this);
@@ -2854,6 +2997,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (tipoVariavel === 'qualquer') {
             tipoVariavel = this.resolverTipoConstruto(declaracao.inicializador);
         }
+        this.definirLocalizacaoDebug((declaracao.simbolo as any).linha ?? 0, 0);
 
         // Importação de módulo: var mod = importar('nome') → armazena sentinela sem alloca.
         if (declaracao.inicializador?.constructor?.name === 'ImportarComoConstruto') {
@@ -2952,6 +3096,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+        this.emitirDeclaracaoVariavelDebug(
+            inicializacaoVariavel,
+            declaracao.simbolo.lexema,
+            tipoVariavel,
+            (declaracao.simbolo as any).linha ?? 0
+        );
 
         const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
         const variavelEscopo = new VariavelEscopo(inicializacaoVariavel, declaracao, tipoVariavel);
@@ -3969,6 +4119,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.modulo
         );
 
+        // Metadados de depuração: cria DISubprogram para este lambda.
+        const linhaLambda = (construto as any).linha ?? 0;
+        this.criarSubprogramaDebug(funcaoLlvm, nomeLambda, linhaLambda);
+
         // Escopo: mapeia parâmetros para os argumentos LLVM da função.
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map();
         for (const [i, param] of construto.parametros.entries()) {
@@ -3985,6 +4139,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         await this.visitarCorpoFuncao(construto, funcaoLlvm);
         this.pilhaVariaveisEscopo.removerUltimo();
 
+        this.finalizarSubprogramaDebug();
         this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
         this.montador.SetInsertPoint(blocoAnterior);
 
@@ -4700,7 +4855,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      * @param otimizar Quando verdadeiro, roda passes de otimização LLVM no IR (SROA, CSE, instcombine).
      * @returns A representação intermediária do código em LLVM.
      */
-    async compilar(codigo: string[], otimizar: boolean = false, diretorioBase?: string): Promise<string> {
+    async compilar(
+        codigo: string[],
+        otimizar: boolean = false,
+        diretorioBase?: string,
+        nomeArquivoFonte?: string,
+        diretorioArquivoFonte?: string,
+        emitirDebug: boolean = false
+    ): Promise<string> {
         this.pilhaVariaveisEscopo = new PilhaVariaveisEscopo();
         this.registroClasses = new Map();
         this.indicesPropriedades = new Map();
@@ -4731,6 +4893,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.contadorLambda = 0;
         this.cachePointerVetor = new Map();
         this.tipoRetornoFuncaoAtual = null;
+        this.pilhaSubprogramas = [];
+
+        // Inicializa metadados DWARF quando a emissão de debug foi solicitada.
+        this.construtorDebug = null;
+        this.arquivoDebug = null;
+        this.unidadeCompilacaoDebug = null;
+        if (emitirDebug && nomeArquivoFonte) {
+            this.construtorDebug = new llvm.DIBuilder(this.modulo);
+            this.arquivoDebug = this.construtorDebug.createFile(
+                nomeArquivoFonte,
+                diretorioArquivoFonte ?? '.'
+            );
+            this.unidadeCompilacaoDebug = this.construtorDebug.createCompileUnit(
+                llvm.dwarf.SourceLanguage.DW_LANG_C,
+                this.arquivoDebug,
+                'delegua-llvm',
+                otimizar,
+                '',
+                0
+            );
+            this.modulo.addModuleFlag(
+                llvm.Module.ModFlagBehavior.Warning,
+                'Debug Info Version',
+                llvm.LLVMConstants.DEBUG_METADATA_VERSION
+            );
+        }
 
         const avaliadorSintaticoComTipagem = this.avaliadorSintatico as unknown as AvaliadorSintaticoComTipagem;
         if (!avaliadorSintaticoComTipagem.tiposDefinidosPorBibliotecas) {
@@ -4857,6 +5045,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             passesFuncao.addInstCombinePass();
             passesModulo.addFunctionPasses(passesFuncao);
             (passesModulo as unknown as PassesModuloComRun).run(this.modulo, this.maquinaAlvo);
+        }
+
+        // Finaliza os metadados DWARF antes de imprimir o IR.
+        if (this.construtorDebug) {
+            this.construtorDebug.finalize();
         }
 
         return this.modulo.print();
