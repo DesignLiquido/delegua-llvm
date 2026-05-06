@@ -54,7 +54,6 @@ import {
     VarMultiplo,
     Vetor,
     Declaracao,
-    Construto,
     AcessoMetodo,
     AcessoPropriedade,
     ArgumentoReferenciaFuncao,
@@ -77,13 +76,13 @@ import {
     Extensao,
     InterfaceDeclaracao,
 } from '@designliquido/delegua';
-import { VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
+import { ConstrutoInterface, VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
 import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from '@designliquido/llvm-bindings';
 
 import { PilhaVariaveisEscopo } from './pilha-variaveis-escopo';
 import { VariavelEscopo } from './variavel-escopo';
-import { OperandoInterface } from './interfaces';
+import { AcessoIndiceOuMatrizDialeto, AcessoNomeavel, AvaliadorSintaticoComTipagem, DeclaracaoComCorpoPossivel, DicionarioDialeto, ExtensaoDialeto, ListaCompreensaoDialeto, OperandoInterface, ParaCadaComoConstrutoDialeto, PassesModuloComRun, TipoDeDialeto, TuplaDialeto, ValorComNomeOpcional } from './interfaces';
 
 import { EntradaFuncaoModulo } from './interfaces/entrada-funcao-modulo';
 import {
@@ -98,87 +97,6 @@ import {
     registrarModuloDados,
 } from './registro-modulos';
 import { resolverEMesclarDeclaracoes, ehImportacaoArquivo } from './resolucao-importacoes';
-
-interface DeclaracaoComCorpoPossivel {
-    corpo?: { declaracoes?: Declaracao[] };
-    declaracoes?: Declaracao[];
-}
-
-interface AcessoIndiceOuMatrizDialeto {
-    entidadeChamada?: Construto;
-    entidade?: Construto;
-    variavel?: Construto;
-    objeto?: Construto;
-    indice?: Construto;
-    índice?: Construto;
-    indicePrimario?: Construto;
-    indiceLinha?: Construto;
-    linha?: Construto;
-    indiceSecundario?: Construto;
-    indiceColuna?: Construto;
-    coluna?: Construto;
-    valor?: Construto;
-}
-
-interface AcessoNomeavel {
-    simbolo?: { lexema?: string };
-    nomeMetodo?: string;
-    nomePropriedade?: string;
-    entidadeChamada?: Construto;
-    entidade?: Construto;
-    variavel?: Construto;
-    objeto?: Construto;
-}
-
-interface DicionarioDialeto {
-    entradas?: Array<{ chave?: Construto; valor?: Construto }>;
-    chaves?: Construto[];
-    valores?: Construto[];
-}
-
-interface TuplaDialeto {
-    valores?: Construto[];
-    elementos?: Construto[];
-}
-
-interface TipoDeDialeto {
-    valor?: Construto;
-    expressao?: Construto;
-    argumento?: Construto;
-}
-
-interface ExtensaoDialeto {
-    metodos?: Declaracao[];
-    membros?: Declaracao[];
-}
-
-interface ListaCompreensaoDialeto {
-    lista?: Construto;
-    iteravel?: Construto;
-    expressao?: Construto;
-}
-
-interface ParaCadaComoConstrutoDialeto {
-    vetor?: Construto;
-    iteravel?: Construto;
-}
-
-interface ValorComNomeOpcional {
-    getName?: () => string;
-    toString(): string;
-}
-
-interface PassesModuloComRun {
-    run(modulo: llvm.Module, maquinaAlvo: llvm.TargetMachine): void;
-}
-
-interface AvaliadorSintaticoComTipagem {
-    tiposDefinidosPorBibliotecas?: Record<string, unknown>;
-    __ajusteInferenciaMembroAplicado?: boolean;
-    logicaComumInferenciaTiposAcessoMetodoOuPropriedade?: (entidadeChamada: unknown) => unknown;
-    tiposDefinidosEmCodigo?: Record<string, Declaracao>;
-    inicializarPilhaEscopos?: () => void;
-}
 
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
     lexador: Lexador;
@@ -327,7 +245,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     // Retorna verdadeiro se o incremento do laço garante que a variável
     // de nome `nomeVariavel` nunca decresce (ex.: i++, i += 1).
-    protected incrementoEhPositivo(incrementar: Construto | null | undefined, nomeVariavel: string): boolean {
+    protected incrementoEhPositivo(incrementar: ConstrutoInterface | null | undefined, nomeVariavel: string): boolean {
         if (!incrementar) return false;
         // Unário pós/pré-incremento: i++  ou  ++i
         if (incrementar instanceof Unario) {
@@ -506,13 +424,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     // Conveniência para aceitar (resolver) um construto e carregar seu valor se for VariavelEscopo.
     protected async aceitarECarregar(
-        possivelVariavel: Construto | VariavelEscopo | llvm.Value,
+        possivelVariavel: ConstrutoInterface | VariavelEscopo | llvm.Value,
         tipo?: string,
         nomeLoad?: string
     ): Promise<llvm.Value | VariavelEscopo> {
         let resolvido: unknown;
         if (possivelVariavel && 'aceitar' in possivelVariavel && typeof possivelVariavel.aceitar === 'function') {
-            resolvido = await (possivelVariavel as Construto).aceitar(this);
+            resolvido = await (possivelVariavel as ConstrutoInterface).aceitar(this);
         } else {
             resolvido = possivelVariavel;
         }
@@ -1067,7 +985,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Quando o iterável resolve para um llvm.Value bruto (ex.: acesso a propriedade de classe),
         // tenta inferir o tipo via AST. O gepPtr já é o struct-ptr direto — armazena sem indireção extra.
         if (!(iteravelResolvido instanceof VariavelEscopo) && this.ehValorLlvm(iteravelResolvido)) {
-            const tipoInferido = declaracao.vetorOuDicionario ? this.resolverTipoConstruto(declaracao.vetorOuDicionario as Construto) : null;
+            const tipoInferido = declaracao.vetorOuDicionario ? this.resolverTipoConstruto(declaracao.vetorOuDicionario as ConstrutoInterface) : null;
             if (tipoInferido && this.tipoEhVetor(tipoInferido)) {
                 iteravelResolvido = new VariavelEscopo(iteravelResolvido as llvm.Value, undefined, tipoInferido);
             }
@@ -1499,7 +1417,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // infere o tipo via AST e cria VariavelEscopo via alloca temporária.
         let alvoParaIndice: any = alvoResolvido;
         if (!(alvoResolvido instanceof VariavelEscopo) && this.ehValorLlvm(alvoResolvido)) {
-            const tipoInferido = alvoBruto ? this.resolverTipoConstruto(alvoBruto as Construto) : null;
+            const tipoInferido = alvoBruto ? this.resolverTipoConstruto(alvoBruto as ConstrutoInterface) : null;
             if (tipoInferido && (tipoInferido === 'texto' || this.tipoEhVetor(tipoInferido))) {
                 const alocTmp = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'idx_alvo_tmp');
                 this.montador.CreateStore(alvoResolvido as llvm.Value, alocTmp);
@@ -1669,7 +1587,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Acesso encadeado (ex.: isto.tipos.E): o sub-objeto resolveu para llvm.Value sem tipo.
         // Infere nomeClasse a partir do AST do sub-objeto.
         if (!nomeClasse) {
-            const tipoInferido = this.resolverTipoConstruto(expressao.objeto as Construto);
+            const tipoInferido = this.resolverTipoConstruto(expressao.objeto as ConstrutoInterface);
             if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
         }
 
@@ -1718,7 +1636,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Acesso encadeado: infere nomeClasse a partir do AST quando não resolvida pelo escopo.
         if (!nomeClasse) {
-            const tipoInferido = this.resolverTipoConstruto(expressao.objeto as Construto);
+            const tipoInferido = this.resolverTipoConstruto(expressao.objeto as ConstrutoInterface);
             if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
         }
 
@@ -1747,10 +1665,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoArgumentoReferenciaFuncao(expressao: ArgumentoReferenciaFuncao): Promise<any> {
-        const alvo = (expressao as unknown as { valor?: Construto; argumento?: Construto; referencia?: Construto })
+        const alvo = (expressao as unknown as { valor?: ConstrutoInterface; argumento?: ConstrutoInterface; referencia?: ConstrutoInterface })
             .valor ??
-            (expressao as unknown as { valor?: Construto; argumento?: Construto; referencia?: Construto }).argumento ??
-            (expressao as unknown as { valor?: Construto; argumento?: Construto; referencia?: Construto }).referencia;
+            (expressao as unknown as { valor?: ConstrutoInterface; argumento?: ConstrutoInterface; referencia?: ConstrutoInterface }).argumento ??
+            (expressao as unknown as { valor?: ConstrutoInterface; argumento?: ConstrutoInterface; referencia?: ConstrutoInterface }).referencia;
         if (alvo?.aceitar) {
             return await alvo.aceitar(this);
         }
@@ -2103,7 +2021,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoFormatacaoEscrita(declaracao: FormatacaoEscrita): Promise<any> {
-        const declaracaoTipada = declaracao as unknown as { expressao?: Construto; valor?: Construto; casasDecimais?: number };
+        const declaracaoTipada = declaracao as unknown as { expressao?: ConstrutoInterface; valor?: ConstrutoInterface; casasDecimais?: number };
         const expressaoBase = declaracaoTipada.expressao ?? declaracaoTipada.valor;
         const valorResolvido = expressaoBase?.aceitar ? await expressaoBase.aceitar(this) : expressaoBase;
 
@@ -2156,7 +2074,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     async visitarExpressaoListaCompreensao(listaCompreensao: ListaCompreensao): Promise<any> {
         const listaDialeto = listaCompreensao as unknown as ListaCompreensaoDialeto;
-        const origem: Construto | unknown[] =
+        const origem: ConstrutoInterface | unknown[] =
             listaCompreensao.paraCada?.vetorOuDicionario ??
             listaDialeto.lista ??
             listaDialeto.iteravel ??
@@ -2614,7 +2532,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected async construirComparacaoCaso(
         valorEscolha: llvm.Value,
         tipoEscolha: string,
-        condicoes: Construto[]
+        condicoes: ConstrutoInterface[]
     ): Promise<llvm.Value> {
         let comparacaoFinal: llvm.Value = null;
 
@@ -3114,7 +3032,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return await expressao.expressao.aceitar(this);
     }
 
-    resolverTipoConstruto(construto: Construto): string {
+    resolverTipoConstruto(construto: ConstrutoInterface): string {
         switch (construto.constructor) {
             case Leia:
                 return 'texto';
@@ -3146,7 +3064,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     const acesso = chamada.entidadeChamada as AcessoMetodoOuPropriedade;
                     const acessoNomeavel = acesso as unknown as AcessoNomeavel;
                     const nomeMetodo = acessoNomeavel.simbolo?.lexema ?? acessoNomeavel.nomeMetodo;
-                    const tipoObjeto = this.resolverTipoConstruto(acesso.objeto as Construto);
+                    const tipoObjeto = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
                     if (tipoObjeto && tipoObjeto !== 'qualquer') {
                         const tipoRetorno = this.metodosClasse.get(tipoObjeto)?.get(nomeMetodo);
                         if (tipoRetorno && tipoRetorno !== 'vazio') return tipoRetorno;
@@ -3198,7 +3116,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         tipoObjetoAP = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo ?? null;
                     } catch {}
                 } else if (acesso.objeto) {
-                    const t = this.resolverTipoConstruto(acesso.objeto as Construto);
+                    const t = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
                     if (t && t !== 'qualquer') tipoObjetoAP = t;
                 }
                 if (tipoObjetoAP) {
@@ -3222,7 +3140,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         tipoObjetoAMOP = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo ?? null;
                     } catch {}
                 } else if (acesso.objeto) {
-                    const t = this.resolverTipoConstruto(acesso.objeto as Construto);
+                    const t = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
                     if (t && t !== 'qualquer') tipoObjetoAMOP = t;
                 }
                 if (tipoObjetoAMOP && nomeProp) {
@@ -3646,7 +3564,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return new ContinuarQuebra();
     }
 
-    protected resolverArgumentoChamada(argumento: Construto, tipoParametro: string) {
+    protected resolverArgumentoChamada(argumento: ConstrutoInterface, tipoParametro: string) {
         const tipoArgumento = this.resolverTipoConstruto(argumento);
         if (tipoArgumento === tipoParametro) {
             return argumento;
@@ -3676,7 +3594,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return argumento;
     }
 
-    protected async instanciarClasse(nomeClasse: string, argumentos: Construto[]): Promise<llvm.Value> {
+    protected async instanciarClasse(nomeClasse: string, argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         const tipoStruct = this.registroClasses.get(nomeClasse);
         // Heap-allocate so the object survives the current stack frame.
         // alloca produzia ponteiro dangling quando armazenado em campo de outra classe.
@@ -3692,7 +3610,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const argResolvido = await argumentos[i].aceitar(this);
                 let valor: llvm.Value;
                 const tipoArgDelegua =
-                    this.resolverTipoConstruto(argumentos[i] as Construto) ??
+                    this.resolverTipoConstruto(argumentos[i] as ConstrutoInterface) ??
                     (argResolvido instanceof VariavelEscopo ? argResolvido.tipo : null) ??
                     '';
                 if (argResolvido instanceof VariavelEscopo) {
@@ -3743,7 +3661,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected async chamarMetodoInstancia(
         acesso: AcessoMetodo | AcessoMetodoOuPropriedade,
-        argumentos: Construto[]
+        argumentos: ConstrutoInterface[]
     ): Promise<llvm.Value> {
         const objetoResolvido = await acesso.objeto.aceitar(this);
         let objetoPtr: llvm.Value;
@@ -3761,7 +3679,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Acesso encadeado (ex.: isto.simbolos.tamanho()): infere tipo a partir do AST.
         if (!nomeClasse) {
-            const tipoInferido = this.resolverTipoConstruto(acesso.objeto as Construto);
+            const tipoInferido = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
             if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
         }
 
@@ -3838,7 +3756,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 args.push(argResolvido.variavelLlvm);
             } else {
                 const val = argResolvido as llvm.Value;
-                const tipoArg = this.resolverTipoConstruto(argumento as Construto);
+                const tipoArg = this.resolverTipoConstruto(argumento as ConstrutoInterface);
                 // texto usa convenção ptr* (alloca): literais de texto precisam ser embrulhados.
                 if (tipoArg === 'texto' && val && this.tipoEhPonteiro(val.getType())) {
                     const tmpAlloca = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_texto');
@@ -3856,7 +3774,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected async chamarMetodoTexto(
         nomeMetodo: string,
         objetoPtr: llvm.Value,
-        argumentos: Construto[]
+        argumentos: ConstrutoInterface[]
     ): Promise<llvm.Value> {
         // Carrega o char* real a partir do ponteiro da variável
         const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
@@ -3954,7 +3872,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         nomeMetodo: string,
         vetorPtr: llvm.Value,
         tipoElem: string,
-        argumentos: Construto[]
+        argumentos: ConstrutoInterface[]
     ): Promise<llvm.Value> {
         const tamElem = this.constTamElem(tipoElem);
         const ehNumero = ConstantInt.get(
@@ -4069,7 +3987,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Se for FuncaoConstruto (lambda), compila-a primeiro.
     // Se for referência a função nomeada, carrega da pilha de escopo.
     protected async resolverPonteiroDeFuncao(
-        argumento: Construto,
+        argumento: ConstrutoInterface,
         tiposParametrosEsperados: string[],
         tipoRetornoEsperado: string
     ): Promise<llvm.Value> {
@@ -4146,7 +4064,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return funcaoLlvm;
     }
 
-    protected async carregarArgumentoTexto(argumento: Construto): Promise<llvm.Value> {
+    protected async carregarArgumentoTexto(argumento: ConstrutoInterface): Promise<llvm.Value> {
         const resolvido = await argumento.aceitar(this);
         if (resolvido instanceof VariavelEscopo) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), resolvido.variavelLlvm, 'load_arg_texto');
@@ -4154,7 +4072,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return resolvido as llvm.Value;
     }
 
-    protected async carregarArgumentoInteiro(argumento: Construto): Promise<llvm.Value> {
+    protected async carregarArgumentoInteiro(argumento: ConstrutoInterface): Promise<llvm.Value> {
         const resolvido = await argumento.aceitar(this);
         let valor: llvm.Value;
         if (resolvido instanceof VariavelEscopo) {
@@ -4172,7 +4090,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return valor;
     }
 
-    protected async chamarFuncaoTexto(argumentos: Construto[]): Promise<llvm.Value> {
+    protected async chamarFuncaoTexto(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         const argumento = argumentos[0];
         const resolvido = await argumento.aceitar(this);
 
@@ -4209,13 +4127,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return this.montador.CreateCall(this.funcaoTextoDeNumero, [valor]);
     }
 
-    protected async chamarAleatorioEntre(argumentos: Construto[]): Promise<llvm.Value> {
+    protected async chamarAleatorioEntre(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         const a = await this.carregarArgumentoNumero(argumentos[0]);
         const b = await this.carregarArgumentoNumero(argumentos[1]);
         return this.montador.CreateCall(this.funcaoAleatorioEntre, [a, b]);
     }
 
-    protected async chamarMapear(argumentos: Construto[]): Promise<llvm.Value> {
+    protected async chamarMapear(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         // mapear(lista, fn)  →  novo vetor com fn aplicada a cada elemento
         const vetorArg = argumentos[0];
         const fnArg = argumentos[1];
@@ -4241,7 +4159,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return alocSaida;
     }
 
-    protected async chamarEncontrar(argumentos: Construto[]): Promise<llvm.Value> {
+    protected async chamarEncontrar(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         // encontrar(lista, fn) → novo vetor com todos os elementos que satisfazem fn
         const vetorArg = argumentos[0];
         const fnArg = argumentos[1];
@@ -4264,7 +4182,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return alocSaida;
     }
 
-    protected async carregarArgumentoNumero(argumento: Construto): Promise<llvm.Value> {
+    protected async carregarArgumentoNumero(argumento: ConstrutoInterface): Promise<llvm.Value> {
         const resolvido = await argumento.aceitar(this);
         let valor: llvm.Value;
         if (resolvido instanceof VariavelEscopo) {

@@ -1,14 +1,14 @@
-import { Construto, Declaracao } from '@designliquido/delegua';
+import { ConstrutoInterface, Declaracao } from '@designliquido/delegua';
 
 export class VariavelEscopo {
     variavelLlvm: llvm.Value;
-    construtoVariavel: Construto | Declaracao;
+    construtoVariavel: ConstrutoInterface | Declaracao;
     tipo: string;
     ehConstante: boolean;
 
     constructor(
         variavelLlvm: llvm.Value,
-        construtoVariavel?: Construto | Declaracao,
+        construtoVariavel?: ConstrutoInterface | Declaracao,
         tipo?: string,
         ehConstante: boolean = false
     ) {
