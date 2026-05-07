@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 import llvm from '@designliquido/llvm-bindings';
 import { VariavelEscopo } from '../fontes/variavel-escopo';
@@ -304,7 +305,7 @@ describe('Compilador LLVM - visitantes', () => {
         });
 
         it('Continua retorna quebra de continuar', () => {
-            const resultado = compilador.visitarExpressaoContinua();
+            const resultado = compilador.visitarExpressaoContinua({} as any);
             expect(resultado).toBeTruthy();
             expect(resultado.constructor.name).toBe('ContinuarQuebra');
         });

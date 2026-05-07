@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
 describe('Compilador - Interpolação de Texto (Fase 3)', () => {

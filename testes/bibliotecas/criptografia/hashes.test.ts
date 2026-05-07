@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../../../fontes/compilador-llvm';
 
 describe('Compilador - delegua-criptografia F.1b: hashes, HMAC, aleatório, UUID, PBKDF2', () => {

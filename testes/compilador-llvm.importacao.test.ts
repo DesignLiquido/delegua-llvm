@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import llvm from '@designliquido/llvm-bindings';
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 import { VariavelEscopo } from '../fontes/variavel-escopo';

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../../fontes/compilador-llvm';
 
 describe('Compilador - delegua-dados G.1: RecorteDados e Serie', () => {

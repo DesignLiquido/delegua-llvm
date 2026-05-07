@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
 describe('Compilador - Fase 5: Métodos de Vetor com funções de processamento', () => {

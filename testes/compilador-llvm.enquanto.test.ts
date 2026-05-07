@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
 describe('Compilador - Fazer', () => {
@@ -12,7 +13,7 @@ describe('Compilador - Fazer', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('fazer_corpo:');
-        expect(resultado).toContain('fazer_cond:');
+        expect(resultado).toContain('fazer_condicao:');
         expect(resultado).toContain('fazer_apos:');
         // Corpo deve ser alcançado antes da condição (estrutura do-while).
         expect(resultado).toContain('br label %fazer_corpo');
@@ -30,7 +31,7 @@ describe('Compilador - Fazer', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('fazer_corpo:');
-        expect(resultado).toContain('fazer_cond:');
+        expect(resultado).toContain('fazer_condicao:');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 });
@@ -47,10 +48,10 @@ describe('Compilador - Enquanto', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%i = alloca i32, align 4');
-        expect(resultado).toContain('while_cond:');
-        expect(resultado).toContain('while_body:');
-        expect(resultado).toContain('while_after:');
-        expect(resultado).toContain('br label %while_cond');
+        expect(resultado).toContain('enquanto_condicao:');
+        expect(resultado).toContain('enquanto_corpo:');
+        expect(resultado).toContain('enquanto_apos:');
+        expect(resultado).toContain('br label %enquanto_condicao');
     });
 
     it('Laço enquanto com escreva', async () => {
@@ -64,9 +65,9 @@ describe('Compilador - Enquanto', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('while_cond:');
-        expect(resultado).toContain('while_body:');
-        expect(resultado).toContain('while_after:');
+        expect(resultado).toContain('enquanto_condicao:');
+        expect(resultado).toContain('enquanto_corpo:');
+        expect(resultado).toContain('enquanto_apos:');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 
@@ -81,9 +82,9 @@ describe('Compilador - Enquanto', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%x = alloca double, align 8');
-        expect(resultado).toContain('while_cond:');
-        expect(resultado).toContain('while_body:');
-        expect(resultado).toContain('while_after:');
+        expect(resultado).toContain('enquanto_condicao:');
+        expect(resultado).toContain('enquanto_corpo:');
+        expect(resultado).toContain('enquanto_apos:');
         expect(resultado).toContain('fcmp');
     });
 });

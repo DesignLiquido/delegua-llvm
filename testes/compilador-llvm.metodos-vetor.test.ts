@@ -1,4 +1,5 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
+import { describe, expect, it } from '@jest/globals';
 
 describe('Compilador - Métodos de Vetor (Fase 4)', () => {
     // ──────────────────────────────────────────────────────────
