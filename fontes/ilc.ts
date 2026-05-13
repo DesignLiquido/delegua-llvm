@@ -8,6 +8,7 @@ import { registrar } from '@designliquido/delprops';
 import { CompiladorLLVM } from './compilador-llvm';
 import { detectarModulosImportados, obterBibliotecasParaCompilacao } from './bibliotecas-compilacao';
 import esquemaCompilacao from './esquemas/compilacao';
+import { ErroCompilador } from './erros/erro-compilador';
 
 registrar('compilacao', '@designliquido/delegua-llvm', esquemaCompilacao);
 
@@ -80,6 +81,32 @@ function taquigrafarInfo(mensagem: string) {
 
 function taquigrafarErro(mensagem: string) {
     console.log(`${CORES.vermelho}  ✗ ${mensagem}${CORES.reset}`);
+}
+
+function exibirErroCompilador(erro: ErroCompilador, nomeArquivo: string, linhasCodigo: string[]) {
+    console.log('');
+    console.log(`${CORES.vermelho}${CORES.negrito}erro${CORES.reset}${CORES.negrito}: ${erro.message}${CORES.reset}`);
+
+    if (erro.linha !== undefined) {
+        const col = erro.coluna !== undefined ? `:${erro.coluna}` : '';
+        console.log(`${CORES.azul} --> ${CORES.reset}${nomeArquivo}:${erro.linha}${col}`);
+
+        const linhaIdx = erro.linha - 1;
+        const linhaTexto = linhasCodigo[linhaIdx];
+        if (linhaTexto !== undefined) {
+            const numStr = String(erro.linha);
+            const pad = ' '.repeat(numStr.length);
+            console.log(`${CORES.azul}${pad} |${CORES.reset}`);
+            console.log(`${CORES.azul}${numStr} |${CORES.reset} ${linhaTexto}`);
+
+            const colInicio = erro.coluna ?? (linhaTexto.length - linhaTexto.trimStart().length);
+            const tam = erro.tamanhoToken ?? 1;
+            const setas = `${' '.repeat(colInicio)}${'~'.repeat(tam)}`;
+            console.log(`${CORES.azul}${pad} |${CORES.reset} ${CORES.vermelho}${setas}${CORES.reset}`);
+            console.log(`${CORES.azul}${pad} |${CORES.reset}`);
+        }
+    }
+    console.log('');
 }
 
 function limparArquivosTemporarios(arquivos: string[]) {
@@ -251,9 +278,15 @@ async function principal() {
         taquigrafarInfo(`Para executar: ${CORES.negrito}./${path.relative('.', caminhoBinario)}${CORES.reset}`);
         console.log('');
     } catch (error: any) {
-        taquigrafarErro('Erro durante compilação:');
-        console.error(error.message || error);
-        if (error.stack) console.error(error.stack);
+        if (error instanceof ErroCompilador) {
+            exibirErroCompilador(error, arquivoEntrada, codigo);
+        } else {
+            taquigrafarErro('Erro interno durante compilação:');
+            console.error(error.message || error);
+            const stackLinhas: string[] = (error.stack ?? '').split('\n');
+            const linhaRelevante = stackLinhas.find((l: string) => l.includes('compilador-llvm') || l.includes('ilc'));
+            if (linhaRelevante) console.error(linhaRelevante.trim());
+        }
 
         taquigrafarEtapa('Limpando arquivos temporários');
         limparArquivosTemporarios(arquivosTemporarios);

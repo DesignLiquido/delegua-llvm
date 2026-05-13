@@ -97,6 +97,7 @@ import {
     registrarModuloMatematica,
 } from './registro-modulos';
 import { resolverEMesclarDeclaracoes, ehImportacaoArquivo } from './resolucao-importacoes';
+import { ErroCompilador } from './erros/erro-compilador';
 
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
     lexador: Lexador;
@@ -1442,7 +1443,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (alvoResolvido instanceof VariavelEscopo) {
             if (alvoResolvido.ehConstante) {
                 const nomeConstante = (expressao.alvo as Variavel).simbolo?.lexema || 'desconhecida';
-                throw new Error(`Não é possível reatribuir a constante '${nomeConstante}'.`);
+                const erroConstante = new ErroCompilador(`Não é possível reatribuir a constante '${nomeConstante}'.`);
+                erroConstante.linha = expressao.linha;
+                erroConstante.tamanhoToken = nomeConstante.length;
+                throw erroConstante;
             }
             const tipoAlvo = alvoResolvido.tipo || 'qualquer';
 
@@ -1477,7 +1481,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         resultadoOperacao = await this.resolverModulo(operandoEsquerdo, operandoDireito);
                         break;
                     default:
-                        throw new Error(`Operador composto '${expressao.simboloOperador.tipo}' não suportado.`);
+                        const erroOperador = new ErroCompilador(`Operador composto '${expressao.simboloOperador.tipo}' não suportado.`);
+                        erroOperador.linha = expressao.simboloOperador.linha;
+                        throw erroOperador;
                 }
                 this.armazenarEmVariavel(alvoResolvido, resultadoOperacao, tipoEfetivo, tipoEfetivo);
                 return Promise.resolve(resultadoOperacao);
@@ -1705,7 +1711,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve(alvoFinal[indiceResolvido]);
         }
 
-        throw new Error(`visitarExpressaoAcessoIndiceVariavel: tipo de alvo não suportado (${typeof alvoFinal}).`);
+        const erroIndice = new ErroCompilador(`visitarExpressaoAcessoIndiceVariavel: tipo de alvo não suportado (${typeof alvoFinal}).`);
+        erroIndice.linha = expressao.linha;
+        throw erroIndice;
     }
 
     async visitarExpressaoAcessoElementoMatriz(expressao: AcessoElementoMatriz): Promise<any> {
@@ -1769,7 +1777,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoProp = mapaTipos?.get(nomeMembro);
 
         if (indice === undefined || !tipoProp) {
-            throw new Error(`Propriedade '${nomeMembro}' não encontrada na classe '${nomeClasse}'.`);
+            const erroMembro = new ErroCompilador(`Propriedade '${nomeMembro}' não encontrada na classe '${nomeClasse}'.`);
+            erroMembro.linha = expressao.linha;
+            erroMembro.tamanhoToken = nomeMembro.length;
+            throw erroMembro;
         }
 
         const tipoStruct = this.registroClasses.get(nomeClasse);
@@ -1817,7 +1828,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoProp = mapaTipos?.get(expressao.nomePropriedade);
 
         if (indice === undefined || !tipoProp) {
-            throw new Error(`Propriedade '${expressao.nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+            const erroPropriedade = new ErroCompilador(`Propriedade '${expressao.nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+            erroPropriedade.linha = expressao.linha;
+            erroPropriedade.tamanhoToken = expressao.nomePropriedade.length;
+            throw erroPropriedade;
         }
 
         const tipoStruct = this.registroClasses.get(nomeClasse);
@@ -1989,7 +2003,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoProp = mapaTipos?.get(nomePropriedade);
 
         if (indice === undefined || !tipoProp) {
-            throw new Error(`Propriedade '${nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+            const erroDefinirValor = new ErroCompilador(`Propriedade '${nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+            erroDefinirValor.linha = expressao.linha;
+            erroDefinirValor.tamanhoToken = nomePropriedade.length;
+            throw erroDefinirValor;
         }
 
         const tipoStruct = this.registroClasses.get(nomeClasse);
@@ -2153,7 +2170,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarExpressaoFalhar(expressao: Falhar): Promise<any> {
         const mensagemExpr = expressao.explicacao;
         if (!mensagemExpr) {
-            throw new Error('Falhar precisa de uma mensagem');
+            const erroFalhar = new ErroCompilador('Falhar precisa de uma mensagem');
+            erroFalhar.linha = expressao.linha;
+            throw erroFalhar;
         }
         const mensagemResolvida = await mensagemExpr.aceitar(this);
         let mensagem: llvm.Value;
@@ -2529,8 +2548,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'NEGACAO':
                 return Promise.resolve(this.montador.CreateNot(this.garantirCondicaoI1(valor), 'nao_tmp'));
 
-            default:
-                throw new Error(`Operador unário ${expressao.operador.tipo} não implementado.`);
+            default: {
+                const erroUnario = new ErroCompilador(`Operador unário ${expressao.operador.tipo} não implementado.`);
+                erroUnario.linha = expressao.linha;
+                throw erroUnario;
+            }
         }
     }
 
@@ -4023,19 +4045,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 textoSlot = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'texto_slot');
                 this.montador.CreateStore(objetoPtr, textoSlot);
             }
-            return await this.chamarMetodoTexto(nomeMetodo, textoSlot, argumentos);
+            return await this.chamarMetodoTexto(nomeMetodo, textoSlot, argumentos, acesso.linha);
         }
 
         // Métodos embutidos de vetor
         if (this.tipoEhVetor(nomeClasse)) {
             const tipoElem = this.tipoElementoVetor(nomeClasse);
-            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos);
+            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, tipoElem, argumentos, acesso.linha);
         }
 
         // Fallback: parâmetro tipado como qualquer, mas o método é de vetor (ex.: qualquer.tamanho())
         if ((!nomeClasse || nomeClasse === 'qualquer') &&
             CompiladorLLVM.METODOS_VETOR_BUILTIN.has(nomeMetodo)) {
-            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, 'qualquer', argumentos);
+            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, 'qualquer', argumentos, acesso.linha);
         }
 
         // Despacho de módulo importado:
@@ -4046,7 +4068,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const funcoes = this.mapaModulos.get(nomeModulo);
             const entrada = funcoes?.get(nomeMetodo);
             if (!entrada) {
-                throw new Error(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
+                const erroModulo = new ErroCompilador(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
+                erroModulo.linha = acesso.linha;
+                erroModulo.tamanhoToken = nomeMetodo.length;
+                throw erroModulo;
             }
             const args: llvm.Value[] = [];
             for (let i = 0; i < argumentos.length; i++) {
@@ -4106,7 +4131,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         if (!funcaoLlvm) {
-            throw new Error(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
+            const erroMetodo = new ErroCompilador(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
+            erroMetodo.linha = acesso.linha;
+            erroMetodo.tamanhoToken = nomeMetodo.length;
+            throw erroMetodo;
         }
 
         const args: llvm.Value[] = [objetoPtr];
@@ -4145,7 +4173,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected async chamarMetodoTexto(
         nomeMetodo: string,
         objetoPtr: llvm.Value,
-        argumentos: ConstrutoInterface[]
+        argumentos: ConstrutoInterface[],
+        linha?: number
     ): Promise<llvm.Value> {
         // Carrega o char* real a partir do ponteiro da variável
         const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
@@ -4179,8 +4208,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.CreateTrunc(len64, this.montador.getInt32Ty(), 'strlen_i32');
             }
 
-            default:
-                throw new Error(`Método de texto '${nomeMetodo}' não implementado.`);
+            default: {
+                const erroTexto = new ErroCompilador(`Método de texto '${nomeMetodo}' não implementado.`);
+                erroTexto.linha = linha;
+                erroTexto.tamanhoToken = nomeMetodo.length;
+                throw erroTexto;
+            }
         }
     }
 
@@ -4253,7 +4286,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         nomeMetodo: string,
         vetorPtr: llvm.Value,
         tipoElem: string,
-        argumentos: ConstrutoInterface[]
+        argumentos: ConstrutoInterface[],
+        linha?: number
     ): Promise<llvm.Value> {
         const tamElem = this.constTamElem(tipoElem);
         const ehNumero = ConstantInt.get(
@@ -4356,11 +4390,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     const valorBusca = await this.carregarArgumentoTexto(argumentos[0]);
                     return this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
                 }
-                throw new Error(`Método 'inclui' só suportado para vetor<texto>.`);
+                const erroInclui = new ErroCompilador(`Método 'inclui' só suportado para vetor<texto>.`);
+                erroInclui.linha = linha;
+                throw erroInclui;
             }
 
-            default:
-                throw new Error(`Método de vetor '${nomeMetodo}' não implementado.`);
+            default: {
+                const erroVetor = new ErroCompilador(`Método de vetor '${nomeMetodo}' não implementado.`);
+                erroVetor.linha = linha;
+                erroVetor.tamanhoToken = nomeMetodo.length;
+                throw erroVetor;
+            }
         }
     }
 
@@ -4683,7 +4723,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         try {
             return Promise.resolve(this.pilhaVariaveisEscopo.obterValor(expressao.simbolo.lexema));
         } catch {
-            throw new Error(`Variável ${expressao.simbolo.lexema} não existe neste escopo.`);
+            const erroVariavel = new ErroCompilador(`Variável '${expressao.simbolo.lexema}' não existe neste escopo.`);
+            erroVariavel.linha = expressao.linha;
+            erroVariavel.tamanhoToken = expressao.simbolo.lexema.length;
+            throw erroVariavel;
         }
     }
 
@@ -5302,7 +5345,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         if (resultadoAvaliadorSintatico.erros.length > 0) {
-            throw new Error(`Erros ao executar código: ${JSON.stringify(resultadoAvaliadorSintatico.erros)}`);
+            const primeiroErro = resultadoAvaliadorSintatico.erros[0];
+            const erroSintatico = new ErroCompilador(
+                `Erro sintático: ${primeiroErro.message ?? JSON.stringify(resultadoAvaliadorSintatico.erros)}`
+            );
+            erroSintatico.linha = primeiroErro.simbolo?.linha ?? primeiroErro.linha;
+            erroSintatico.coluna = primeiroErro.simbolo?.colunaInicio;
+            throw erroSintatico;
         }
 
         const todasDeclaracoes: Declaracao[] = [...declaracoesImportadas, ...resultadoAvaliadorSintatico.declaracoes];
