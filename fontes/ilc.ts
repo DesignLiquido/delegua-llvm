@@ -225,9 +225,15 @@ async function principal() {
 
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
-        const irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
-        fs.writeFileSync(irPath, irCompativel);
+        let irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
         fs.writeFileSync(irPath.replace(/\.ll$/, '_debug.ll'), irCompativel);
+        // clang 19.1.3 crasha no X86 Assembly Printer ao processar #dbg_declare
+        // no alvo x86_64-pc-windows-msvc. Removemos as linhas do IR para evitar o crash;
+        // os !DILocation nas instruções são preservados para depuração por linha.
+        if (emitirDebug) {
+            irCompativel = irCompativel.replace(/^\s*#dbg_\w+\(.*\)\n/gm, '');
+        }
+        fs.writeFileSync(irPath, irCompativel);
         arquivosTemporarios.push(irPath);
         taquigrafarSucesso(`IR gerado`);
 
@@ -248,17 +254,20 @@ async function principal() {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            execSync(`clang -O2 -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
+            execSync(`clang ${emitirDebug ? '-O0' : '-O2'} -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
         }
 
         taquigrafarEtapa('Linkando binário');
+        taquigrafarInfo(`Nível de otimização: ${emitirDebug ? '0' : '2'}`);
         const objetosStr = arquivosObj.map((o) => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
-        const flagDebugClang = emitirDebug ? ' -g' : '';
-        execSync(`clang -O2${flagDebugClang} "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        // -gdwarf-4: gera DWARF (não CodeView) para coincidir com os metadados DIBuilder
+        // gerados no IR. O CodeView emitter do clang para MSVC trava com nossos metadados DWARF.
+        const flagsOtimizacao = emitirDebug ? '-O0 -gdwarf-4' : '-O2';
+        execSync(`clang ${flagsOtimizacao} "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
         taquigrafarEtapa('Limpando arquivos temporários');

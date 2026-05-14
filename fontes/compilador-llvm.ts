@@ -76,7 +76,7 @@ import {
     Extensao,
     InterfaceDeclaracao,
 } from '@designliquido/delegua';
-import { ConstrutoInterface, VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
+import { ConstrutoInterface, ParametroInterface, VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
 import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from '@designliquido/llvm-bindings';
 
@@ -152,6 +152,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected indicesPropriedades: Map<string, Map<string, number>> = new Map();
     protected tiposPropriedades: Map<string, Map<string, string>> = new Map();
     protected metodosClasse: Map<string, Map<string, string>> = new Map();
+    protected parametrosMetodosClasse: Map<string, Map<string, ParametroInterface[]>> = new Map();
     // Mapa de herança: nomeFIlho → nomePai (single inheritance).
     protected superClasses: Map<string, string> = new Map();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
@@ -181,6 +182,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected unidadeCompilacaoDebug: llvm.DICompileUnit | null = null;
     // Pilha de subprogramas ativos — o topo é o escopo de depuração corrente.
     protected pilhaSubprogramas: llvm.DISubprogram[] = [];
+    // Mapa de hashArquivo → caminho absoluto e cache de DIFile por hash.
+    protected mapaHashParaCaminho: Map<number, string> = new Map();
+    protected cacheArquivosDebug: Map<number, llvm.DIFile> = new Map();
+    // DIFile da função sendo compilada no momento (trocado em criarSubprogramaDebug).
+    protected arquivoDebugFuncaoAtual: llvm.DIFile | null = null;
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
@@ -499,19 +505,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected criarSubprogramaDebug(
         funcaoLlvm: llvm.Function,
         nome: string,
-        linha: number
+        linha: number,
+        arquivo?: llvm.DIFile | null
     ): void {
         if (!this.construtorDebug || !this.arquivoDebug) return;
+        const arquivoEfetivo = arquivo ?? this.arquivoDebug;
         const tipoSubrotina = this.construtorDebug.createSubroutineType(
             this.construtorDebug.getOrCreateTypeArray([null])
         );
         const spFlags = llvm.DISubprogram.DISPFlags.SPFlagDefinition;
         const diFlags = llvm.DINode.DIFlags.FlagPrototyped;
         const subprograma = this.construtorDebug.createFunction(
-            this.arquivoDebug,
+            arquivoEfetivo,
             nome,
             nome,
-            this.arquivoDebug,
+            arquivoEfetivo,
             linha,
             tipoSubrotina,
             linha,
@@ -520,6 +528,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         );
         funcaoLlvm.setSubprogram(subprograma);
         this.pilhaSubprogramas.push(subprograma);
+        this.arquivoDebugFuncaoAtual = arquivoEfetivo;
+        // Substitui localização legada da função anterior pelo início desta função.
+        // Garante que toda instrução emitida antes do primeiro definirLocalizacaoDebug
+        // tenha um !dbg válido apontando para o subprograma correto.
+        const linhaInicial = linha > 0 ? linha : 1;
+        this.montador.SetCurrentDebugLocation(llvm.DILocation.get(this.contexto, linhaInicial, 0, subprograma));
     }
 
     // Finaliza o subprograma no topo da pilha e o remove.
@@ -527,6 +541,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!this.construtorDebug) return;
         const sp = this.pilhaSubprogramas.pop();
         if (sp) this.construtorDebug.finalizeSubprogram(sp);
+    }
+
+    // Retorna o DIFile para o arquivo identificado pelo hash, criando-o se necessário.
+    protected obterArquivoDebugParaHash(hashArquivo: number | undefined): llvm.DIFile | null {
+        if (!this.construtorDebug) return null;
+        if (hashArquivo === undefined) return this.arquivoDebug;
+        if (this.cacheArquivosDebug.has(hashArquivo)) return this.cacheArquivosDebug.get(hashArquivo)!;
+        const caminho = this.mapaHashParaCaminho.get(hashArquivo);
+        if (!caminho) return this.arquivoDebug;
+        const arquivo = this.construtorDebug.createFile(
+            caminho.replace(/\\/g, '/').split('/').pop() ?? caminho,
+            caminho.replace(/\\/g, '/').split('/').slice(0, -1).join('/') || '.'
+        );
+        this.cacheArquivosDebug.set(hashArquivo, arquivo);
+        return arquivo;
     }
 
     // Emite llvm.dbg.declare para uma variável local alocada via alloca.
@@ -542,7 +571,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const varDebug = this.construtorDebug.createAutoVariable(
             subPrograma,
             nome,
-            this.arquivoDebug,
+            this.arquivoDebugFuncaoAtual ?? this.arquivoDebug,
             linha,
             tipoDebug
         );
@@ -571,7 +600,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             subPrograma,
             nome,
             argNo,
-            this.arquivoDebug,
+            this.arquivoDebugFuncaoAtual ?? this.arquivoDebug,
             linha,
             tipoDebug
         );
@@ -660,6 +689,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!this.metodosClasse.has(nomeClasse)) {
             this.metodosClasse.set(nomeClasse, new Map());
         }
+        if (!this.parametrosMetodosClasse.has(nomeClasse)) {
+            this.parametrosMetodosClasse.set(nomeClasse, new Map());
+        }
 
         // Passo 2a: pré-declarar todas as funções antes de compilar qualquer corpo,
         // permitindo referências cruzadas entre métodos da mesma classe.
@@ -697,6 +729,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             funcoesMetodos.set(metodo.simbolo.lexema, objetoLlvmFuncaoPre);
 
             this.metodosClasse.get(nomeClasse).set(metodo.simbolo.lexema, ehConstrutor ? 'vazio' : metodo.funcao.tipo);
+            this.parametrosMetodosClasse.get(nomeClasse).set(metodo.simbolo.lexema, metodo.funcao.parametros);
         }
 
         // Passo 2b: compilar os corpos usando as funções já declaradas.
@@ -722,7 +755,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.pilhaIsto.push(selfArg);
             const tipoRetornoAnteriorMetodo = this.tipoRetornoFuncaoAtual;
             this.tipoRetornoFuncaoAtual = tipoRetornoStr;
+            const linhaMetodo = (metodo.simbolo as any).linha ?? 0;
+            const hashMetodo = (metodo.simbolo as any).hashArquivo as number | undefined;
+            this.criarSubprogramaDebug(objetoLlvmFuncao, metodo.simbolo.lexema, linhaMetodo, this.obterArquivoDebugParaHash(hashMetodo));
             await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
+            this.finalizarSubprogramaDebug();
             const blocoAtualMetodo = this.montador.GetInsertBlock();
             if (blocoAtualMetodo && !blocoAtualMetodo.getTerminator()) {
                 if (tipoRetornoStr === 'vazio') {
@@ -829,13 +866,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoDeExpressao(declaracao: Expressao): Promise<any> {
-        // Uma declaração que é apenas uma expressão: resolve expressão.
+        this.definirLocalizacaoDebug(declaracao.linha ?? 0, 0);
         await declaracao.expressao.aceitar(this);
         return Promise.resolve();
     }
 
     async visitarDeclaracaoEnquanto(declaracao: Enquanto): Promise<any> {
-        // Estrutura de loop enquanto: bloco de condição → bloco de corpo → bloco de pós-loop.
+        this.definirLocalizacaoDebug(declaracao.linha ?? 0, 0);
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
         const blocoCond = llvm.BasicBlock.Create(this.contexto, 'enquanto_condicao', funcaoAtual);
@@ -1203,6 +1240,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoTente(declaracao: Tente): Promise<any> {
+        this.definirLocalizacaoDebug(declaracao.linha ?? 0, 0);
         this.contemExcecoes = true;
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
@@ -1438,6 +1476,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoDeAtribuicao(expressao: Atribuir): Promise<any> {
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
         const alvoResolvido = await expressao.alvo.aceitar(this);
 
         if (alvoResolvido instanceof VariavelEscopo) {
@@ -1626,26 +1665,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
             const charVal = this.montador.CreateLoad(this.montador.getInt8Ty(), gepChar, 'txt_char');
 
-            const tipoBuf = llvm.ArrayType.get(this.montador.getInt8Ty(), 2);
-            const alocBuf = this.criarAllocaNoBlocoEntrada(tipoBuf as unknown as llvm.Type, 'txt_char_buf');
-            const idx0 = ConstantInt.get(this.contexto, new APInt(32, 0));
-            const gepBuf0 = this.montador.CreateInBoundsGEP(
-                tipoBuf as unknown as llvm.Type,
-                alocBuf,
-                [idx0, idx0],
-                'txt_buf0'
-            );
-            this.montador.CreateStore(charVal, gepBuf0);
+            // Usa malloc para que o ponteiro ao buffer de 2 bytes sobreviva ao retorno da função.
+            // Stack alloca seria dangling pointer se o resultado fosse retornado pela função.
+            const tamanho2 = ConstantInt.get(this.contexto, new APInt(64, 2));
+            const heapBuf = this.montador.CreateCall(this.funcaoMalloc, [tamanho2], 'txt_char_buf');
+            const idx1 = ConstantInt.get(this.contexto, new APInt(32, 1));
             const gepBuf1 = this.montador.CreateInBoundsGEP(
-                tipoBuf as unknown as llvm.Type,
-                alocBuf,
-                [idx0, ConstantInt.get(this.contexto, new APInt(32, 1))],
+                this.montador.getInt8Ty(),
+                heapBuf,
+                [idx1],
                 'txt_buf1'
             );
+            this.montador.CreateStore(charVal, heapBuf);
             this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(8, 0)), gepBuf1);
 
             const alocPtr = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'txt_char_ptr_alloca');
-            this.montador.CreateStore(gepBuf0, alocPtr);
+            this.montador.CreateStore(heapBuf, alocPtr);
             return Promise.resolve(new VariavelEscopo(alocPtr, undefined, 'texto'));
         }
 
@@ -2824,7 +2859,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Metadados de depuração: cria DISubprogram para esta função.
         const linhaFuncao = (declaracao.simbolo as any).linha ?? 0;
-        this.criarSubprogramaDebug(objetoLlvmFuncao, declaracao.simbolo.lexema, linhaFuncao);
+        const hashFuncao = (declaracao.simbolo as any).hashArquivo as number | undefined;
+        this.criarSubprogramaDebug(objetoLlvmFuncao, declaracao.simbolo.lexema, linhaFuncao, this.obterArquivoDebugParaHash(hashFuncao));
 
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
         // Aqui temos que iterar de novo os parâmetros da função, dado que a
@@ -2883,6 +2919,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      * implementação original por cadeia de comparações.
      */
     async visitarDeclaracaoEscolha(declaracao: Escolha): Promise<any> {
+        this.definirLocalizacaoDebug(declaracao.linha ?? 0, 0);
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
 
         const valorEscolhaRaw = await declaracao.identificadorOuLiteral.aceitar(this);
@@ -3929,9 +3966,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
         if (funcaoConstrutor) {
             const args: llvm.Value[] = [objetoAlloc];
-            for (let i = 0; i < argumentos.length; i++) {
+            const paramDefsConstrutor = this.parametrosMetodosClasse.get(nomeClasse)?.get('construtor') ?? [];
+            const totalParamsConstrutor = funcaoConstrutor.arg_size() - 1;
+            for (let i = 0; i < totalParamsConstrutor; i++) {
                 const tipoEsperado = funcaoConstrutor.getArg(i + 1).getType();
-                const argResolvido = await argumentos[i].aceitar(this);
+                let argResolvido: llvm.Value | VariavelEscopo;
+                if (i < argumentos.length) {
+                    argResolvido = await argumentos[i].aceitar(this);
+                } else {
+                    const paramDef = paramDefsConstrutor[i];
+                    if (paramDef?.valorPadrao !== undefined) {
+                        argResolvido = await paramDef.valorPadrao.aceitar(this);
+                    } else {
+                        args.push(llvm.Constant.getNullValue(tipoEsperado) as unknown as llvm.Value);
+                        continue;
+                    }
+                }
                 let valor: llvm.Value;
                 // Todos os construtores Délégua fazem "load ptr, ptr %arg" para parâmetros ptr.
                 // Portanto: se o parâmetro esperado é ptr, devemos passar um ptr* (alloca ou box).
@@ -5187,9 +5237,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', funcaoInicio);
         this.montador.SetInsertPoint(blocoEscopo);
 
+        this.criarSubprogramaDebug(funcaoInicio, 'main', 1);
+
         for (const declaracao of declaracoes) {
             await declaracao.aceitar(this);
         }
+
+        this.finalizarSubprogramaDebug();
 
         // Define a personality function apenas se o código contém blocos tente/pegue,
         // pois sua presença incondicional inibe inlining e otimizações de tail-call.
@@ -5224,6 +5278,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.indicesPropriedades = new Map();
         this.tiposPropriedades = new Map();
         this.metodosClasse = new Map();
+        this.parametrosMetodosClasse = new Map();
         this.superClasses = new Map();
         this.mapaModulos = new Map();
         this.pilhaIsto = [];
@@ -5257,10 +5312,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.unidadeCompilacaoDebug = null;
         if (emitirDebug && nomeArquivoFonte) {
             this.construtorDebug = new llvm.DIBuilder(this.modulo);
+            const dirEntradaNorm = (diretorioArquivoFonte ?? '.').replace(/\\/g, '/');
             this.arquivoDebug = this.construtorDebug.createFile(
                 nomeArquivoFonte,
-                diretorioArquivoFonte ?? '.'
+                dirEntradaNorm
             );
+            // Hash -1 é usado pelo lexador para o arquivo de entrada principal.
+            const caminhoEntrada = diretorioArquivoFonte
+                ? `${dirEntradaNorm}/${nomeArquivoFonte}`
+                : nomeArquivoFonte;
+            this.mapaHashParaCaminho.set(-1, caminhoEntrada);
+            this.cacheArquivosDebug.set(-1, this.arquivoDebug);
             this.unidadeCompilacaoDebug = this.construtorDebug.createCompileUnit(
                 llvm.dwarf.SourceLanguage.DW_LANG_C,
                 this.arquivoDebug,
@@ -5312,14 +5374,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         let codigoPrincipal = codigo;
         const avaliadorComTipagem = this.avaliadorSintatico as unknown as AvaliadorSintaticoComTipagem;
 
+        this.mapaHashParaCaminho = new Map();
+        this.cacheArquivosDebug = new Map();
+
         if (diretorioBase) {
             const registroClasses: { [nome: string]: Declaracao } = {};
-            declaracoesImportadas = await resolverEMesclarDeclaracoes(
+            const resultadoImportacoes = await resolverEMesclarDeclaracoes(
                 codigo,
                 diretorioBase,
                 new Set(),
                 registroClasses
             );
+            declaracoesImportadas = resultadoImportacoes.declaracoes;
+            this.mapaHashParaCaminho = resultadoImportacoes.mapaHash;
 
             // analisar() reseta tiposDefinidosEmCodigo logo de início; envolve
             // inicializarPilhaEscopos (chamada depois do reset, antes do loop de parse)

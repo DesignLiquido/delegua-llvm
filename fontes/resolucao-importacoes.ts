@@ -88,8 +88,9 @@ export async function resolverEMesclarDeclaracoes(
     codigo: string[],
     diretorioBase: string,
     arquivosVisitados: Set<string> = new Set(),
-    registroClasses: { [nome: string]: Declaracao } = {}
-): Promise<Declaracao[]> {
+    registroClasses: { [nome: string]: Declaracao } = {},
+    mapaHash: Map<number, string> = new Map()
+): Promise<{ declaracoes: Declaracao[]; mapaHash: Map<number, string> }> {
     const resultado: Declaracao[] = [];
 
     for (const linha of codigo) {
@@ -103,6 +104,8 @@ export async function resolverEMesclarDeclaracoes(
 
         if (arquivosVisitados.has(caminhoAbsoluto)) continue;
         arquivosVisitados.add(caminhoAbsoluto);
+        const hashArquivo = cyrb53(caminhoAbsoluto.toLowerCase());
+        mapaHash.set(hashArquivo, caminhoAbsoluto);
 
         if (!fs.existsSync(caminhoAbsoluto)) {
             throw new Error(`Arquivo importado não encontrado: ${caminhoAbsoluto}`);
@@ -113,19 +116,19 @@ export async function resolverEMesclarDeclaracoes(
         const diretorioArquivo = caminho.dirname(caminhoAbsoluto);
 
         // Resolve dependências do arquivo importado antes de parseá-lo.
-        const declaracoesDeps = await resolverEMesclarDeclaracoes(
+        const resultadoDeps = await resolverEMesclarDeclaracoes(
             linhasArquivo,
             diretorioArquivo,
             arquivosVisitados,
-            registroClasses
+            registroClasses,
+            mapaHash
         );
-        resultado.push(...declaracoesDeps);
+        resultado.push(...resultadoDeps.declaracoes);
 
         // Parseia o arquivo com as classes já descobertas pré-registradas.
         // analisar() reseta tiposDefinidosEmCodigo internamente; usa o mesmo hook de
         // inicializarPilhaEscopos para injetar o registroClasses após o reset.
         const linhasSemImportacoes = linhasArquivo.map((l) => (ehImportacaoArquivo(l) ? '' : l));
-        const hashArquivo = cyrb53(caminhoAbsoluto.toLowerCase());
 
         const lexador = new Lexador();
         const avaliador = new AvaliadorSintatico();
@@ -158,5 +161,5 @@ export async function resolverEMesclarDeclaracoes(
         resultado.push(...retornoAvaliador.declaracoes);
     }
 
-    return resultado;
+    return { declaracoes: resultado, mapaHash };
 }
