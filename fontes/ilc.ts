@@ -227,12 +227,6 @@ async function principal() {
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
         let irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
         fs.writeFileSync(irPath.replace(/\.ll$/, '_debug.ll'), irCompativel);
-        // clang 19.1.3 crasha no X86 Assembly Printer ao processar #dbg_declare
-        // no alvo x86_64-pc-windows-msvc. Removemos as linhas do IR para evitar o crash;
-        // os !DILocation nas instruções são preservados para depuração por linha.
-        if (emitirDebug) {
-            irCompativel = irCompativel.replace(/^\s*#dbg_\w+\(.*\)\n/gm, '');
-        }
         fs.writeFileSync(irPath, irCompativel);
         arquivosTemporarios.push(irPath);
         taquigrafarSucesso(`IR gerado`);
@@ -264,10 +258,47 @@ async function principal() {
         taquigrafarInfo(`Nível de otimização: ${emitirDebug ? '0' : '2'}`);
         const objetosStr = arquivosObj.map((o) => `"${o}"`).join(' ');
         const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
-        // -gdwarf-4: gera DWARF (não CodeView) para coincidir com os metadados DIBuilder
-        // gerados no IR. O CodeView emitter do clang para MSVC trava com nossos metadados DWARF.
+        // Em modo de depuração, converte #dbg_declare/#dbg_value (novo formato LLVM 18+) para
+        // o formato clássico call void @llvm.dbg.declare/llvm.dbg.value. O clang 19 crasha
+        // no X86 Assembly Printer ao processar o novo formato com alvo x86_64-pc-windows-msvc
+        // + DWARF. A conversão textual é determinística pois o IR é gerado pelo próprio
+        // llvm-bindings com formato conhecido. Tenta opt primeiro (LLVM 18/19); se falhar,
+        // aplica a conversão textual como fallback garantido.
+        // -gdwarf-4: gera DWARF (não CodeView) para coincidir com os metadados DIBuilder.
+        let irParaCompilacao = irPath;
+        if (emitirDebug) {
+            const irCompatPath = path.join(diretorioSaida, `${nomeBase}_compat.ll`);
+            let convertidoViaOpt = false;
+            try {
+                execSync(`opt -S --no-new-debug-info-format "${irPath}" -o "${irCompatPath}"`, { stdio: 'pipe' });
+                irParaCompilacao = irCompatPath;
+                arquivosTemporarios.push(irCompatPath);
+                convertidoViaOpt = true;
+                taquigrafarInfo('Formato de depuração convertido via opt');
+            } catch { /* opt não disponível ou não suporta o flag nesta versão */ }
+
+            if (!convertidoViaOpt) {
+                // Converte textualmente: #dbg_declare(storage, var, expr, loc)
+                //   → call void @llvm.dbg.declare(metadata storage, metadata var, metadata expr), !dbg loc
+                const irConvertido = irCompativel
+                    .replace(
+                        /^\s*#dbg_declare\(\s*([^,]+?),\s*(!\d+),\s*(!DIExpression\([^)]*\)|!\d+),\s*(!\d+)\)\s*$/gm,
+                        (_, storage, variable, expression, location) =>
+                            `  call void @llvm.dbg.declare(metadata ${storage.trim()}, metadata ${variable}, metadata ${expression}), !dbg ${location}`
+                    )
+                    .replace(
+                        /^\s*#dbg_value\(\s*([^,]+?),\s*(!\d+),\s*(!DIExpression\([^)]*\)|!\d+),\s*(!\d+)\)\s*$/gm,
+                        (_, value, variable, expression, location) =>
+                            `  call void @llvm.dbg.value(metadata ${value.trim()}, metadata ${variable}, metadata ${expression}), !dbg ${location}`
+                    );
+                fs.writeFileSync(irCompatPath, irConvertido);
+                irParaCompilacao = irCompatPath;
+                arquivosTemporarios.push(irCompatPath);
+                taquigrafarInfo('Formato de depuração convertido (compatibilidade com clang 19)');
+            }
+        }
         const flagsOtimizacao = emitirDebug ? '-O0 -gdwarf-4' : '-O2';
-        execSync(`clang ${flagsOtimizacao} "${irPath}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        execSync(`clang ${flagsOtimizacao} "${irParaCompilacao}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
         taquigrafarEtapa('Limpando arquivos temporários');

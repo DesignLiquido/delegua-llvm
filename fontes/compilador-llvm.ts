@@ -485,6 +485,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'lógico':
                 return this.construtorDebug.createBasicType('logico', 1, llvm.dwarf.TypeKind.DW_ATE_boolean);
             case 'texto':
+                // texto é ponteiro para char; usa DW_ATE_address (64 bits) como tipo DWARF.
+                // createPointerType não está disponível na API llvm-bindings, por isso
+                // usamos um tipo básico de endereço. No LLDB/CodeLLDB use (char*)var ou ,s
+                // no watch para ver o conteúdo da string.
                 return this.construtorDebug.createBasicType('texto', 64, llvm.dwarf.TypeKind.DW_ATE_address);
             default:
                 return null;
@@ -568,6 +572,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
         const subPrograma = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
         const tipoDebug = this.obterTipoDebug(tipo);
+        // Tipos sem mapeamento DWARF (ex.: classes, qualquer) retornam null.
+        // Omitir o declare evita crash no emissor DWARF do clang 19 ao derreferenciar
+        // um DIType nulo ao gerar informações de tipo da variável.
+        if (!tipoDebug) return;
         const varDebug = this.construtorDebug.createAutoVariable(
             subPrograma,
             nome,
@@ -596,6 +604,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
         const subPrograma = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
         const tipoDebug = this.obterTipoDebug(tipo);
+        // Tipos sem mapeamento DWARF (ex.: classes, qualquer) retornam null.
+        // Omitir o declare evita crash no emissor DWARF do clang 19 ao derreferenciar
+        // um DIType nulo ao gerar informações de tipo do parâmetro.
+        if (!tipoDebug) return;
         const varDebug = this.construtorDebug.createParameterVariable(
             subPrograma,
             nome,
@@ -758,7 +770,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const linhaMetodo = (metodo.simbolo as any).linha ?? 0;
             const hashMetodo = (metodo.simbolo as any).hashArquivo as number | undefined;
             this.criarSubprogramaDebug(objetoLlvmFuncao, metodo.simbolo.lexema, linhaMetodo, this.obterArquivoDebugParaHash(hashMetodo));
-            await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao);
+            // Prepara parâmetros do método para debug info; arg 0 é 'isto' (self).
+            const parametrosDebugMetodo = this.construtorDebug
+                ? metodo.funcao.parametros.map((parametro, indice) => ({
+                      arg: objetoLlvmFuncao.getArg(indice + 1),
+                      nome: parametro.nome.lexema,
+                      tipo: parametro.tipoDado ?? 'qualquer',
+                      argNo: indice + 2,
+                      linha: linhaMetodo,
+                  }))
+                : undefined;
+            await this.visitarCorpoFuncao(metodo.funcao, objetoLlvmFuncao, parametrosDebugMetodo);
             this.finalizarSubprogramaDebug();
             const blocoAtualMetodo = this.montador.GetInsertBlock();
             if (blocoAtualMetodo && !blocoAtualMetodo.getTerminator()) {
@@ -2315,6 +2337,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoLogica(expressao: Logico): Promise<any> {
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
         // Avalia curto-circuito: resolve esquerda, decide, possivelmente resolve direita.
         const esquerda = await expressao.esquerda.aceitar(this);
         const tipoEsquerda = this.resolverTipoConstruto(expressao.esquerda);
@@ -2526,6 +2549,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoUnaria(expressao: Unario): Promise<llvm.Value> {
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
         const operandoResolvido = await expressao.operando.aceitar(this);
 
         let valor: llvm.Value;
@@ -2693,9 +2717,29 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve(alocVetor);
     }
 
-    protected async visitarCorpoFuncao(funcaoConstruto: FuncaoConstruto, objetoLlvmFuncao: llvm.Function) {
+    protected async visitarCorpoFuncao(
+        funcaoConstruto: FuncaoConstruto,
+        objetoLlvmFuncao: llvm.Function,
+        parametrosDebug?: Array<{ arg: llvm.Value; nome: string; tipo: string; argNo: number; linha: number }>
+    ) {
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', objetoLlvmFuncao);
         this.montador.SetInsertPoint(blocoEscopo);
+        // Emite alloca + store + llvm.dbg.declare para cada parâmetro formal.
+        // A alloca substitui a referência direta ao argumento LLVM no escopo de variáveis,
+        // permitindo ao LLDB/CodeLLDB inspecionar parâmetros nas janelas de variáveis e watch.
+        if (parametrosDebug && this.construtorDebug) {
+            const escopo = this.pilhaVariaveisEscopo.topoDaPilha();
+            for (const param of parametrosDebug) {
+                const tipoLlvm = this.obterTipoLlvm(param.tipo);
+                const aloc = this.montador.CreateAlloca(tipoLlvm, null, `${param.nome}_param`);
+                this.montador.CreateStore(param.arg, aloc);
+                this.emitirDeclaracaoParametroDebug(aloc, param.nome, param.tipo, param.linha, param.argNo);
+                const varEscopo = escopo.get(param.nome);
+                if (varEscopo) {
+                    varEscopo.variavelLlvm = aloc;
+                }
+            }
+        }
         for (const construtoInstrucao of funcaoConstruto.corpo) {
             await construtoInstrucao.aceitar(this);
         }
@@ -2879,8 +2923,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoRetornoAnterior = this.tipoRetornoFuncaoAtual;
         this.tipoRetornoFuncaoAtual = declaracao.funcao.tipo ?? null;
 
+        // Prepara parâmetros para emissão de debug info dentro do corpo da função.
+        const parametrosDebugFuncao = this.construtorDebug
+            ? declaracao.funcao.parametros.map((parametro, indice) => ({
+                  arg: objetoLlvmFuncao.getArg(indice),
+                  nome: parametro.nome.lexema,
+                  tipo: parametro.tipoDado ?? 'qualquer',
+                  argNo: indice + 1,
+                  linha: linhaFuncao,
+              }))
+            : undefined;
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
-        await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao);
+        await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao, parametrosDebugFuncao);
         this.pilhaVariaveisEscopo.removerUltimo();
 
         this.finalizarSubprogramaDebug();
@@ -3651,6 +3705,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoBinaria(expressao: Binario): Promise<any> {
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
         const promises = await Promise.all([expressao.esquerda.aceitar(this), expressao.direita.aceitar(this)]);
 
         let operandoEsquerdo: llvm.Value | VariavelEscopo | ConstantFP = promises[0],
@@ -4670,6 +4725,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoDeChamada(expressao: Chamada): Promise<any> {
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
         // Instanciação de classe: Ponto(...)
         if (expressao.entidadeChamada.constructor === Variavel) {
             const nomeEntidadeChamada = (expressao.entidadeChamada as Variavel).simbolo.lexema;

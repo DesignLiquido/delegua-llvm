@@ -32,6 +32,23 @@
       ],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Delegua > Depurar executável compilado",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${input:caminhoExecutavel}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["c"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "caminhoExecutavel",
+      "type": "promptString",
+      "description": "Caminho completo do executável compilado com -g / --debug",
+      "default": "${workspaceFolder}/inicial.exe"
     }
   ]
 }

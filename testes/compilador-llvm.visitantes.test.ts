@@ -794,7 +794,7 @@ describe('Compilador LLVM - visitantes', () => {
                 compiladorLocal.visitarExpressaoDeVariavel({
                     simbolo: { lexema: 'naoExiste' },
                 } as any)
-            ).rejects.toThrow('Variável naoExiste não existe neste escopo.');
+            ).rejects.toThrow("Variável 'naoExiste' não existe neste escopo.");
         });
     });
 

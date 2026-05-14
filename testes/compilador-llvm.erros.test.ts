@@ -37,6 +37,6 @@ describe('Compilador - Erros', () => {
 
         await expect(compilador.compilar([
             'escreva(naoDeclarada)'
-        ])).rejects.toThrow('Erros ao executar código:');
+        ])).rejects.toThrow("Erro sintático: Variável não definida: 'naoDeclarada'.");
     });
 });
