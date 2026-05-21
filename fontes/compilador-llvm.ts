@@ -2730,6 +2730,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (parametrosDebug && this.construtorDebug) {
             const escopo = this.pilhaVariaveisEscopo.topoDaPilha();
             for (const param of parametrosDebug) {
+                // Tipos ptr (texto, vetor, classe, qualquer) usam a convenção "caller passa
+                // a própria alloca como ptr*". O parâmetro já RECEBE essa alloca (um ptr).
+                // Criar outra alloca e armazenar o ptr nela introduziria dupla indireção:
+                //   alloca_param → alloca_caller → char* (ou struct)
+                // mas carregarValorSeNecessario / carregarArgumentoTexto só fazem UM load,
+                // retornando alloca_caller como se fosse o valor final → lixo ou segfault.
+                // Para escalares (i32, i64, double, i1) o arg já é o valor direto; a alloca
+                // é correta pois adiciona exatamente um nível de indireção.
+                if (this.tipoEhPonteiro(param.arg.getType())) continue;
                 const tipoLlvm = this.obterTipoLlvm(param.tipo);
                 const aloc = this.montador.CreateAlloca(tipoLlvm, null, `${param.nome}_param`);
                 this.montador.CreateStore(param.arg, aloc);
