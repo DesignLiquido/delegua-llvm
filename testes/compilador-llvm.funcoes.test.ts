@@ -151,4 +151,30 @@ describe('Compilador - Funções', () => {
 
         expect(resultado).toBeTruthy();
     });
+
+    it('Negação unária em retorna', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao negar(n: inteiro): inteiro {',
+            '    retorna -n',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('define i32 @negar(i32 %0)');
+    });
+
+    it('Função que retorna resultado de comparação', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'funcao maiorQue(a: inteiro, b: inteiro): lógico {',
+            '    retorna a > b',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('define i1 @maiorQue(i32 %0, i32 %1)');
+        expect(resultado).toContain('icmp sgt i32');
+        expect(resultado).toContain('ret i1');
+    });
 });

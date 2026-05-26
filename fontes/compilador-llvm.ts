@@ -2554,8 +2554,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         let valor: llvm.Value;
         if (operandoResolvido instanceof VariavelEscopo) {
-            const tipoOperando = this.obterTipoLlvm(expressao.operando.tipo);
-            valor = this.montador.CreateLoad(tipoOperando, operandoResolvido.variavelLlvm, 'load_unary');
+            if (this.tipoEhPonteiro(operandoResolvido.variavelLlvm.getType())) {
+                const tipoOperando = this.obterTipoLlvm(expressao.operando.tipo);
+                valor = this.montador.CreateLoad(tipoOperando, operandoResolvido.variavelLlvm, 'load_unary');
+            } else {
+                valor = operandoResolvido.variavelLlvm;
+            }
         } else {
             valor = operandoResolvido;
         }

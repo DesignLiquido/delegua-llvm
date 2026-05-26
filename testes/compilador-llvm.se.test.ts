@@ -177,6 +177,26 @@ describe('Compilador - Se', () => {
         expect(resultado).toContain('se_apos:');
     });
 
+    it('Resultado de comparação atribuído a variável lógica', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'var a: inteiro = 5',
+            'var b: inteiro = 10',
+            'var maior: lógico = a > b',
+            'se (maior) {',
+            '    escreva("a é maior");',
+            '} senao {',
+            '    escreva("b é maior ou igual");',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('alloca i1');
+        expect(resultado).toContain('icmp sgt i32');
+        expect(resultado).toContain('se_entao:');
+        expect(resultado).toContain('se_senao:');
+    });
+
     it('Se aninhado', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
