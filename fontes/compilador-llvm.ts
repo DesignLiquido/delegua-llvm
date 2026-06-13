@@ -76,6 +76,7 @@ import {
     Extensao,
     InterfaceDeclaracao,
 } from '@designliquido/delegua';
+import { lerMetadadosClasse, lerMetadadosMetodo } from '@designliquido/delegua/ffi';
 import { ConstrutoInterface, ParametroInterface, VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
 import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from '@designliquido/llvm-bindings';
@@ -156,7 +157,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Mapa de herança: nomeFIlho → nomePai (single inheritance).
     protected superClasses: Map<string, string> = new Map();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
-    // Populado em criarFuncoesNativas() à medida que as bibliotecas são implementadas.
+    // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
     protected pilhaIsto: llvm.Value[] = [];
     protected classesComMarcadorTipo: Set<string> = new Set();
@@ -175,6 +176,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Bloco básico onde o cache é válido.
     protected cacheBlocoAtual: llvm.BasicBlock | null = null;
     protected _contadorNomesAnonimos: number = 0;
+
+    // Registros para FFI (classe estrangeira): classes registradas, funções declaradas e bibliotecas.
+    protected ffiClasses: Set<string> = new Set();
+    protected funcoesFFI: Map<string, Map<string, llvm.Function>> = new Map();
+    protected bibliotecasFFI: Map<string, string> = new Map();
 
     // Metadados de depuração DWARF (populados apenas quando emitirDebug=true em compilar()).
     protected construtorDebug: llvm.DIBuilder | null = null;
@@ -642,16 +648,86 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
+    // Mapeia tipo Delégua para LLVM, incluindo 'vazio' → void (que obterTipoLlvm não suporta).
+    protected tipoFFIParaLlvm(tipoDelegua: string): llvm.Type {
+        if (tipoDelegua === 'vazio') return llvm.Type.getVoidTy(this.contexto);
+        return this.obterTipoLlvm(tipoDelegua);
+    }
+
+    protected async compilarClasseEstrangeira(declaracao: Classe): Promise<void> {
+        const nomeClasse = declaracao.simbolo.lexema;
+        const meta = lerMetadadosClasse(declaracao.decoradores);
+        if (!meta) {
+            const err = new ErroCompilador(
+                `Classe estrangeira '${nomeClasse}' não tem @definicao(biblioteca="..."). Não é possível compilar para LLVM IR.`
+            );
+            err.linha = declaracao.linha;
+            throw err;
+        }
+
+        const { biblioteca, prefixo } = meta;
+        this.ffiClasses.add(nomeClasse);
+        this.bibliotecasFFI.set(nomeClasse, biblioteca);
+
+        const mapaFuncoes = new Map<string, llvm.Function>();
+        if (!this.metodosClasse.has(nomeClasse)) this.metodosClasse.set(nomeClasse, new Map());
+        if (!this.parametrosMetodosClasse.has(nomeClasse)) this.parametrosMetodosClasse.set(nomeClasse, new Map());
+
+        for (const metodo of declaracao.metodos) {
+            const nomeMetodo = metodo.simbolo.lexema;
+            const metaMetodo = lerMetadadosMetodo(metodo.decoradores ?? [], nomeMetodo, prefixo);
+            const simbolo = metaMetodo.simbolo;
+
+            const tipoRetornoStr = metodo.funcao.tipo ?? 'vazio';
+            const tipoRetorno = this.tipoFFIParaLlvm(tipoRetornoStr);
+            const tiposParams: llvm.Type[] = metodo.funcao.parametros.map((p) =>
+                this.tipoFFIParaLlvm(p.tipoDado ?? 'qualquer')
+            );
+
+            const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParams, false);
+            const funcaoExterna = llvm.Function.Create(
+                tipoFuncao,
+                llvm.Function.LinkageTypes.ExternalLinkage,
+                simbolo,
+                this.modulo
+            );
+
+            // Declara subprograma DWARF sem corpo (spFlags=0) para que depuradores vejam o símbolo.
+            if (this.construtorDebug && this.arquivoDebug) {
+                const tipoSub = this.construtorDebug.createSubroutineType(
+                    this.construtorDebug.getOrCreateTypeArray([null])
+                );
+                const subprograma = this.construtorDebug.createFunction(
+                    this.arquivoDebug,
+                    simbolo,
+                    simbolo,
+                    this.arquivoDebug,
+                    declaracao.linha ?? 0,
+                    tipoSub,
+                    declaracao.linha ?? 0,
+                    llvm.DINode.DIFlags.FlagPrototyped,
+                    0
+                );
+                funcaoExterna.setSubprogram(subprograma);
+            }
+
+            mapaFuncoes.set(nomeMetodo, funcaoExterna);
+            this.metodosClasse.get(nomeClasse).set(nomeMetodo, tipoRetornoStr);
+            this.parametrosMetodosClasse.get(nomeClasse).set(nomeMetodo, metodo.funcao.parametros);
+        }
+
+        this.funcoesFFI.set(nomeClasse, mapaFuncoes);
+
+        // Sentinela no escopo de módulo: permite que chamadas como LibM.cosseno() resolvam
+        // a classe sem alocar memória — variavelLlvm=null sinaliza que é FFI (ver README.md).
+        this.pilhaVariaveisEscopo.fundoDaPilha().set(nomeClasse, new VariavelEscopo(null, null, nomeClasse));
+    }
+
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
 
         if (declaracao.estrangeira) {
-            const erroFFI = new ErroCompilador(
-                `Classe estrangeira '${nomeClasse}' não pode ser compilada para LLVM IR. ` +
-                `Declare a função C correspondente com 'externo' ou use um módulo de biblioteca.`
-            );
-            erroFFI.linha = declaracao.linha;
-            throw erroFFI;
+            return await this.compilarClasseEstrangeira(declaracao);
         }
 
         // Detecta superclasse (primeira entrada em superClasses, se existir).
@@ -4148,6 +4224,40 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return objetoAlloc;
     }
 
+    protected async chamarMetodoFFI(
+        nomeClasse: string,
+        nomeMetodo: string,
+        argumentos: ConstrutoInterface[],
+        linha?: number
+    ): Promise<llvm.Value> {
+        const funcaoExterna = this.funcoesFFI.get(nomeClasse)?.get(nomeMetodo);
+        if (!funcaoExterna) {
+            const err = new ErroCompilador(`Método FFI '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
+            err.linha = linha;
+            throw err;
+        }
+        const parametros = this.parametrosMetodosClasse.get(nomeClasse)?.get(nomeMetodo) ?? [];
+        const args: llvm.Value[] = [];
+        for (let i = 0; i < argumentos.length; i++) {
+            const tipoPar = parametros[i]?.tipoDado ?? 'qualquer';
+            if (tipoPar === 'inteiro') {
+                args.push(await this.carregarArgumentoInteiro(argumentos[i]));
+            } else if (tipoPar === 'numero' || tipoPar === 'número') {
+                args.push(await this.carregarArgumentoNumero(argumentos[i]));
+            } else if (tipoPar === 'texto') {
+                args.push(await this.carregarArgumentoTexto(argumentos[i]));
+            } else {
+                const argResolvido = await argumentos[i].aceitar(this);
+                args.push(
+                    argResolvido instanceof VariavelEscopo
+                        ? argResolvido.variavelLlvm
+                        : (argResolvido as llvm.Value)
+                );
+            }
+        }
+        return this.montador.CreateCall(funcaoExterna, args);
+    }
+
     protected async chamarMetodoInstancia(
         acesso: AcessoMetodo | AcessoMetodoOuPropriedade,
         argumentos: ConstrutoInterface[]
@@ -4233,6 +4343,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
             }
             return this.montador.CreateCall(entrada.callee, args);
+        }
+
+        // Despacho FFI: classe estrangeira declarada com @definicao.
+        if (this.ffiClasses.has(nomeClasse)) {
+            return await this.chamarMetodoFFI(nomeClasse, nomeMetodo, argumentos, acesso.linha);
         }
 
         // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
@@ -4991,7 +5106,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      *
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
-    protected criarFuncoesNativa(modulosImportados?: Set<string>): void {
+    protected criarFuncaoNativa(modulosImportados?: Set<string>): void {
         // %Vetor = type { ptr, i32 }  (ponteiro para elementos + tamanho)
         this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
         this.tipoEstruturaVetor.setBody([llvm.PointerType.get(this.contexto, 0), this.montador.getInt32Ty()]);
@@ -5373,6 +5488,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.parametrosMetodosClasse = new Map();
         this.superClasses = new Map();
         this.mapaModulos = new Map();
+        this.ffiClasses = new Set();
+        this.funcoesFFI = new Map();
+        this.bibliotecasFFI = new Map();
         this.pilhaIsto = [];
         this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
@@ -5524,7 +5642,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             if (match) modulosImportados.add(match[1]);
         }
 
-        this.criarFuncoesNativa(modulosImportados);
+        this.criarFuncaoNativa(modulosImportados);
 
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha();
         topoDaPilhaDeVariaveis.set('numero', new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value));
@@ -5573,7 +5691,31 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.construtorDebug.finalize();
         }
 
-        return this.modulo.print();
+        let irFinal = this.modulo.print();
+
+        // Injeta metadados !llvm.linker.options e comentários de link para bibliotecas FFI.
+        if (this.bibliotecasFFI.size > 0) {
+            const bibliotecas = [...new Set(this.bibliotecasFFI.values())];
+            const metaIdMax = [...irFinal.matchAll(/^!(\d+)\s*=/gm)].reduce(
+                (max, m) => Math.max(max, parseInt(m[1], 10)),
+                -1
+            );
+            let nextId = metaIdMax + 1;
+            const linhasNovas: string[] = [''];
+            const idsLinker: string[] = [];
+            for (const biblioteca of bibliotecas) {
+                linhasNovas.push(`; ffi-link: -l${biblioteca}`);
+            }
+            for (const biblioteca of bibliotecas) {
+                linhasNovas.push(`!${nextId} = !{!"-l${biblioteca}"}`);
+                idsLinker.push(`!${nextId}`);
+                nextId++;
+            }
+            linhasNovas.push(`!llvm.linker.options = !{ ${idsLinker.join(', ')} }`);
+            irFinal += linhasNovas.join('\n');
+        }
+
+        return irFinal;
     }
 }
 

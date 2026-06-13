@@ -6,7 +6,7 @@ import { VariavelEscopo } from '../fontes/variavel-escopo';
 // Subclasse de teste que expõe mapaModulos e registra um módulo fictício.
 class CompiladorComModuloTeste extends CompiladorLLVM {
     registrarModuloTeste(nomeModulo: string, nomeFuncao: string, tipoRetorno: 'inteiro' | 'numero' | 'texto') {
-        // Precisa que criarFuncoesNativas já tenha sido chamado (contexto inicializado).
+        // Precisa que criarFuncaoNativa já tenha sido chamado (contexto inicializado).
         // Usamos um hack: compilamos um programa mínimo para inicializar o contexto,
         // depois inserimos a função no módulo LLVM e no mapaModulos.
     }

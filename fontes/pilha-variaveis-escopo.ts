@@ -26,6 +26,11 @@ export class PilhaVariaveisEscopo implements PilhaInterface<Map<string, Variavel
         return this.pilha.pop();
     }
 
+    fundoDaPilha(): Map<string, VariavelEscopo> {
+        if (this.eVazio()) throw new Error('Pilha vazia.');
+        return this.pilha[0];
+    }
+
     obterValor(nome: string): VariavelEscopo {
         for (let i = 1; i <= this.pilha.length; i++) {
             const escopoAtual = this.pilha[this.pilha.length - i];
