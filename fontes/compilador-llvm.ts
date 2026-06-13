@@ -229,6 +229,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         LOAD_OPERANDO: 'load_operando',
         CASO_OU: 'caso_ou',
         TENTE_CORPO: 'tente_corpo',
+        TENTE_SENAO: 'tente_senao',
         TENTE_APOS: 'tente_apos',
         PEGUE_LANDING: 'pegue_landing',
         PEGUE_CORPO: 'pegue_corpo',
@@ -643,6 +644,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
+
+        if (declaracao.estrangeira) {
+            const erroFFI = new ErroCompilador(
+                `Classe estrangeira '${nomeClasse}' não pode ser compilada para LLVM IR. ` +
+                `Declare a função C correspondente com 'externo' ou use um módulo de biblioteca.`
+            );
+            erroFFI.linha = declaracao.linha;
+            throw erroFFI;
+        }
 
         // Detecta superclasse (primeira entrada em superClasses, se existir).
         const superClasseRef = declaracao.superClasses?.[0] as { simbolo?: { lexema?: string }; tipo?: string };
@@ -1277,6 +1287,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const temBlocoPegue =
             declaracao.caminhoPegue &&
             (Array.isArray(declaracao.caminhoPegue) ? declaracao.caminhoPegue.length > 0 : true);
+        const temSenao =
+            declaracao.caminhoSenao &&
+            (Array.isArray(declaracao.caminhoSenao) ? declaracao.caminhoSenao.length > 0 : true);
 
         const blocoTenteCorpo = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_CORPO, funcaoAtual);
         const blocoTenteApos = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_APOS, funcaoAtual);
@@ -1287,6 +1300,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             funcaoAtual
         );
 
+        const blocoSenao = temSenao
+            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_SENAO, funcaoAtual)
+            : null;
         const blocoPegueCorpo = temBlocoPegue
             ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_CORPO, funcaoAtual)
             : null;
@@ -1310,7 +1326,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.SetInsertPoint(blocoTenteCorpo);
 
         await this.processarCaminhoTente(declaracao.caminhoTente);
-        this.montador.CreateBr(blocoTenteApos);
+        // On success: execute senao (if present) before the post-try merge point.
+        this.montador.CreateBr(blocoSenao ?? blocoTenteApos);
+
+        if (blocoSenao) {
+            this.montador.SetInsertPoint(blocoSenao);
+            await this.aceitarListaDeclaracoes(declaracao.caminhoSenao);
+            this.montador.CreateBr(blocoTenteApos);
+        }
 
         this.montador.SetInsertPoint(blocoPegueLanding);
         funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);

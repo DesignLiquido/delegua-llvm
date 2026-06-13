@@ -160,4 +160,65 @@ describe('Compilador - Exceções', () => {
         expect(resultado).not.toContain('invoke void @falhar');
         expect(resultado).not.toContain('pegue_landing');
     });
+
+    it('Try-catch-senao executa bloco senao quando tente tem sucesso', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'tente {',
+            '  escreva("tentando")',
+            '} pegue {',
+            '  escreva("erro")',
+            '} senao {',
+            '  escreva("sucesso")',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('tente_corpo');
+        expect(resultado).toContain('tente_senao');
+        expect(resultado).toContain('tente_apos');
+        expect(resultado).toContain('pegue_corpo');
+        expect(resultado).toContain('pegue_landing');
+        expect(resultado).not.toContain('finalmente_corpo');
+    });
+
+    it('Try-senao sem pegue gera bloco senao apos o corpo', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'tente {',
+            '  escreva("tentando")',
+            '} senao {',
+            '  escreva("sem erros")',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('tente_corpo');
+        expect(resultado).toContain('tente_senao');
+        expect(resultado).toContain('tente_apos');
+        expect(resultado).not.toContain('pegue_corpo');
+    });
+
+    it('Try-catch-senao-finally combina todos os blocos', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'tente {',
+            '  escreva("tentando")',
+            '} pegue {',
+            '  escreva("erro")',
+            '} senao {',
+            '  escreva("sucesso")',
+            '} finalmente {',
+            '  escreva("sempre")',
+            '}'
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('tente_corpo');
+        expect(resultado).toContain('tente_senao');
+        expect(resultado).toContain('tente_apos');
+        expect(resultado).toContain('pegue_corpo');
+        expect(resultado).toContain('pegue_landing');
+        expect(resultado).toContain('finalmente_corpo');
+    });
 });
