@@ -815,7 +815,7 @@ describe('Compilador LLVM - visitantes', () => {
                 analisar: jest.fn().mockResolvedValue({ erros: [], declaracoes: [] }),
             };
 
-            (compiladorLocal as any).criarFuncoesNativa = jest.fn();
+            (compiladorLocal as any).criarFuncaoNativa = jest.fn();
             (compiladorLocal as any).criarPontoEntrada = jest.fn().mockResolvedValue(undefined);
 
             await compiladorLocal.compilar([]);
@@ -836,7 +836,7 @@ describe('Compilador LLVM - visitantes', () => {
                 analisar: jest.fn().mockResolvedValue({ erros: [], declaracoes: [] }),
             };
 
-            (compiladorLocal as any).criarFuncoesNativa = jest.fn();
+            (compiladorLocal as any).criarFuncaoNativa = jest.fn();
             (compiladorLocal as any).criarPontoEntrada = jest.fn().mockResolvedValue(undefined);
 
             await expect(compiladorLocal.compilar([])).resolves.toBeTruthy();
@@ -854,7 +854,7 @@ describe('Compilador LLVM - visitantes', () => {
                 analisar: jest.fn().mockResolvedValue({ erros: [], declaracoes: [] }),
             };
 
-            (compiladorLocal as any).criarFuncoesNativa = jest.fn();
+            (compiladorLocal as any).criarFuncaoNativa = jest.fn();
             (compiladorLocal as any).criarPontoEntrada = jest.fn().mockResolvedValue(undefined);
 
             const spyVerifyModule = jest.spyOn(llvm as any, 'verifyModule').mockReturnValue(true);

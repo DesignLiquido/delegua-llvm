@@ -40,6 +40,21 @@ describe('Compilador - FFI (classes estrangeiras)', () => {
         expect(compilador.bibliotecasEstrangeiras.has('m')).toBe(true);
     });
 
+    it('Gera metadados !llvm.linker.options e comentário ffi-link', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            '@definicao(biblioteca="m", prefixo="")',
+            'classe estrangeira LibM {',
+            '    cosseno(x: numero): numero',
+            '}',
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('; ffi-link: -lm');
+        expect(resultado).toContain('!llvm.linker.options');
+        expect(resultado).toContain('"-lm"');
+    });
+
     it('Prefixo é aplicado ao nome do símbolo quando não há @definicao no método', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
@@ -50,6 +65,20 @@ describe('Compilador - FFI (classes estrangeiras)', () => {
         ]);
 
         expect(resultado).toContain('declare i32 @SSL_conectar(i32');
+    });
+
+    it('Usa símbolo explícito de @definicao no método', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            '@definicao(biblioteca="ssl", prefixo="SSL_")',
+            'classe estrangeira LibSSL {',
+            '    @definicao(simbolo="SSL_CTX_new")',
+            '    novoContexto(): qualquer',
+            '}',
+        ]);
+
+        expect(resultado).toBeTruthy();
+        expect(resultado).toContain('declare ptr @SSL_CTX_new');
     });
 
     it('Método com retorno vazio emite declare void', async () => {
@@ -131,5 +160,23 @@ describe('Compilador - FFI (classes estrangeiras)', () => {
         ]);
 
         expect(resultado).toContain('declare i32 @abs(i32');
+    });
+
+    it('Deduplica bibliotecas repetidas no linker.options', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            '@definicao(biblioteca="m", prefixo="")',
+            'classe estrangeira LibM1 {',
+            '    sin(x: numero): numero',
+            '}',
+            '@definicao(biblioteca="m", prefixo="")',
+            'classe estrangeira LibM2 {',
+            '    cos(x: numero): numero',
+            '}',
+        ]);
+
+        expect(resultado).toBeTruthy();
+        const ocorrencias = (resultado.match(/ffi-link: -lm/g) || []).length;
+        expect(ocorrencias).toBe(1);
     });
 });

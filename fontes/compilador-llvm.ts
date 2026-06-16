@@ -76,6 +76,7 @@ import {
     Extensao,
     InterfaceDeclaracao,
 } from '@designliquido/delegua';
+import { lerMetadadosClasse, lerMetadadosMetodo } from '@designliquido/delegua/ffi';
 import { ConstrutoInterface, ParametroInterface, VisitanteDeleguaInterface } from '@designliquido/delegua/interfaces';
 import { ContinuarQuebra, SustarQuebra } from '@designliquido/delegua/quebras';
 import llvm, { APFloat, APInt, ConstantFP, ConstantInt } from '@designliquido/llvm-bindings';
@@ -156,7 +157,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Mapa de herança: nomeFIlho → nomePai (single inheritance).
     protected superClasses: Map<string, string> = new Map();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
-    // Populado em criarFuncoesNativas() à medida que as bibliotecas são implementadas.
+    // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
     protected pilhaIsto: llvm.Value[] = [];
     protected classesComMarcadorTipo: Set<string> = new Set();
@@ -175,6 +176,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Bloco básico onde o cache é válido.
     protected cacheBlocoAtual: llvm.BasicBlock | null = null;
     protected _contadorNomesAnonimos: number = 0;
+
+    // Bibliotecas estrangeiras referenciadas por classes @definicao.
+    // Campo público para que ilc.ts possa adicionar flags -l ao linker.
+    bibliotecasEstrangeiras: Set<string> = new Set();
+    // Nomes de classes estrangeiras declaradas — permite que visitarExpressaoDeVariavel
+    // retorne um sentinela em vez de lançar erro ao acessar LibM.metodo().
+    protected classesEstrangeiras: Set<string> = new Set();
 
     // Metadados de depuração DWARF (populados apenas quando emitirDebug=true em compilar()).
     protected construtorDebug: llvm.DIBuilder | null = null;
@@ -229,6 +237,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         LOAD_OPERANDO: 'load_operando',
         CASO_OU: 'caso_ou',
         TENTE_CORPO: 'tente_corpo',
+        TENTE_SENAO: 'tente_senao',
         TENTE_APOS: 'tente_apos',
         PEGUE_LANDING: 'pegue_landing',
         PEGUE_CORPO: 'pegue_corpo',
@@ -641,8 +650,43 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
+    // Mapeia tipo Delégua para LLVM, incluindo 'vazio' → void (que obterTipoLlvm não suporta).
+    protected tipoFFIParaLlvm(tipoDelegua: string): llvm.Type {
+        if (tipoDelegua === 'vazio') return llvm.Type.getVoidTy(this.contexto);
+        return this.obterTipoLlvm(tipoDelegua);
+    }
+
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
+
+        // Classe estrangeira com @definicao: emite `declare` via getOrInsertFunction
+        // e registra no mapaModulos para despacho sem ponteiro self.
+        if (declaracao.estrangeira) {
+            const meta = lerMetadadosClasse(declaracao.decoradores);
+            if (meta) {
+                this.bibliotecasEstrangeiras.add(meta.biblioteca);
+                this.classesEstrangeiras.add(nomeClasse);
+                const funcoes = new Map<string, EntradaFuncaoModulo>();
+                for (const metodo of declaracao.metodos) {
+                    const nomeMetodo = metodo.simbolo.lexema;
+                    const metaMetodo = lerMetadadosMetodo(metodo.decoradores, nomeMetodo, meta.prefixo);
+                    const tiposParams = (metodo.funcao?.parametros ?? []).map(p => p.tipoDado ?? 'vazio');
+                    const tipoRetorno = metodo.tipo ?? 'vazio';
+                    const tiposLlvm = tiposParams.map(t => this.obterTipoLlvm(t));
+                    const tipoRetornoLlvm = tipoRetorno === 'vazio'
+                        ? llvm.Type.getVoidTy(this.contexto)
+                        : this.obterTipoLlvm(tipoRetorno);
+                    const tipoFuncao = llvm.FunctionType.get(tipoRetornoLlvm, tiposLlvm, false);
+                    const callee = this.modulo.getOrInsertFunction(metaMetodo.simbolo, tipoFuncao);
+                    funcoes.set(nomeMetodo, { callee, tiposParametros: tiposParams, tipoRetorno });
+                }
+                this.mapaModulos.set(nomeClasse, funcoes);
+                this.metodosClasse.set(nomeClasse, new Map(
+                    [...funcoes.entries()].map(([nome, e]) => [nome, e.tipoRetorno])
+                ));
+            }
+            return;
+        }
 
         // Detecta superclasse (primeira entrada em superClasses, se existir).
         const superClasseRef = declaracao.superClasses?.[0] as { simbolo?: { lexema?: string }; tipo?: string };
@@ -1277,6 +1321,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const temBlocoPegue =
             declaracao.caminhoPegue &&
             (Array.isArray(declaracao.caminhoPegue) ? declaracao.caminhoPegue.length > 0 : true);
+        const temSenao =
+            declaracao.caminhoSenao &&
+            (Array.isArray(declaracao.caminhoSenao) ? declaracao.caminhoSenao.length > 0 : true);
 
         const blocoTenteCorpo = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_CORPO, funcaoAtual);
         const blocoTenteApos = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_APOS, funcaoAtual);
@@ -1287,6 +1334,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             funcaoAtual
         );
 
+        const blocoSenao = temSenao
+            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_SENAO, funcaoAtual)
+            : null;
         const blocoPegueCorpo = temBlocoPegue
             ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_CORPO, funcaoAtual)
             : null;
@@ -1310,7 +1360,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.SetInsertPoint(blocoTenteCorpo);
 
         await this.processarCaminhoTente(declaracao.caminhoTente);
-        this.montador.CreateBr(blocoTenteApos);
+        // On success: execute senao (if present) before the post-try merge point.
+        this.montador.CreateBr(blocoSenao ?? blocoTenteApos);
+
+        if (blocoSenao) {
+            this.montador.SetInsertPoint(blocoSenao);
+            await this.aceitarListaDeclaracoes(declaracao.caminhoSenao);
+            this.montador.CreateBr(blocoTenteApos);
+        }
 
         this.montador.SetInsertPoint(blocoPegueLanding);
         funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);
@@ -4181,8 +4238,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Despacho de módulo importado:
         //   var mod = importar('nome')         → tipo 'modulo:nome'
         //   importar tudo como mod de 'nome'   → tipo 'modulo:nome'
-        if (nomeClasse?.startsWith('modulo:')) {
-            const nomeModulo = nomeClasse.slice(7);
+        if (nomeClasse?.startsWith('modulo:')) {            const nomeModulo = nomeClasse.slice(7);
             const funcoes = this.mapaModulos.get(nomeModulo);
             const entrada = funcoes?.get(nomeMetodo);
             if (!entrada) {
@@ -4210,6 +4266,39 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
             }
             return this.montador.CreateCall(entrada.callee, args);
+        }
+
+        // Despacho de classe estrangeira (@definicao):
+        //   LibM.cosseno(x) → tipo 'classeEstrangeira:LibM'
+        if (nomeClasse?.startsWith('classeEstrangeira:')) {
+            const nomeClasseReal = nomeClasse.slice('classeEstrangeira:'.length);
+            const funcoes = this.mapaModulos.get(nomeClasseReal);
+            const entrada = funcoes?.get(nomeMetodo);
+            if (!entrada) {
+                const erroMetodo = new ErroCompilador(`Método '${nomeMetodo}' não encontrado na classe estrangeira '${nomeClasseReal}'.`);
+                erroMetodo.linha = acesso.linha;
+                erroMetodo.tamanhoToken = nomeMetodo.length;
+                throw erroMetodo;
+            }
+            const argsEstrangeira: llvm.Value[] = [];
+            for (let i = 0; i < argumentos.length; i++) {
+                const tipoPar = entrada.tiposParametros[i] ?? 'qualquer';
+                if (tipoPar === 'inteiro') {
+                    argsEstrangeira.push(await this.carregarArgumentoInteiro(argumentos[i]));
+                } else if (tipoPar === 'numero' || tipoPar === 'número') {
+                    argsEstrangeira.push(await this.carregarArgumentoNumero(argumentos[i]));
+                } else if (tipoPar === 'texto') {
+                    argsEstrangeira.push(await this.carregarArgumentoTexto(argumentos[i]));
+                } else {
+                    const argResolvido = await argumentos[i].aceitar(this);
+                    argsEstrangeira.push(
+                        argResolvido instanceof VariavelEscopo
+                            ? argResolvido.variavelLlvm
+                            : (argResolvido as llvm.Value)
+                    );
+                }
+            }
+            return this.montador.CreateCall(entrada.callee, argsEstrangeira);
         }
 
         // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
@@ -4842,6 +4931,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         try {
             return Promise.resolve(this.pilhaVariaveisEscopo.obterValor(expressao.simbolo.lexema));
         } catch {
+            // Classes estrangeiras são espaços de nome, não variáveis: retorna sentinela.
+            if (this.classesEstrangeiras.has(expressao.simbolo.lexema)) {
+                const nulo = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
+                return Promise.resolve(
+                    new VariavelEscopo(nulo, undefined, `classeEstrangeira:${expressao.simbolo.lexema}`)
+                );
+            }
             const erroVariavel = new ErroCompilador(`Variável '${expressao.simbolo.lexema}' não existe neste escopo.`);
             erroVariavel.linha = expressao.linha;
             erroVariavel.tamanhoToken = expressao.simbolo.lexema.length;
@@ -4968,7 +5064,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
      *
      * No entanto, elas podem servir de inspiração para funções futuras.
      */
-    protected criarFuncoesNativa(modulosImportados?: Set<string>): void {
+    protected criarFuncaoNativa(modulosImportados?: Set<string>): void {
         // %Vetor = type { ptr, i32 }  (ponteiro para elementos + tamanho)
         this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
         this.tipoEstruturaVetor.setBody([llvm.PointerType.get(this.contexto, 0), this.montador.getInt32Ty()]);
@@ -5350,6 +5446,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.parametrosMetodosClasse = new Map();
         this.superClasses = new Map();
         this.mapaModulos = new Map();
+        this.bibliotecasEstrangeiras = new Set();
+        this.classesEstrangeiras = new Set();
         this.pilhaIsto = [];
         this.classesComMarcadorTipo = new Set();
         const mapaVariaveis: Map<string, VariavelEscopo> = new Map<string, VariavelEscopo>();
@@ -5501,7 +5599,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             if (match) modulosImportados.add(match[1]);
         }
 
-        this.criarFuncoesNativa(modulosImportados);
+        this.criarFuncaoNativa(modulosImportados);
 
         const topoDaPilhaDeVariaveis = this.pilhaVariaveisEscopo.topoDaPilha();
         topoDaPilhaDeVariaveis.set('numero', new VariavelEscopo(this.funcaoNumero?.getCallee() as llvm.Value));
@@ -5550,7 +5648,31 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.construtorDebug.finalize();
         }
 
-        return this.modulo.print();
+        let irFinal = this.modulo.print();
+
+        // Injeta metadados !llvm.linker.options e comentários de link para bibliotecas FFI.
+        if (this.bibliotecasEstrangeiras.size > 0) {
+            const bibliotecas = [...this.bibliotecasEstrangeiras];
+            const metaIdMax = [...irFinal.matchAll(/^!(\d+)\s*=/gm)].reduce(
+                (max, m) => Math.max(max, parseInt(m[1], 10)),
+                -1
+            );
+            let nextId = metaIdMax + 1;
+            const linhasNovas: string[] = [''];
+            const idsLinker: string[] = [];
+            for (const biblioteca of bibliotecas) {
+                linhasNovas.push(`; ffi-link: -l${biblioteca}`);
+            }
+            for (const biblioteca of bibliotecas) {
+                linhasNovas.push(`!${nextId} = !{!"-l${biblioteca}"}`);
+                idsLinker.push(`!${nextId}`);
+                nextId++;
+            }
+            linhasNovas.push(`!llvm.linker.options = !{ ${idsLinker.join(', ')} }`);
+            irFinal += linhasNovas.join('\n');
+        }
+
+        return irFinal;
     }
 }
 

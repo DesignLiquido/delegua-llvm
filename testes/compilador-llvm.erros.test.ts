@@ -39,4 +39,14 @@ describe('Compilador - Erros', () => {
             'escreva(naoDeclarada)'
         ])).rejects.toThrow("Erro sintático: Variável não definida: 'naoDeclarada'.");
     });
+
+    it('Classe estrangeira sem @definicao deve lançar erro de compilação', async () => {
+        const compilador = new CompiladorLLVM();
+
+        await expect(compilador.compilar([
+            'classe estrangeira LibC {',
+            '    puts(s: texto): inteiro',
+            '}'
+        ])).rejects.toThrow("Classe estrangeira 'LibC' não tem @definicao(biblioteca=\"...\").");
+    });
 });

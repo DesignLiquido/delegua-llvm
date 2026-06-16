@@ -242,6 +242,12 @@ async function principal() {
         const bibliotecasDir = path.join(__dirname, 'bibliotecas');
         const modulos = detectarModulosImportados(codigo);
         const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir);
+
+        // Adiciona flags -l para bibliotecas estrangeiras referenciadas via @definicao.
+        for (const lib of compilador.bibliotecasEstrangeiras) {
+            flagsLink.push(`-l${lib}`);
+        }
+
         const arquivosObj: string[] = [];
 
         for (const arquivoC of arquivosC) {

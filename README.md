@@ -174,6 +174,29 @@ Após a compilação, execute o binário gerado diretamente:
 ./meu_programa
 ```
 
+## Suporte a FFI (classe estrangeira)
+
+O compilador suporta chamadas a bibliotecas nativas do sistema operacional por meio da construção `classe estrangeira` combinada com o decorador `@definicao`:
+
+```delegua
+@definicao(biblioteca="m", prefixo="")
+classe estrangeira LibM {
+    cosseno(x: numero): numero
+}
+
+var r = LibM.cosseno(0.0)
+```
+
+O compilador emite instruções `declare` no LLVM IR para os símbolos C correspondentes e injeta `!llvm.linker.options` com as flags `-l<biblioteca>` necessárias para o linker.
+
+### Resolução de nome de classe FFI (implementação interna)
+
+Quando uma `classe estrangeira` é compilada, um objeto sentinela `VariavelEscopo` com `variavelLlvm=null` é inserido no escopo de módulo (o frame mais externo da `PilhaVariaveisEscopo`). O campo `tipo` desse sentinela contém o nome da classe.
+
+Isso permite que chamadas estáticas como `LibM.cosseno(0.0)` resolvam o nome `LibM` pela pilha de escopos sem alocar memória. Quando o compilador encontra uma chamada de método em que `nomeClasse` pertence a `ffiClasses`, despacha para `chamarMetodoFFI()` em vez do caminho padrão de método de classe.
+
+> **Nota:** Essa abordagem de sentinela pode mudar no futuro; consulte o código em `compilarClasseEstrangeira()` e `pilha-variaveis-escopo.ts` para a implementação atual.
+
 ## Compilação manual (avançado)
 
 Caso queira compilar manualmente a partir de um arquivo `.ll` já gerado, utilize o [Clang](https://clang.llvm.org/):
