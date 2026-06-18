@@ -284,6 +284,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return !!valor && typeof (valor as { getType?: unknown }).getType === 'function';
     }
 
+    protected arquivoDeSimbolo(simbolo: any): string | undefined {
+        const hash = simbolo?.hashArquivo as number | undefined;
+        return hash !== undefined ? this.mapaHashParaCaminho.get(hash) : undefined;
+    }
+
     protected extrairNomeValorLlvm(valor: llvm.Value): string {
         try {
             const nome = valor.getName();
@@ -1669,7 +1674,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
         if (!nomeClasse) {
             const tipoInferido = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
-            if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
+            if (tipoInferido) nomeClasse = tipoInferido;
         }
 
         const mapaIndices = this.indicesPropriedades.get(nomeClasse);
@@ -1881,7 +1886,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Infere nomeClasse a partir do AST do sub-objeto.
         if (!nomeClasse) {
             const tipoInferido = this.resolverTipoConstruto(expressao.objeto as ConstrutoInterface);
-            if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
+            if (tipoInferido) nomeClasse = tipoInferido;
         }
 
         const nomeMembro = expressao.simbolo.lexema;
@@ -1891,9 +1896,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoProp = mapaTipos?.get(nomeMembro);
 
         if (indice === undefined || !tipoProp) {
-            const erroMembro = new ErroCompilador(`Propriedade '${nomeMembro}' não encontrada na classe '${nomeClasse}'.`);
+            const mensagem = nomeClasse === 'qualquer'
+                ? `Propriedade '${nomeMembro}' não pode ser acessada em valor de tipo 'qualquer': o compilador não conhece a estrutura em tempo de compilação.`
+                : `Propriedade '${nomeMembro}' não encontrada na classe '${nomeClasse ?? 'desconhecida'}'.`;
+            const erroMembro = new ErroCompilador(mensagem);
             erroMembro.linha = expressao.linha;
             erroMembro.tamanhoToken = nomeMembro.length;
+            erroMembro.arquivo = this.arquivoDeSimbolo(expressao.simbolo);
             throw erroMembro;
         }
 
@@ -1933,7 +1942,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Acesso encadeado: infere nomeClasse a partir do AST quando não resolvida pelo escopo.
         if (!nomeClasse) {
             const tipoInferido = this.resolverTipoConstruto(expressao.objeto as ConstrutoInterface);
-            if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
+            if (tipoInferido) nomeClasse = tipoInferido;
         }
 
         const mapaIndices = this.indicesPropriedades.get(nomeClasse);
@@ -1942,7 +1951,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoProp = mapaTipos?.get(expressao.nomePropriedade);
 
         if (indice === undefined || !tipoProp) {
-            const erroPropriedade = new ErroCompilador(`Propriedade '${expressao.nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
+            const mensagem = nomeClasse === 'qualquer'
+                ? `Propriedade '${expressao.nomePropriedade}' não pode ser acessada em valor de tipo 'qualquer': o compilador não conhece a estrutura em tempo de compilação.`
+                : `Propriedade '${expressao.nomePropriedade}' não encontrada na classe '${nomeClasse ?? 'desconhecida'}'.`;
+            const erroPropriedade = new ErroCompilador(mensagem);
             erroPropriedade.linha = expressao.linha;
             erroPropriedade.tamanhoToken = expressao.nomePropriedade.length;
             throw erroPropriedade;
@@ -2120,6 +2132,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const erroDefinirValor = new ErroCompilador(`Propriedade '${nomePropriedade}' não encontrada na classe '${nomeClasse}'.`);
             erroDefinirValor.linha = expressao.linha;
             erroDefinirValor.tamanhoToken = nomePropriedade.length;
+            erroDefinirValor.arquivo = this.arquivoDeSimbolo(expressao.nome);
             throw erroDefinirValor;
         }
 
@@ -2135,9 +2148,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         let novoValorLlvm: llvm.Value;
         if (novoValor instanceof VariavelEscopo) {
             novoValorLlvm = this.carregarValorSeNecessario(novoValor, tipoProp, 'load_val');
+        } else if (!this.ehValorLlvm(novoValor)) {
+            // Dicionários, objetos JS e outros não-LLVM: ponteiro nulo como sentinela.
+            novoValorLlvm = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
         } else {
             const brutoLlvm = novoValor as llvm.Value;
-            if (this.tipoEhVetor(tipoProp) && brutoLlvm && this.tipoEhPonteiro(brutoLlvm.getType())) {
+            if (this.tipoEhVetor(tipoProp) && this.tipoEhPonteiro(brutoLlvm.getType())) {
                 // Para vetores: brutoLlvm é ptr para %Vetor (ex.: resultado de []); carrega o struct.
                 novoValorLlvm = this.montador.CreateLoad(this.tipoEstruturaVetor, brutoLlvm, 'load_vetor_val');
             } else {
@@ -3364,6 +3380,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             } else {
                 valorOuReferenciaVariavel = valorOuReferenciaVariavel.variavelLlvm;
             }
+        } else if (!this.ehValorLlvm(valorOuReferenciaVariavel)) {
+            // Dicionários, objetos JS e outros não-LLVM: ponteiro nulo como sentinela.
+            valorOuReferenciaVariavel = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
         }
 
         // Isso aqui é necessario pois delegua entende numero literal sem . como numero
@@ -4204,7 +4223,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Acesso encadeado (ex.: isto.simbolos.tamanho()): infere tipo a partir do AST.
         if (!nomeClasse) {
             const tipoInferido = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
-            if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
+            if (tipoInferido) nomeClasse = tipoInferido;
         }
 
         // AcessoMetodo usa .nomeMetodo; AcessoMetodoOuPropriedade usa .simbolo.lexema

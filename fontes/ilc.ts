@@ -88,11 +88,20 @@ function exibirErroCompilador(erro: ErroCompilador, nomeArquivo: string, linhasC
     console.log(`${CORES.vermelho}${CORES.negrito}erro${CORES.reset}${CORES.negrito}: ${erro.message}${CORES.reset}`);
 
     if (erro.linha !== undefined) {
+        const arquivoReal = erro.arquivo ?? nomeArquivo;
+        let linhasReais = linhasCodigo;
+        if (erro.arquivo && erro.arquivo !== nomeArquivo) {
+            try {
+                linhasReais = fs.readFileSync(erro.arquivo, 'utf-8').split('\n');
+            } catch {
+                linhasReais = [];
+            }
+        }
         const col = erro.coluna !== undefined ? `:${erro.coluna}` : '';
-        console.log(`${CORES.azul} --> ${CORES.reset}${nomeArquivo}:${erro.linha}${col}`);
+        console.log(`${CORES.azul} --> ${CORES.reset}${arquivoReal}:${erro.linha}${col}`);
 
         const linhaIdx = erro.linha - 1;
-        const linhaTexto = linhasCodigo[linhaIdx];
+        const linhaTexto = linhasReais[linhaIdx];
         if (linhaTexto !== undefined) {
             const numStr = String(erro.linha);
             const pad = ' '.repeat(numStr.length);
@@ -329,9 +338,9 @@ async function principal() {
         } else {
             taquigrafarErro('Erro interno durante compilação:');
             console.error(error.message || error);
-            const stackLinhas: string[] = (error.stack ?? '').split('\n');
-            const linhaRelevante = stackLinhas.find((l: string) => l.includes('compilador-llvm') || l.includes('ilc'));
-            if (linhaRelevante) console.error(linhaRelevante.trim());
+            if (error.stack) {
+                console.error(error.stack);
+            }
         }
 
         taquigrafarEtapa('Limpando arquivos temporários');
