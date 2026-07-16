@@ -51,7 +51,8 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('%Ponto = type { double, double }');
+        // Campo 0 (i32) é o id de identidade oculto usado por eInstanciaDe; x/y vêm depois.
+        expect(resultado).toContain('%Ponto = type { i32, double, double }');
         expect(resultado).toContain('define void @Ponto_construtor(ptr %0, double %1, double %2)');
         expect(resultado).toContain('ret void');
     });

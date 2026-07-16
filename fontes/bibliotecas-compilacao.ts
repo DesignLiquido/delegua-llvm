@@ -6,8 +6,9 @@ interface BibliotecaCompilacao {
 }
 
 const BIBLIOTECAS_NUCLEO: BibliotecaCompilacao = {
-    arquivosC: ['padrao.c', 'texto.c', 'vetor.c'],
-    flagsLink: [],
+    arquivosC: ['padrao.c', 'texto.c', 'vetor.c', 'dicionario.c'],
+    // -lm: necessário para pow() (operador **), que é sintaxe núcleo, não opcional.
+    flagsLink: ['-lm'],
 };
 
 const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([

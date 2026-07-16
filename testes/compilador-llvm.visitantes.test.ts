@@ -201,27 +201,8 @@ describe('Compilador LLVM - visitantes', () => {
             expect(resultado).toEqual(['a', 'b']);
         });
 
-        it('Dicionario resolve formato por entradas', async () => {
-            const resultado = await compilador.visitarExpressaoDicionario({
-                entradas: [
-                    {
-                        chave: { aceitar: jest.fn().mockResolvedValue('nome') },
-                        valor: { aceitar: jest.fn().mockResolvedValue('Delegua') },
-                    },
-                ],
-            } as any);
-
-            expect(resultado).toEqual({ nome: 'Delegua' });
-        });
-
-        it('Dicionario resolve formato por chaves e valores', async () => {
-            const resultado = await compilador.visitarExpressaoDicionario({
-                chaves: [{ aceitar: jest.fn().mockResolvedValue('x') }],
-                valores: [{ aceitar: jest.fn().mockResolvedValue(10) }],
-            } as any);
-
-            expect(resultado).toEqual({ x: 10 });
-        });
+        // Dicionario agora gera codegen LLVM real (requer this.montador/módulo
+        // inicializados via compilar()) — coberto em compilador-llvm.dicionario.test.ts.
 
         it('FormatacaoEscrita aplica casas decimais em número', async () => {
             const resultado = await compilador.visitarExpressaoFormatacaoEscrita({

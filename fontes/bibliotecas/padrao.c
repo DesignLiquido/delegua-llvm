@@ -42,6 +42,7 @@ int escreva(const char *fmt, ...)
   va_start(ap, fmt);
   int r = vprintf(fmt, ap);
   va_end(ap);
+  fflush(stdout);
   return r;
 }
 
