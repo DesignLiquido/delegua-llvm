@@ -10,6 +10,7 @@ import {
     Atribuir,
     Binario,
     Bloco,
+    BlocoPegue,
     CabecalhoPrograma,
     Chamada,
     Classe,
@@ -1422,9 +1423,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 'exception_data'
             );
 
-            if (declaracao.caminhoPegue instanceof FuncaoConstruto) {
-                const parametroEncontrado = this.extrairParametroPegue(declaracao.caminhoPegue);
-                const nomeParametro = parametroEncontrado.lexema || parametroEncontrado.nome || 'erro';
+            const blocoPegueComParametro = Array.isArray(declaracao.caminhoPegue)
+                ? declaracao.caminhoPegue.find((bloco: BlocoPegue) => bloco.parametro?.lexema)
+                : undefined;
+            if (blocoPegueComParametro) {
+                const nomeParametro = blocoPegueComParametro.parametro.lexema;
                 const tipoTexto = this.obterTipoLlvm('texto');
                 const alocErro = this.montador.CreateAlloca(tipoTexto, null, nomeParametro);
                 this.montador.CreateStore(ponteiroExcecao, alocErro);
@@ -1487,16 +1490,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    protected extrairParametroPegue(caminhoPegue: FuncaoConstruto): any {
-        if (!caminhoPegue) return null;
-
-        if (caminhoPegue.parametros?.length > 0) {
-            return caminhoPegue.parametros[0].nome;
-        }
-
-        return null;
-    }
-
     protected async processarCaminhoTente(caminhoTente: any): Promise<void> {
         if (!caminhoTente) return;
 
@@ -1515,17 +1508,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
     }
 
-    protected async processarCaminhoPegue(caminhoPegue: FuncaoConstruto | Declaracao[] | any): Promise<void> {
+    protected async processarCaminhoPegue(caminhoPegue: BlocoPegue[] | any): Promise<void> {
         if (!caminhoPegue) return;
 
         if (Array.isArray(caminhoPegue)) {
-            await this.aceitarListaDeclaracoes(caminhoPegue);
-            return;
-        }
-
-        const corpoResolvido = (caminhoPegue as FuncaoConstruto).corpo;
-        if (Array.isArray(corpoResolvido)) {
-            await this.aceitarListaDeclaracoes(corpoResolvido);
+            for (const blocoPegue of caminhoPegue as BlocoPegue[]) {
+                await this.aceitarListaDeclaracoes(blocoPegue.corpo);
+            }
             return;
         }
 

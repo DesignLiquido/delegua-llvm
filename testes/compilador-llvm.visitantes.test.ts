@@ -411,9 +411,10 @@ describe('Compilador LLVM - visitantes', () => {
             await (compilador as any).processarCaminhoTente([{ aceitar }]);
             await (compilador as any).processarCaminhoTente(undefined);
 
-            await (compilador as any).processarCaminhoPegue({ corpo: [{ aceitar }] });
+            // caminhoPegue é sempre BlocoPegue[] em runtime (ver @designliquido/delegua Tente);
+            // cada BlocoPegue expõe seu corpo em `.corpo`, não `.aceitar` nem elementos soltos.
+            await (compilador as any).processarCaminhoPegue([{ corpo: [{ aceitar }] }]);
             await (compilador as any).processarCaminhoPegue({ declaracoes: [{ aceitar }] });
-            await (compilador as any).processarCaminhoPegue([{ aceitar }]);
             await (compilador as any).processarCaminhoPegue(undefined);
 
             await (compilador as any).processarCaminhoFinalmente({ aceitar });
@@ -422,15 +423,7 @@ describe('Compilador LLVM - visitantes', () => {
             await (compilador as any).processarCaminhoFinalmente(undefined);
 
             expect(aceitar).toHaveBeenCalledTimes(2);
-            expect(aceitarListaDeclaracoes).toHaveBeenCalledTimes(7);
-        });
-
-        it('Extrair parametro de pegue cobre cenarios', () => {
-            expect((compilador as any).extrairParametroPegue(undefined)).toBeNull();
-            expect((compilador as any).extrairParametroPegue({ parametros: [] })).toBeNull();
-
-            const parametro = { nome: { lexema: 'erro' } };
-            expect((compilador as any).extrairParametroPegue({ parametros: [parametro] })).toBe(parametro.nome);
+            expect(aceitarListaDeclaracoes).toHaveBeenCalledTimes(6);
         });
 
         it('Resolver argumento de chamada converte para inteiro e longo', () => {
