@@ -4654,8 +4654,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             throw erroMetodo;
         }
 
+        const paramDefsMetodo = this.parametrosMetodosClasse.get(nomeClasse)?.get(nomeMetodo) ?? [];
         const args: llvm.Value[] = [objetoPtr];
-        for (const argumento of argumentos) {
+        for (const [indiceArgumento, argumentoOriginal] of argumentos.entries()) {
+            const tipoParamDeclarado = paramDefsMetodo[indiceArgumento]?.tipoDado;
+            const argumento = tipoParamDeclarado
+                ? this.resolverArgumentoChamada(argumentoOriginal, tipoParamDeclarado)
+                : argumentoOriginal;
             const argResolvido = await argumento.aceitar(this);
             if (argResolvido instanceof VariavelEscopo) {
                 const valVE = argResolvido.variavelLlvm;
