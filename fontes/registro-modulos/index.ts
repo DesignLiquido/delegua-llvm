@@ -7,3 +7,4 @@ export { registrarModuloJson } from './json';
 export { registrarModuloHttp } from './http';
 export { registrarModuloCriptografia } from './criptografia';
 export { registrarModuloDados } from './dados';
+export { registrarModuloArgumentos } from './argumentos';

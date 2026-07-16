@@ -97,6 +97,7 @@ import {
     registrarModuloHttp,
     registrarModuloJson,
     registrarModuloMatematica,
+    registrarModuloArgumentos,
 } from './registro-modulos';
 import { resolverEMesclarDeclaracoes, ehImportacaoArquivo } from './resolucao-importacoes';
 import { ErroCompilador } from './erros/erro-compilador';
@@ -266,6 +267,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     registrarModuloHttp: () => void;
     registrarModuloJson: () => void;
     registrarModuloMatematica: () => void;
+    registrarModuloArgumentos: () => void;
 
     constructor() {
         this.lexador = new Lexador();
@@ -5891,6 +5893,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ['http', () => this.registrarModuloHttp()],
             ['criptografia', () => this.registrarModuloCriptografia()],
             ['dados', () => this.registrarModuloDados()],
+            ['argumentos', () => this.registrarModuloArgumentos()],
         ]);
 
         if (modulosImportados) {
@@ -6209,3 +6212,4 @@ CompiladorLLVM.prototype.registrarModuloJson = registrarModuloJson;
 CompiladorLLVM.prototype.registrarModuloHttp = registrarModuloHttp;
 CompiladorLLVM.prototype.registrarModuloCriptografia = registrarModuloCriptografia;
 CompiladorLLVM.prototype.registrarModuloDados = registrarModuloDados;
+CompiladorLLVM.prototype.registrarModuloArgumentos = registrarModuloArgumentos;

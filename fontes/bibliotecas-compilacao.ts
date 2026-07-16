@@ -27,6 +27,7 @@ const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([
         },
     ],
     ['dados', { arquivosC: ['dados.c'], flagsLink: [] }],
+    ['argumentos', { arquivosC: ['argumentos.c'], flagsLink: [] }],
 ]);
 
 export function detectarModulosImportados(linhasCodigo: string[]): string[] {
