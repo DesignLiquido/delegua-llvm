@@ -4668,7 +4668,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             if (argResolvido instanceof VariavelEscopo) {
                 const valVE = argResolvido.variavelLlvm;
                 const nomeInstVE = valVE?.constructor?.name;
-                if (this.registroClasses.has(argResolvido.tipo)) {
+                // O parâmetro declarado no callee manda: se ele espera uma classe conhecida,
+                // o valor é sempre ponteiro direto para essa classe, mesmo que o TIPO INFERIDO
+                // da expressão de origem seja apenas "qualquer" (ex.: leitura de campo de
+                // `dicionário`). Sem isto, um argumento como `dicionario["chave"]` passado a um
+                // parâmetro `Classe` cai no ramo de baixo (convenção ptr* de "qualquer") e é
+                // reembrulhado numa alloca extra — ponteiro-para-ponteiro que o corpo do
+                // método, ao acessar campo com GEP direto em cima do parâmetro, interpreta
+                // incorretamente como o próprio objeto (endereço de memória arbitrário/lixo).
+                //
+                // No sentido inverso, quando o parâmetro do callee é EXPLICITAMENTE "qualquer",
+                // ele sempre faz um load para desembrulhar (ver Interpretador_criarValor gerado
+                // — `load ptr, ptr %2`); nesse caso NÃO tratamos como classe direta mesmo que o
+                // tipo inferido do argumento seja uma classe conhecida, senão esse load lê os
+                // primeiros 8 bytes do próprio objeto como se fossem um ponteiro (lixo).
+                const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
+                const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
+                if (
+                    paramEsperaClasseDireta ||
+                    (!paramExplicitamenteQualquer && this.registroClasses.has(argResolvido.tipo))
+                ) {
                     // Instâncias de classe são sempre ponteiro direto (single indirection) —
                     // mesma convenção de carregarPtrClasseSePreciso/resolverOperando: só
                     // AllocaInst aponta PARA o ponteiro do objeto (precisa de load antes de
@@ -4746,9 +4765,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
                 // Instância de classe crua (ex.: leitura de vetor de classes via `itens[i]`):
                 // sempre ponteiro direto, nunca reembrulhar (mesma convenção do ramo
-                // VariavelEscopo acima — ver comentário lá para detalhes).
+                // VariavelEscopo acima). Mas só quando o parâmetro do callee não é
+                // EXPLICITAMENTE "qualquer": um parâmetro `qualquer` sempre faz um load para
+                // desembrulhar (ver Interpretador_criarValor gerado — `load ptr, ptr %2`), e
+                // passar o ponteiro de objeto cru ali faria esse load ler os primeiros 8 bytes
+                // do próprio objeto como se fossem um ponteiro (lixo). Sem essa exclusão, um
+                // argumento como uma instância de classe passada a um parâmetro `valor: qualquer`
+                // (ex.: `criarValor("funcao", instanciaDeClasse)`) corrompe o ponteiro guardado.
                 const tipoArgBruto = this.resolverTipoConstruto(argumento as ConstrutoInterface);
-                if (tipoArgBruto && this.registroClasses.has(tipoArgBruto)) {
+                const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
+                const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
+                const podeTratarComoClasseDireta =
+                    paramEsperaClasseDireta ||
+                    (!paramExplicitamenteQualquer && !!tipoArgBruto && this.registroClasses.has(tipoArgBruto));
+                if (podeTratarComoClasseDireta) {
                     args.push(val);
                     continue;
                 }
