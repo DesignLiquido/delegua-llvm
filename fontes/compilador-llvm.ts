@@ -1815,24 +1815,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const indiceNaoNegativo = nomeIndice ? this.contadoresNaoNegativos.has(nomeIndice) : false;
 
             // Resolve o índice como valor LLVM i32 (GEP exige índice inteiro).
-            let indiceValor: llvm.Value;
-            if (indiceBruto instanceof Literal && typeof indiceBruto.valor === 'number') {
-                // Índice constante literal: usa diretamente como i32.
-                indiceValor = ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceBruto.valor)));
-            } else if (indiceResolvido instanceof VariavelEscopo) {
-                const tipoIdx = indiceResolvido.tipo ?? 'número';
-                const tipoIdxLlvm = this.obterTipoLlvm(tipoIdx);
-                const idxCarregado = this.montador.CreateLoad(tipoIdxLlvm, indiceResolvido.variavelLlvm, 'idx_f');
-                if (tipoIdx === 'número') {
-                    indiceValor = this.montador.CreateFPToSI(idxCarregado, this.montador.getInt32Ty(), 'idx');
-                } else {
-                    indiceValor = idxCarregado;
-                }
-            } else if (typeof indiceResolvido === 'number') {
-                indiceValor = ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceResolvido)));
-            } else {
-                indiceValor = indiceResolvido as llvm.Value;
-            }
+            const indiceValor = this.resolverIndiceVetorComoI32(indiceBruto, indiceResolvido, 'f');
 
             // Carrega o ponteiro de elementos (com cache para evitar loads redundantes).
             const nomeVetorBase = alvoBruto instanceof Variavel ? alvoBruto.simbolo?.lexema : undefined;
@@ -2070,23 +2053,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoElemento = this.obterTipoLlvm(tipoElementoStr);
 
             // Resolve o índice como valor LLVM i32.
-            let indiceValor: llvm.Value;
-            if (indiceBruto instanceof Literal && typeof indiceBruto.valor === 'number') {
-                indiceValor = ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceBruto.valor)));
-            } else if (indiceResolvido instanceof VariavelEscopo) {
-                const tipoIdx = indiceResolvido.tipo ?? 'número';
-                const tipoIdxLlvm = this.obterTipoLlvm(tipoIdx);
-                const idxCarregado = this.montador.CreateLoad(tipoIdxLlvm, indiceResolvido.variavelLlvm, 'idx_store');
-                if (tipoIdx === 'número') {
-                    indiceValor = this.montador.CreateFPToSI(idxCarregado, this.montador.getInt32Ty(), 'idx_store_i');
-                } else {
-                    indiceValor = idxCarregado;
-                }
-            } else if (typeof indiceResolvido === 'number') {
-                indiceValor = ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceResolvido)));
-            } else {
-                indiceValor = indiceResolvido as llvm.Value;
-            }
+            const indiceValor = this.resolverIndiceVetorComoI32(indiceBruto, indiceResolvido, 'store');
 
             // Carrega o ponteiro de elementos (com cache para evitar loads redundantes).
             const nomeVetorBase = alvoBruto instanceof Variavel ? alvoBruto.simbolo?.lexema : undefined;
@@ -2460,7 +2427,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     async visitarExpressaoLeia(expressao: Leia): Promise<llvm.Value> {
         const mensagemPrompt = expressao.argumentos[0];
-        const mensagemResolvida = await mensagemPrompt.aceitar(this);
+        const mensagemResolvida = mensagemPrompt
+            ? await mensagemPrompt.aceitar(this)
+            : this.montador.CreateGlobalStringPtr('', 'leia_prompt_vazio', 0, this.modulo);
 
         const tipoLeitura = expressao.tipo || 'texto';
         const formatoLeia = this.buscarFormatoLeia(tipoLeitura);
@@ -2947,6 +2916,49 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 // Tipos de classe conhecidos ou desconhecidos: ponteiro opaco.
                 return llvm.PointerType.get(this.contexto, 0);
         }
+    }
+
+    /**
+     * Resolve um índice de acesso a vetor (leitura ou escrita) como um `i32` do LLVM,
+     * pronto para uso em GEP.
+     *
+     * Trata `indiceResolvido` como `VariavelEscopo` só faz `CreateLoad` quando
+     * `variavelLlvm` de fato é um ponteiro (`tipoEhPonteiro`). Parâmetros escalares
+     * (`inteiro`/`número`) só recebem uma alloca — e portanto só viram ponteiro — quando a
+     * depuração DWARF está habilitada (ver `visitarCorpoFuncao`); sem `-g`/`--debug`, o
+     * argumento já chega como valor pronto no registrador, e um `CreateLoad` incondicional
+     * sobre ele falha a verificação do módulo LLVM com "Load operand must be a pointer."
+     * Reproduz isoladamente ao indexar (leitura OU escrita) qualquer vetor com uma
+     * variável de parâmetro como índice, fora do modo de depuração.
+     */
+    protected resolverIndiceVetorComoI32(
+        indiceBruto: ConstrutoInterface | undefined,
+        indiceResolvido: unknown,
+        sufixoNome: string
+    ): llvm.Value {
+        if (indiceBruto instanceof Literal && typeof indiceBruto.valor === 'number') {
+            return ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceBruto.valor)));
+        }
+
+        if (indiceResolvido instanceof VariavelEscopo) {
+            const tipoIdx = indiceResolvido.tipo ?? 'número';
+            const tipoIdxLlvm = this.obterTipoLlvm(tipoIdx);
+            const precisaCarregar = this.tipoEhPonteiro(indiceResolvido.variavelLlvm.getType());
+            const valorBruto = precisaCarregar
+                ? this.montador.CreateLoad(tipoIdxLlvm, indiceResolvido.variavelLlvm, `idx_${sufixoNome}`)
+                : indiceResolvido.variavelLlvm;
+
+            if (tipoIdx === 'número') {
+                return this.montador.CreateFPToSI(valorBruto, this.montador.getInt32Ty(), `idx_${sufixoNome}_i`);
+            }
+            return valorBruto;
+        }
+
+        if (typeof indiceResolvido === 'number') {
+            return ConstantInt.get(this.contexto, new APInt(32, Math.trunc(indiceResolvido)));
+        }
+
+        return indiceResolvido as llvm.Value;
     }
 
     /**
