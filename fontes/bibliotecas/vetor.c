@@ -54,6 +54,35 @@ int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem) {
     return novo_tam;
 }
 
+void* delegua_vetor_definir_indice(Vetor* v, int indice, int tam_elem) {
+    if (!v || indice < 0 || tam_elem <= 0) {
+        fprintf(stderr, "[DELEGUA ERRO] delegua_vetor_definir_indice: argumento invalido"
+                        " (v=%p, indice=%d, tam_elem=%d)\n", (void*)v, indice, tam_elem);
+        fflush(stderr);
+        return NULL;
+    }
+    if (indice >= v->tamanho) {
+        int novo_tam = indice + 1;
+        void* novo_ptr = realloc(v->ptr, (size_t)novo_tam * (size_t)tam_elem);
+        if (!novo_ptr) {
+            fprintf(stderr, "[DELEGUA ERRO] delegua_vetor_definir_indice: falha ao realocar"
+                            " (indice=%d, tam_elem=%d)\n", indice, tam_elem);
+            fflush(stderr);
+            return NULL;
+        }
+        v->ptr = novo_ptr;
+        /* Zera os "buracos" deixados entre o tamanho antigo e o novo índice (ex.:
+           vetor com tamanho 1 recebendo uma escrita direta no índice 3), evitando
+           lixo de memória não inicializada nas posições 1 e 2. */
+        if (indice > v->tamanho) {
+            memset((char*)v->ptr + (size_t)v->tamanho * (size_t)tam_elem, 0,
+                   (size_t)(indice - v->tamanho) * (size_t)tam_elem);
+        }
+        v->tamanho = novo_tam;
+    }
+    return (char*)v->ptr + (size_t)indice * (size_t)tam_elem;
+}
+
 int delegua_vetor_remover_ultimo(Vetor* v) {
     if (v->tamanho <= 0) return -1;
     v->tamanho -= 1;

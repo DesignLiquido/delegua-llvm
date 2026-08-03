@@ -131,6 +131,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoTextoDeNumero: llvm.FunctionCallee;
     funcaoFormatar: llvm.FunctionCallee;
     funcaoVetorAdicionar: llvm.FunctionCallee;
+    funcaoVetorDefinirIndice: llvm.FunctionCallee;
     funcaoVetorRemoverUltimo: llvm.FunctionCallee;
     funcaoVetorRemoverPrimeiro: llvm.FunctionCallee;
     funcaoVetorInverter: llvm.FunctionCallee;
@@ -2055,21 +2056,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // Resolve o índice como valor LLVM i32.
             const indiceValor = this.resolverIndiceVetorComoI32(indiceBruto, indiceResolvido, 'store');
 
-            // Carrega o ponteiro de elementos (com cache para evitar loads redundantes).
-            const nomeVetorBase = alvoBruto instanceof Variavel ? alvoBruto.simbolo?.lexema : undefined;
-            const nomeVetor =
-                nomeVetorBase && nomeVetorBase.length > 0
-                    ? nomeVetorBase
-                    : this.extrairNomeValorLlvm(alvoResolvidoVetor.variavelLlvm);
-            const ptrElementos = this.carregarPonteiroElementosVetor(nomeVetor, alvoResolvidoVetor.variavelLlvm);
-
-            // GEP para o elemento específico.
-            const gepElemento = this.montador.CreateInBoundsGEP(
-                tipoElemento,
-                ptrElementos,
-                [indiceValor],
+            // Escreve via runtime em vez de um GEP cru sobre o ponteiro de elementos
+            // atual: `delegua_vetor_definir_indice` cresce (realoca) o vetor quando
+            // `indiceValor` está além do tamanho atual, e devolve o endereço de destino
+            // já válido. Sem isso, atribuição por índice além da capacidade (ex.: usar
+            // `vetor[indice] = valor` para empilhar, como em PilhaEscoposExecucao no
+            // MVP autointerpretador de `delegua-delegua`) escreve fora dos limites do
+            // buffer alocado — corrompendo o heap silenciosamente em vez de crescer.
+            const tamElemento = this.constTamElem(tipoElementoStr);
+            const gepElemento = this.montador.CreateCall(
+                this.funcaoVetorDefinirIndice,
+                [alvoResolvidoVetor.variavelLlvm, indiceValor, tamElemento],
                 'ptr_elem_store'
             );
+            // Invalida o cache de ponteiro de elementos (mesma convenção de `.adicionar()`
+            // em chamarMetodoVetor): uma realocação pode ter movido o buffer.
+            this.cachePointerVetor.clear();
 
             // Resolve o valor a armazenar. Para elementos de instância de classe, só carrega
             // se a origem for AllocaInst/GEP (ptr* que aponta PARA o valor); Argument/CallInst/
@@ -5740,6 +5742,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoVetorAdicionar = this.modulo.getOrInsertFunction(
             'delegua_vetor_adicionar',
             tipoFuncaoVetorAdicionar
+        );
+
+        // void* delegua_vetor_definir_indice(Vetor* v, int indice, int tam_elem)
+        const tipoFuncaoVetorDefinirIndice = llvm.FunctionType.get(
+            this.montador.getPtrTy(),
+            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+            false
+        );
+        this.funcaoVetorDefinirIndice = this.modulo.getOrInsertFunction(
+            'delegua_vetor_definir_indice',
+            tipoFuncaoVetorDefinirIndice
         );
 
         // int delegua_vetor_remover_ultimo(Vetor* v)

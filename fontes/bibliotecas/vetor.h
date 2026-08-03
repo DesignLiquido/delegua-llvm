@@ -16,6 +16,12 @@ void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida);
 // Adiciona um elemento ao final do vetor. Retorna o novo tamanho.
 int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem);
 
+// Escreve um elemento na posição `indice`, crescendo (realocando) o vetor se
+// `indice >= tamanho` atual — posições intermediárias deixadas "para trás" são
+// zeradas. Retorna um ponteiro para a posição de memória do elemento (para o
+// chamador copiar o valor nela), ou NULL em caso de erro.
+void* delegua_vetor_definir_indice(Vetor* v, int indice, int tam_elem);
+
 // Remove o último elemento. Retorna o novo tamanho (-1 se já vazio).
 int delegua_vetor_remover_ultimo(Vetor* v);
 
