@@ -4,6 +4,7 @@ import llvm from '@designliquido/llvm-bindings';
 import { Variavel } from '@designliquido/delegua';
 import { VariavelEscopo } from '../fontes/variavel-escopo';
 import { PilhaVariaveisEscopo } from '../fontes/pilha-variaveis-escopo';
+import { tipoElementoVetor, incrementoEhPositivo } from '../fontes/ajudantes';
 
 describe('Compilador LLVM - visitantes', () => {
     let compilador: CompiladorLLVM;
@@ -487,14 +488,14 @@ describe('Compilador LLVM - visitantes', () => {
         });
 
         it('tipoElementoVetor extrai tipo de vetor<T> e T[]', () => {
-            expect((compilador as any).tipoElementoVetor('inteiro[]')).toBe('inteiro');
-            expect((compilador as any).tipoElementoVetor('vetor<número>')).toBe('número');
-            expect((compilador as any).tipoElementoVetor('vetor')).toBe('inteiro');
+            expect(tipoElementoVetor('inteiro[]')).toBe('inteiro');
+            expect(tipoElementoVetor('vetor<número>')).toBe('número');
+            expect(tipoElementoVetor('vetor')).toBe('inteiro');
         });
 
         it('incrementoEhPositivo retorna falso para incremento não-unário', () => {
-            expect((compilador as any).incrementoEhPositivo(null, 'i')).toBe(false);
-            expect((compilador as any).incrementoEhPositivo({ tipo: 'outro' }, 'i')).toBe(false);
+            expect(incrementoEhPositivo(null, 'i')).toBe(false);
+            expect(incrementoEhPositivo({ tipo: 'outro' } as any, 'i')).toBe(false);
         });
 
         it('armazenarEmVariavel converte inteiro para número e vice-versa', () => {
