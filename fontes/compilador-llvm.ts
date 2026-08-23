@@ -411,21 +411,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     // Verifica se um `llvm.Type` é um ponteiro (PointerType).
-    // Usa constructor.name em vez de `isPointerTy()` porque o binding LLVM só registra
-    // `isPointerTy()` na classe `Type` base; chamá-la em subclasses como `IntegerType` via
-    // herança de protótipo falha com "Illegal invocation" no runtime do Node.js.
+    // Compara o construtor (classe LLVM) em vez de `isPointerTy()` porque o binding LLVM só
+    // registra `isPointerTy()` na classe `Type` base; chamá-la em subclasses como `IntegerType`
+    // via herança de protótipo falha com "Illegal invocation" no runtime do Node.js.
     protected tipoEhPonteiro(tipo: llvm.Type): boolean {
-        return tipo?.constructor?.name === 'PointerType';
+        return tipo?.constructor === llvm.PointerType;
     }
 
     protected garantirCondicaoI1(valor: llvm.Value): llvm.Value {
-        const nomeTipo = valor?.getType()?.constructor?.name;
+        const construtorTipo = valor?.getType()?.constructor;
         // Double (construtor LLVM 'Type') usado como condição: comparar com 0.0
-        if (nomeTipo === 'Type') {
+        if (construtorTipo === llvm.Type) {
             const zero = ConstantFP.get(this.contexto, new APFloat(0.0));
             return this.montador.CreateFCmpONE(valor, zero, 'cond_i1');
         }
-        if (nomeTipo === 'IntegerType') {
+        if (construtorTipo === llvm.IntegerType) {
             // getNullValue cria zero do mesmo tipo (i1, i32, i64...) sem precisar de getIntegerBitWidth.
             const zero = llvm.Constant.getNullValue(valor.getType());
             return this.montador.CreateICmpNE(valor, zero, 'cond_i1');
@@ -1199,8 +1199,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Determina se variavelLlvm já é o struct-ptr direto (argumento ou GEP de campo)
         // ou um ponteiro-para-ponteiro que precisa ser carregado (alloca local).
-        const nomeConstrutorIter = iteravelResolvido.variavelLlvm.constructor.name;
-        const ehArgumento = nomeConstrutorIter === 'Argument' || nomeConstrutorIter === 'GetElementPtrInst';
+        const construtorIter = iteravelResolvido.variavelLlvm.constructor;
+        const ehArgumento = construtorIter === llvm.Argument || construtorIter === llvm.GetElementPtrInst;
 
         // Tamanho do iterável.
         let tamanho: llvm.Value;
@@ -1673,8 +1673,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected async resolverGepPropriedadeAlvo(
         expressao: ConstrutoInterface
     ): Promise<{ gepPtr: llvm.Value; tipoProp: string } | null> {
-        const nomeCtorExp = expressao.constructor?.name;
-        if (nomeCtorExp !== 'AcessoPropriedade' && nomeCtorExp !== 'AcessoMetodoOuPropriedade') {
+        const construtorExp = expressao.constructor;
+        if (construtorExp !== AcessoPropriedade && construtorExp !== AcessoMetodoOuPropriedade) {
             return null;
         }
         const acesso = expressao as any;
@@ -1690,7 +1690,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             nomeClasse = objetoResolvido.tipo;
         } else {
             objetoPtr = objetoResolvido as llvm.Value;
-            if (acesso.objeto.constructor?.name === 'Variavel') {
+            if (acesso.objeto.constructor === Variavel) {
                 nomeClasse = this.pilhaVariaveisEscopo.obterValor(acesso.objeto.simbolo?.lexema)?.tipo;
             }
         }
@@ -1741,11 +1741,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Caminho LLVM IR: texto[inteiro] → char exposto como ptr para buffer [2 x i8].
         if (alvoParaIndice instanceof VariavelEscopo && alvoParaIndice.tipo === 'texto') {
             const varLlvmTexto = alvoParaIndice.variavelLlvm as llvm.Value;
-            const nomeInstTexto = varLlvmTexto.constructor.name;
+            const construtorInstTexto = varLlvmTexto.constructor;
             // AllocaInst/GEPInst/Argument são ptr* → precisa de load (parâmetros texto usam a
             // mesma convenção de dupla indireção). LoadInst/CallInst já são o ptr direto.
             const ehPtrDiretoTexto =
-                nomeInstTexto !== 'GetElementPtrInst' && nomeInstTexto !== 'AllocaInst' && nomeInstTexto !== 'Argument';
+                construtorInstTexto !== llvm.GetElementPtrInst &&
+                construtorInstTexto !== llvm.AllocaInst &&
+                construtorInstTexto !== llvm.Argument;
             const textoPtr = ehPtrDiretoTexto
                 ? varLlvmTexto
                 : this.montador.CreateLoad(this.montador.getPtrTy(), varLlvmTexto, 'txt_ptr');
@@ -2082,11 +2084,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // de uma alloca local e continuam exigindo o load incondicional.
             let valorFinal: llvm.Value;
             if (valorResolvido instanceof VariavelEscopo) {
-                const nomeInstValor = valorResolvido.variavelLlvm?.constructor?.name;
+                const construtorInstValor = valorResolvido.variavelLlvm?.constructor;
                 const ehInstanciaClasse = this.registroClasses.has(valorResolvido.tipo);
                 const origemPrecisaCarregar = ehInstanciaClasse
-                    ? nomeInstValor === 'AllocaInst' || nomeInstValor === 'GetElementPtrInst'
-                    : nomeInstValor === 'AllocaInst' || nomeInstValor === 'GetElementPtrInst' || nomeInstValor === 'Argument';
+                    ? construtorInstValor === llvm.AllocaInst || construtorInstValor === llvm.GetElementPtrInst
+                    : construtorInstValor === llvm.AllocaInst ||
+                      construtorInstValor === llvm.GetElementPtrInst ||
+                      construtorInstValor === llvm.Argument;
                 valorFinal =
                     !this.tipoEhPonteiro(tipoElemento) || origemPrecisaCarregar
                         ? this.montador.CreateLoad(tipoElemento, valorResolvido.variavelLlvm, 'val_store')
@@ -2096,13 +2100,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
 
             // Converte o tipo do valor para o tipo do elemento do vetor, se necessário.
-            const nomeTipoValor = valorFinal.getType()?.constructor?.name;
-            const nomeTipoElemento = tipoElemento?.constructor?.name;
-            if (nomeTipoValor !== nomeTipoElemento) {
-                if (nomeTipoValor === 'Type' && nomeTipoElemento === 'IntegerType') {
+            const construtorTipoValor = valorFinal.getType()?.constructor;
+            const construtorTipoElemento = tipoElemento?.constructor;
+            if (construtorTipoValor !== construtorTipoElemento) {
+                if (construtorTipoValor === llvm.Type && construtorTipoElemento === llvm.IntegerType) {
                     // double → inteiro (ex.: literal numérico em vetor de inteiros).
                     valorFinal = this.montador.CreateFPToSI(valorFinal, tipoElemento, 'val_fptosi');
-                } else if (nomeTipoValor === 'IntegerType' && nomeTipoElemento === 'Type') {
+                } else if (construtorTipoValor === llvm.IntegerType && construtorTipoElemento === llvm.Type) {
                     // inteiro → double (ex.: literal inteiro em vetor de números).
                     valorFinal = this.montador.CreateSIToFP(valorFinal, tipoElemento, 'val_sitofp');
                 }
@@ -2221,10 +2225,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Coerce o valor ao tipo do campo para evitar stores de tamanho errado
         // (ex.: double 0.0 num campo inteiro escreve 8 bytes em vez de 4).
         if (novoValorLlvm) {
-            const nomeTipoValor = novoValorLlvm.getType()?.constructor?.name;
-            if ((tipoProp === 'inteiro' || tipoProp === 'inteiro') && nomeTipoValor === 'Type') {
+            const construtorTipoValor = novoValorLlvm.getType()?.constructor;
+            if ((tipoProp === 'inteiro' || tipoProp === 'inteiro') && construtorTipoValor === llvm.Type) {
                 novoValorLlvm = this.montador.CreateFPToSI(novoValorLlvm, this.montador.getInt32Ty(), 'coerce_int');
-            } else if ((tipoProp === 'número' || tipoProp === 'numero') && nomeTipoValor === 'IntegerType') {
+            } else if ((tipoProp === 'número' || tipoProp === 'numero') && construtorTipoValor === llvm.IntegerType) {
                 novoValorLlvm = this.montador.CreateSIToFP(novoValorLlvm, this.montador.getDoubleTy(), 'coerce_double');
             }
         }
@@ -2805,10 +2809,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             } else if (this.ehValorLlvm(bruto)) {
                 valorElem = bruto as llvm.Value;
                 // Converte double → i32 quando o tipo do vetor é inteiro.
-                const nomeTipoBruto = valorElem.getType()?.constructor?.name;
-                if (this.tipoEhInteiroDelegua(tipoElementoStr) && nomeTipoBruto === 'Type') {
+                const construtorTipoBruto = valorElem.getType()?.constructor;
+                if (this.tipoEhInteiroDelegua(tipoElementoStr) && construtorTipoBruto === llvm.Type) {
                     valorElem = this.montador.CreateFPToSI(valorElem, tipoElemento, 'elem_to_int');
-                } else if (tipoElementoStr === 'número' && nomeTipoBruto === 'IntegerType') {
+                } else if (tipoElementoStr === 'número' && construtorTipoBruto === llvm.IntegerType) {
                     valorElem = this.montador.CreateSIToFP(valorElem, tipoElemento, 'elem_to_double');
                 }
             } else {
@@ -2981,8 +2985,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // convenção oposta (sempre ptr* de dupla indireção, sempre precisam de um load),
             // por isso usam apenas o tipo LLVM (`tipoEhPonteiro`) para decidir.
             if (this.registroClasses.has(tipoDelegua)) {
-                const nomeInst = valor.variavelLlvm?.constructor?.name;
-                const precisaCarregar = nomeInst === 'AllocaInst' || nomeInst === 'GetElementPtrInst';
+                const construtorInst = valor.variavelLlvm?.constructor;
+                const precisaCarregar = construtorInst === llvm.AllocaInst || construtorInst === llvm.GetElementPtrInst;
                 return precisaCarregar
                     ? this.montador.CreateLoad(this.montador.getPtrTy(), valor.variavelLlvm, nomeLoad)
                     : valor.variavelLlvm;
@@ -3688,7 +3692,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     try {
                         tipoObjetoAP = this.pilhaVariaveisEscopo.obterValor(nomeVar)?.tipo ?? null;
                     } catch {}
-                } else if (acesso.objeto?.constructor?.name === 'Isto') {
+                } else if (acesso.objeto?.constructor === Isto) {
                     try {
                         tipoObjetoAP = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo ?? null;
                     } catch {}
@@ -3712,7 +3716,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     try {
                         tipoObjetoAMOP = this.pilhaVariaveisEscopo.obterValor(nomeVar)?.tipo ?? null;
                     } catch {}
-                } else if (acesso.objeto?.constructor?.name === 'Isto') {
+                } else if (acesso.objeto?.constructor === Isto) {
                     try {
                         tipoObjetoAMOP = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo ?? null;
                     } catch {}
@@ -3749,8 +3753,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 // de construtor/método (CallInst) — só uma variável alocada (AllocaInst)
                 // aponta PARA o ponteiro e precisa de load. Mesmo critério de
                 // carregarPtrClasseSePreciso, usado aqui para operandos (ex.: `== nulo`).
-                const nomeInstClasse = variavelEscopo.variavelLlvm?.constructor?.name;
-                if (nomeInstClasse === 'AllocaInst') {
+                const construtorInstClasse = variavelEscopo.variavelLlvm?.constructor;
+                if (construtorInstClasse === llvm.AllocaInst) {
                     const valorCarregado = this.montador.CreateLoad(
                         this.montador.getPtrTy(),
                         variavelEscopo.variavelLlvm,
@@ -3780,28 +3784,28 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             };
         }
 
-        // Valor LLVM: discrimina pelo tipo via constructor.name pelo mesmo motivo que
+        // Valor LLVM: discrimina pelo tipo via constructor (classe LLVM) pelo mesmo motivo que
         // tipoEhPonteiro — os métodos isXxx() do binding falham com "Illegal invocation"
         // quando chamados em instâncias de subclasses via herança de protótipo Napi.
         //
         // Mapeamento de Type::New() no binding:
-        //   isIntegerTy()  → 'IntegerType'
-        //   isFunctionTy() → 'FunctionType'
-        //   isStructTy()   → 'StructType'
-        //   isArrayTy()    → 'ArrayType'
-        //   isVectorTy()   → 'VectorType'
-        //   isPointerTy()  → 'PointerType'
-        //   caso contrário → 'Type'  (double, float, void, …)
+        //   isIntegerTy()  → llvm.IntegerType
+        //   isFunctionTy() → llvm.FunctionType
+        //   isStructTy()   → llvm.StructType
+        //   isArrayTy()    → llvm.ArrayType
+        //   isVectorTy()   → llvm.VectorType
+        //   isPointerTy()  → llvm.PointerType
+        //   caso contrário → llvm.Type  (double, float, void, …)
         const valorLlvm = operando as llvm.Value;
-        const nomeTipoLlvm = valorLlvm.getType()?.constructor?.name;
+        const construtorTipoLlvm = valorLlvm.getType()?.constructor;
 
-        if (nomeTipoLlvm === 'IntegerType') {
+        if (construtorTipoLlvm === llvm.IntegerType) {
             // Infere o tipo Delégua a partir da largura do inteiro LLVM.
             const tipoInferido = this.tipoEhInteiroDelegua(tipo) ? tipo : 'inteiro';
             return { valor: valorLlvm, tipo: tipoInferido };
         }
 
-        if (nomeTipoLlvm === 'Type') {
+        if (construtorTipoLlvm === llvm.Type) {
             return { valor: valorLlvm, tipo: 'número' };
         }
 
@@ -4009,12 +4013,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.tipoEhInteiroDelegua(tipoEsquerdo) ||
             (operandoEsquerdo instanceof VariavelEscopo && this.tipoEhInteiroDelegua(operandoEsquerdo.tipo)) ||
             (!(operandoEsquerdo instanceof VariavelEscopo) &&
-                (operandoEsquerdo as llvm.Value).getType?.()?.constructor?.name === 'IntegerType');
+                (operandoEsquerdo as llvm.Value).getType?.()?.constructor === llvm.IntegerType);
         const direitoEhInteiro =
             this.tipoEhInteiroDelegua(tipoDireito) ||
             (operandoDireito instanceof VariavelEscopo && this.tipoEhInteiroDelegua(operandoDireito.tipo)) ||
             (!(operandoDireito instanceof VariavelEscopo) &&
-                (operandoDireito as llvm.Value).getType?.()?.constructor?.name === 'IntegerType');
+                (operandoDireito as llvm.Value).getType?.()?.constructor === llvm.IntegerType);
 
         const direitaEhLiteralInteiro =
             expressao.direita.constructor === Literal &&
@@ -4373,12 +4377,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         // Instância de classe crua (ex.: resultado de método/índice de vetor):
                         // sempre ponteiro direto, nunca embrulhar em alloca extra.
                     } else {
-                        const nomeInstanciaValor = valor?.constructor?.name;
+                        const construtorInstanciaValor = valor?.constructor;
                         // GEP e Alloca já apontam para onde o valor está (ptr indireto): passa diretamente.
                         // CallInst, ConstantPointerNull, LoadInst, etc. SÃO o valor (ptr direto):
                         // precisa embrulhar em alloca para o construtor poder fazer load.
                         const valorEhPtrDireto =
-                            nomeInstanciaValor !== 'GetElementPtrInst' && nomeInstanciaValor !== 'AllocaInst';
+                            construtorInstanciaValor !== llvm.GetElementPtrInst && construtorInstanciaValor !== llvm.AllocaInst;
                         if (construtorEsperaPtr && valor && this.tipoEhPonteiro(valor.getType()) && valorEhPtrDireto) {
                             const tmpAlloca = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'box_arg_ptr');
                             this.montador.CreateStore(valor, tmpAlloca);
@@ -4389,20 +4393,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     }
                 }
                 // Conversão de tipos: i32 ↔ double ↔ ptr conforme assinatura do construtor.
-                // Usa constructor.name em vez de identidade de objeto (===) porque os
-                // wrappers de Type no binding Napi não são singletons garantidos.
+                // Compara o construtor (classe LLVM) em vez da instância de Type (===), pois
+                // instâncias de Type retornadas pelo binding Napi não são singletons garantidos.
                 if (!valor) {
                     valor = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
                 }
-                const nomeValor = valor.getType()?.constructor?.name;
-                const nomeTipoEsperado = tipoEsperado?.constructor?.name;
-                const tipoEsperadoEhDouble = nomeTipoEsperado === 'Type';
-                const tipoEsperadoEhInt = nomeTipoEsperado === 'IntegerType';
-                const tipoEsperadoEhPtr = nomeTipoEsperado === 'PointerType';
-                const tipoValorEhInt = nomeValor === 'IntegerType';
-                const tipoValorEhDouble = nomeValor === 'Type';
+                const construtorValor = valor.getType()?.constructor;
+                const construtorTipoEsperado = tipoEsperado?.constructor;
+                const tipoEsperadoEhDouble = construtorTipoEsperado === llvm.Type;
+                const tipoEsperadoEhInt = construtorTipoEsperado === llvm.IntegerType;
+                const tipoEsperadoEhPtr = construtorTipoEsperado === llvm.PointerType;
+                const tipoValorEhInt = construtorValor === llvm.IntegerType;
+                const tipoValorEhDouble = construtorValor === llvm.Type;
                 if (tipoEsperadoEhInt && tipoValorEhInt) {
-                    // i32/i64 têm mesmo constructor.name: usa isIntegerTy(N) para largura.
+                    // i32/i64 têm mesmo construtor (IntegerType): usa isIntegerTy(N) para largura.
                     const valorEh64 = valor.getType().isIntegerTy(64);
                     const esperadoEh64 = tipoEsperado.isIntegerTy(64);
                     if (!valorEh64 && esperadoEh64) {
@@ -4410,7 +4414,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     } else if (valorEh64 && !esperadoEh64) {
                         valor = this.montador.CreateTrunc(valor, tipoEsperado, 'trunc_int');
                     }
-                } else if (nomeValor !== nomeTipoEsperado) {
+                } else if (construtorValor !== construtorTipoEsperado) {
                     if (tipoEsperadoEhDouble && tipoValorEhInt) {
                         valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
                     } else if (tipoEsperadoEhInt && tipoValorEhDouble) {
@@ -4443,8 +4447,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             nomeClasse = objetoResolvido.tipo;
         } else {
             objetoPtr = objetoResolvido as llvm.Value;
-            const nomeConstrutorObjeto = (acesso.objeto as any)?.constructor?.name;
-            if (nomeConstrutorObjeto === 'Variavel' && (acesso.objeto as Variavel).simbolo?.lexema) {
+            const construtorObjeto = (acesso.objeto as any)?.constructor;
+            if (construtorObjeto === Variavel && (acesso.objeto as Variavel).simbolo?.lexema) {
                 nomeClasse = this.pilhaVariaveisEscopo.obterValor((acesso.objeto as Variavel).simbolo.lexema)?.tipo;
             }
         }
@@ -4526,8 +4530,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // chamarMetodoTexto espera ptr* (char**): alloca ou gepPtr.
             // Se objetoPtr for LoadInst/CallInst, já é char* — embrulha em alloca temporária.
             let textoSlot = objetoPtr;
-            const nomeTipoObj = objetoPtr?.constructor?.name;
-            if (nomeTipoObj === 'LoadInst' || nomeTipoObj === 'CallInst') {
+            const construtorObjPtr = objetoPtr?.constructor;
+            if (construtorObjPtr === llvm.LoadInst || construtorObjPtr === llvm.CallInst) {
                 textoSlot = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'texto_slot');
                 this.montador.CreateStore(objetoPtr, textoSlot);
             }
@@ -4669,7 +4673,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const argResolvido = await argumento.aceitar(this);
             if (argResolvido instanceof VariavelEscopo) {
                 const valVE = argResolvido.variavelLlvm;
-                const nomeInstVE = valVE?.constructor?.name;
+                const construtorInstVE = valVE?.constructor;
                 // O parâmetro declarado no callee manda: se ele espera uma classe conhecida,
                 // o valor é sempre ponteiro direto para essa classe, mesmo que o TIPO INFERIDO
                 // da expressão de origem seja apenas "qualquer" (ex.: leitura de campo de
@@ -4697,7 +4701,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     // nunca devem ser reembrulhados numa alloca extra (isso criaria um
                     // ponteiro-para-ponteiro que o corpo do método, ao fazer acesso a campo,
                     // interpretaria incorretamente como o próprio objeto).
-                    const precisaCarregar = nomeInstVE === 'AllocaInst';
+                    const precisaCarregar = construtorInstVE === llvm.AllocaInst;
                     args.push(
                         precisaCarregar
                             ? this.montador.CreateLoad(this.montador.getPtrTy(), valVE, 'load_obj_arg')
@@ -4735,7 +4739,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     // materializado (CallInst/LoadInst) precisa ser embrulhado numa alloca
                     // temporária para o callee poder fazer o load.
                     const valVEEhPtrDireto =
-                        nomeInstVE !== 'GetElementPtrInst' && nomeInstVE !== 'AllocaInst' && nomeInstVE !== 'Argument';
+                        construtorInstVE !== llvm.GetElementPtrInst &&
+                        construtorInstVE !== llvm.AllocaInst &&
+                        construtorInstVE !== llvm.Argument;
                     if (valVE && this.tipoEhPonteiro(valVE?.getType?.()) && valVEEhPtrDireto) {
                         const tmpAllocaVE = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box_ve');
                         this.montador.CreateStore(valVE, tmpAllocaVE);
@@ -4788,8 +4794,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 // Délégua usa convenção ptr*: LoadInst/CallInst etc. são ptrs diretos que precisam
                 // de alloca para que o callee possa fazer "load ptr, ptr %arg".
                 // AllocaInst e GetElementPtrInst já são ptr* — passam direto.
-                const nomeInstVal = val?.constructor?.name;
-                const valEhPtrDireto = nomeInstVal !== 'GetElementPtrInst' && nomeInstVal !== 'AllocaInst';
+                const construtorInstVal = val?.constructor;
+                const valEhPtrDireto = construtorInstVal !== llvm.GetElementPtrInst && construtorInstVal !== llvm.AllocaInst;
                 if (val && this.tipoEhPonteiro(val.getType()) && valEhPtrDireto) {
                     const tmpAlloca = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box');
                     this.montador.CreateStore(val, tmpAlloca);
@@ -4883,7 +4889,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // self dentro de métodos chega como Argument (ptr direto) — não precisa de load.
     protected carregarPtrClasseSePreciso(objVar: VariavelEscopo): llvm.Value {
         const llvmVal = objVar.variavelLlvm;
-        if (llvmVal && llvmVal.constructor.name === 'AllocaInst' && this.registroClasses.has(objVar.tipo)) {
+        if (llvmVal && llvmVal.constructor === llvm.AllocaInst && this.registroClasses.has(objVar.tipo)) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), llvmVal, 'load_obj_ptr');
         }
         return llvmVal;
@@ -4923,8 +4929,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected resolverPonteiroDireto(resolvido: any): llvm.Value {
         if (resolvido instanceof VariavelEscopo) {
             const valorLlvm = resolvido.variavelLlvm as llvm.Value;
-            const nomeInst = valorLlvm?.constructor?.name;
-            const ehPtrDireto = nomeInst !== 'GetElementPtrInst' && nomeInst !== 'AllocaInst' && nomeInst !== 'Argument';
+            const construtorInst = valorLlvm?.constructor;
+            const ehPtrDireto =
+                construtorInst !== llvm.GetElementPtrInst && construtorInst !== llvm.AllocaInst && construtorInst !== llvm.Argument;
             return ehPtrDireto ? valorLlvm : this.montador.CreateLoad(this.montador.getPtrTy(), valorLlvm, 'ptr_direto');
         }
         return resolvido as llvm.Value;
@@ -4952,8 +4959,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const valorLlvm = resolvido as llvm.Value;
-        const nomeTipo = valorLlvm?.getType()?.constructor?.name;
-        if (nomeTipo === 'PointerType') {
+        const construtorTipo = valorLlvm?.getType()?.constructor;
+        if (construtorTipo === llvm.PointerType) {
             return valorLlvm;
         }
         return this.embalarValorEmHeap(valorLlvm, valorLlvm.getType());
@@ -4961,8 +4968,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     // Aloca uma célula no heap (malloc) do tamanho do tipo dado e armazena o valor nela.
     protected embalarValorEmHeap(valor: llvm.Value, tipo: llvm.Type): llvm.Value {
-        const nomeTipo = tipo?.constructor?.name;
-        const tamanhoBytes = nomeTipo === 'IntegerType' && tipo.isIntegerTy(32) ? 4 : nomeTipo === 'IntegerType' && tipo.isIntegerTy(1) ? 1 : 8;
+        const construtorTipo = tipo?.constructor;
+        const tamanhoBytes =
+            construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
+                ? 4
+                : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
+                  ? 1
+                  : 8;
         const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
         const caixa = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'dict_caixa');
         this.montador.CreateStore(valor, caixa);
@@ -5209,9 +5221,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             valor = resolvido as llvm.Value;
         }
         // Converte double → i32 se necessário (literais inteiros chegam como double no Delégua).
-        // Usa constructor.name em vez de isDoubleTy() para evitar "Illegal invocation"
+        // Compara o construtor em vez de usar isDoubleTy() para evitar "Illegal invocation"
         // em subclasses Napi.
-        if (valor.getType()?.constructor?.name === 'Type') {
+        if (valor.getType()?.constructor === llvm.Type) {
             return this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int');
         }
         return valor;

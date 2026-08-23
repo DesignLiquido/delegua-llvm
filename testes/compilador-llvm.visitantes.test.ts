@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 import llvm from '@designliquido/llvm-bindings';
+import { Variavel } from '@designliquido/delegua';
 import { VariavelEscopo } from '../fontes/variavel-escopo';
 import { PilhaVariaveisEscopo } from '../fontes/pilha-variaveis-escopo';
 
@@ -498,7 +499,7 @@ describe('Compilador LLVM - visitantes', () => {
 
         it('armazenarEmVariavel converte inteiro para número e vice-versa', () => {
             const compiladorLocal = new CompiladorLLVM();
-            const ponteiro = { id: 'ptr', getType: jest.fn().mockReturnValue({ constructor: { name: 'PointerType' } }) } as any;
+            const ponteiro = { id: 'ptr', getType: jest.fn().mockReturnValue(Object.create(llvm.PointerType.prototype)) } as any;
             const destino = new VariavelEscopo(ponteiro, undefined, 'número');
 
             const createSIToFP = jest.fn().mockReturnValue({ id: 'converted' });
@@ -940,11 +941,10 @@ describe('Compilador LLVM - visitantes', () => {
                 CreateCall: jest.fn().mockReturnValue('resultado_call'),
             };
 
-            const objetoVariavel = {
+            const objetoVariavel = Object.assign(Object.create(Variavel.prototype), {
                 simbolo: { lexema: 'p' },
                 aceitar: jest.fn().mockResolvedValue({ id: 'objeto_direto' }),
-                constructor: { name: 'Variavel' },
-            };
+            });
 
             await (compiladorLocal as any).chamarMetodoInstancia(
                 {
