@@ -1,0 +1,3 @@
+funcao triplo(x: inteiro): inteiro {
+    retorna x * 3
+}

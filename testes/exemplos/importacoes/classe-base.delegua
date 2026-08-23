@@ -1,0 +1,8 @@
+classe Ponto {
+    x: número
+    y: número
+    construtor(x: número, y: número) {
+        isto.x = x
+        isto.y = y
+    }
+}

@@ -1,0 +1,3 @@
+funcao quebrada(x: inteiro): inteiro {
+    retorna x +
+}

@@ -1,0 +1,5 @@
+importar { triplo } de "./folha"
+
+funcao dobroA(x: inteiro): inteiro {
+    retorna x * 2
+}

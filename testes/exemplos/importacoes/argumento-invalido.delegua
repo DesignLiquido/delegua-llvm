@@ -1,0 +1,6 @@
+funcao bar(): Foo {
+    retorna {
+        x: 1,
+        estranha
+    }
+}

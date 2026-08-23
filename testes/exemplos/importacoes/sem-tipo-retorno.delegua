@@ -1,0 +1,5 @@
+funcao foo() {
+    retorna {
+        x: 1,
+    }
+}
