@@ -19,6 +19,7 @@ SoqueteDelegua* delegua_rede_conectar(char* host, int porta, int tempoLimiteMs);
 // foi fechada pelo outro lado; NULL se o tempo esgotar ou houver erro.
 char*           delegua_rede_ler(SoqueteDelegua* conexao, int maxBytes, int tempoLimiteMs);
 // Lê até encontrar `delimitador` (incluído no resultado), a conexão fechar ou maxBytes.
+// Bytes recebidos depois do delimitador ficam guardados para a próxima leitura.
 // O tempo limite vale para a leitura inteira. NULL se o tempo esgotar ou houver erro.
 char*           delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBytes, int tempoLimiteMs);
 // Envia todo o texto. 1 em caso de sucesso.

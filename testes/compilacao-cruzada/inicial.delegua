@@ -46,10 +46,13 @@ se semCliente == nulo {
 }
 var cliente = rede.conectar("127.0.0.1", porta, 2000)
 rede.escrever(cliente, "ping
-")
+extra")
 var conexao = rede.aceitar(servidor, 2000)
 var recebido = rede.lerAte(conexao, "
 ", 1024, 2000)
+// O que chegou depois do delimitador fica para a próxima leitura.
+var sobra = rede.ler(conexao, 1024, 2000)
+escreva("rede sobra " + sobra)
 rede.escrever(conexao, "pong:" + recebido)
 rede.fechar(conexao)
 var resposta = rede.lerAte(cliente, "", 1024, 2000)

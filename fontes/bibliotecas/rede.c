@@ -33,6 +33,10 @@
 
 struct SoqueteDelegua {
     soquete_t descritor;
+    // Bytes já recebidos e ainda não entregues (ex.: o corpo que chegou junto com os
+    // cabeçalhos HTTP lidos por lerAte). A próxima leitura começa por eles.
+    char* restante;
+    int tamanhoRestante;
 };
 
 static char ultimo_erro[256] = "";
@@ -76,6 +80,8 @@ static SoqueteDelegua* embrulhar(soquete_t descritor) {
         return NULL;
     }
     soquete->descritor = descritor;
+    soquete->restante = NULL;
+    soquete->tamanhoRestante = 0;
 #if defined(__APPLE__) && defined(SO_NOSIGPIPE)
     int um = 1;
     setsockopt(descritor, SOL_SOCKET, SO_NOSIGPIPE, &um, sizeof(um));
@@ -262,10 +268,58 @@ SoqueteDelegua* delegua_rede_conectar(char* host, int porta, int tempoLimiteMs) 
     return embrulhar(descritor);
 }
 
+// Move até `quantidade` bytes do início de `restante` para `destino`. Retorna quantos moveu.
+static int retirar_restante(SoqueteDelegua* conexao, char* destino, int quantidade) {
+    int movidos = conexao->tamanhoRestante < quantidade ? conexao->tamanhoRestante : quantidade;
+    if (movidos <= 0) return 0;
+    memcpy(destino, conexao->restante, (size_t)movidos);
+    conexao->tamanhoRestante -= movidos;
+    if (conexao->tamanhoRestante > 0) {
+        memmove(conexao->restante, conexao->restante + movidos, (size_t)conexao->tamanhoRestante);
+    } else {
+        free(conexao->restante);
+        conexao->restante = NULL;
+    }
+    return movidos;
+}
+
+// Guarda `quantidade` bytes no início de `restante` (antes dos que já estiverem lá).
+static int devolver_restante(SoqueteDelegua* conexao, const char* origem, int quantidade) {
+    if (quantidade <= 0) return 1;
+    char* novo = (char*)malloc((size_t)(quantidade + conexao->tamanhoRestante));
+    if (!novo) return 0;
+    memcpy(novo, origem, (size_t)quantidade);
+    if (conexao->tamanhoRestante > 0) memcpy(novo + quantidade, conexao->restante, (size_t)conexao->tamanhoRestante);
+    free(conexao->restante);
+    conexao->restante = novo;
+    conexao->tamanhoRestante += quantidade;
+    return 1;
+}
+
+// Posição de `agulha` nos primeiros `tamanho` bytes de `palheiro`, ou -1.
+static int procurar(const char* palheiro, int tamanho, const char* agulha) {
+    int tamanhoAgulha = (int)strlen(agulha);
+    for (int i = 0; i + tamanhoAgulha <= tamanho; i++) {
+        if (memcmp(palheiro + i, agulha, (size_t)tamanhoAgulha) == 0) return i;
+    }
+    return -1;
+}
+
 char* delegua_rede_ler(SoqueteDelegua* conexao, int maxBytes, int tempoLimiteMs) {
     if (!conexao || maxBytes <= 0) {
         definir_erro("argumentos inválidos");
         return NULL;
+    }
+    // Bytes guardados por um lerAte anterior: entregues sem esperar pela rede.
+    if (conexao->tamanhoRestante > 0) {
+        char* guardados = (char*)malloc((size_t)maxBytes + 1);
+        if (!guardados) {
+            definir_erro("sem memória");
+            return NULL;
+        }
+        int movidos = retirar_restante(conexao, guardados, maxBytes);
+        guardados[movidos] = '\0';
+        return guardados;
     }
     int pronto = esperar(conexao->descritor, 0, tempoLimiteMs);
     if (pronto == 0) {
@@ -314,12 +368,27 @@ char* delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBy
         definir_erro("sem memória");
         return NULL;
     }
-    int total = 0;
-    buffer[0] = '\0';
+    // Começa pelos bytes guardados de leituras anteriores.
+    int total = retirar_restante(conexao, buffer, maxBytes);
+    buffer[total] = '\0';
     long long limite = tempoLimiteMs < 0 ? -1 : agora_ms() + tempoLimiteMs;
 
     while (total < maxBytes) {
-        if (fim && strstr(buffer, fim)) break;
+        if (fim) {
+            int posicao = procurar(buffer, total, fim);
+            if (posicao >= 0) {
+                // Entrega até o delimitador (inclusive); o que veio depois fica para a
+                // próxima leitura.
+                int entregues = posicao + (int)strlen(fim);
+                if (!devolver_restante(conexao, buffer + entregues, total - entregues)) {
+                    definir_erro("sem memória");
+                    free(buffer);
+                    return NULL;
+                }
+                buffer[entregues] = '\0';
+                return buffer;
+            }
+        }
         int restante = -1;
         if (limite >= 0) {
             long long faltam = limite - agora_ms();
@@ -378,6 +447,7 @@ int delegua_rede_escrever(SoqueteDelegua* conexao, char* texto) {
 void delegua_rede_fechar(SoqueteDelegua* soquete) {
     if (!soquete) return;
     fechar_soquete(soquete->descritor);
+    free(soquete->restante);
     free(soquete);
 }
 
