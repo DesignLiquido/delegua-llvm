@@ -10,6 +10,17 @@ import { CompiladorLLVM } from './compilador-llvm';
 import { detectarModulosImportados, obterBibliotecasParaCompilacao } from './bibliotecas-compilacao';
 import esquemaCompilacao from './esquemas/compilacao';
 import { ErroCompilador } from './erros/erro-compilador';
+import { ALVOS } from './alvos';
+import {
+    CadeiaFerramentas,
+    compatibilizarIrComLlvm,
+    comandoCompilarObjeto,
+    detectarVersaoLlvm,
+    comandoLigar,
+    descreverComando,
+    prepararIrParaAlvo,
+    resolverCadeiaFerramentas,
+} from './cadeia-ferramentas';
 
 registrar('compilacao', '@designliquido/delegua-llvm', esquemaCompilacao);
 
@@ -127,8 +138,25 @@ function limparArquivosTemporarios(arquivos: string[]) {
     }
 }
 
-function determinarCaminhoBinario(diretorioSaida: string, nomeBinario: string): string {
-    const extensaoExecutavel = process.platform === 'win32' ? '.exe' : '';
+// Executa um comando do compilador C. Na compilação cruzada sem zig, uma falha quase
+// sempre é falta dos cabeçalhos/bibliotecas do alvo: explica como resolver.
+function executarFerramenta(comando: [string, string[]], cadeia: CadeiaFerramentas) {
+    try {
+        execFileSync(comando[0], comando[1], { stdio: 'pipe' });
+    } catch (erro: any) {
+        if (cadeia.cruzada && !cadeia.ehZig) {
+            taquigrafarErro(
+                `Falha ao compilar para ${cadeia.alvo.nome} com ${cadeia.compiladorC.join(' ')}. A compilação cruzada ` +
+                    'precisa dos cabeçalhos e bibliotecas C do alvo: instale o zig (https://ziglang.org) para usar ' +
+                    '`zig cc` automaticamente, ou informe --sysroot.'
+            );
+        }
+        taquigrafarInfo(`Comando: ${descreverComando(comando)}`);
+        throw erro;
+    }
+}
+
+function determinarCaminhoBinario(diretorioSaida: string, nomeBinario: string, extensaoExecutavel: string): string {
     const nomeComExtensao =
         path.extname(nomeBinario) || !extensaoExecutavel ? nomeBinario : `${nomeBinario}${extensaoExecutavel}`;
 
@@ -149,6 +177,9 @@ async function principal() {
     let arquivoEntradaIlc: string = '';
     let nomeSaida: string = '';
     let emitirDebug: boolean = false;
+    let alvoCli: string = '';
+    let compiladorCCli: string = '';
+    let sysrootCli: string = '';
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '-o' && args[i + 1]) {
@@ -156,6 +187,21 @@ async function principal() {
             i++;
         } else if (args[i] === '--debug' || args[i] === '-g') {
             emitirDebug = true;
+        } else if ((args[i] === '--alvo' || args[i] === '--target') && args[i + 1]) {
+            alvoCli = args[i + 1];
+            i++;
+        } else if (args[i] === '--compilador-c' && args[i + 1]) {
+            compiladorCCli = args[i + 1];
+            i++;
+        } else if (args[i] === '--sysroot' && args[i + 1]) {
+            sysrootCli = args[i + 1];
+            i++;
+        } else if (args[i] === '--listar-alvos') {
+            taquigrafar('Alvos disponíveis (--alvo):', CORES.amarelo);
+            for (const alvo of ALVOS) {
+                taquigrafar(`  ${alvo.nome.padEnd(15)} ${alvo.triplo}`, CORES.reset);
+            }
+            process.exit(0);
         } else if (!arquivoEntradaIlc) {
             arquivoEntradaIlc = args[i];
         }
@@ -195,6 +241,9 @@ async function principal() {
             taquigrafar('Opções:', CORES.amarelo);
             taquigrafar('  -o <nome>    Nome do binário de saída', CORES.reset);
             taquigrafar('  -g, --debug  Emite símbolos de depuração DWARF no binário', CORES.reset);
+            taquigrafar('  --alvo <sistema-arquitetura>  Compila para outro alvo (ex.: linux-arm64); ver --listar-alvos', CORES.reset);
+            taquigrafar('  --compilador-c <comando>      Compilador C usado na ligação (padrão: clang; zig cc na compilação cruzada)', CORES.reset);
+            taquigrafar('  --sysroot <diretório>         Bibliotecas do alvo, para compilação cruzada com clang', CORES.reset);
             console.log('');
             taquigrafar('Ou adicione compilacao.pontoEntrada em configuracao.delprops.', CORES.reset);
             console.log('');
@@ -207,10 +256,22 @@ async function principal() {
     const nomeBase = path.basename(arquivoEntrada, path.extname(arquivoEntrada));
     const diretorioSaida = path.dirname(arquivoEntrada);
 
+    let cadeia: CadeiaFerramentas;
+    try {
+        cadeia = resolverCadeiaFerramentas({
+            alvo: alvoCli || configuracao['compilacao.alvo'],
+            compiladorC: compiladorCCli || configuracao['compilacao.compiladorC'],
+            sysroot: sysrootCli || configuracao['compilacao.sysroot'],
+        });
+    } catch (erro: any) {
+        taquigrafarErro(erro.message);
+        process.exit(1);
+    }
+
     const nomeSaidaConfig = configuracao['compilacao.arquivoSaida'];
     const nomeBinario = nomeSaida || nomeSaidaConfig || nomeBase;
     const origemNome = nomeSaida ? '-o' : nomeSaidaConfig ? 'configuracao.delprops' : 'nome do arquivo';
-    const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario);
+    const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario, cadeia.alvo.extensaoExecutavel);
 
     taquigrafarEtapa('Lendo código fonte');
     const conteudo = fs.readFileSync(arquivoEntrada, 'utf-8');
@@ -218,8 +279,16 @@ async function principal() {
     taquigrafarSucesso(`Arquivo: ${arquivoEntrada} (via ${origemEntrada})`);
     taquigrafarInfo(`Linhas: ${codigo.length}`);
     taquigrafarInfo(`Nome de saída: ${nomeBinario} (via ${origemNome})`);
+    taquigrafarInfo(
+        `Alvo: ${cadeia.alvo.nome} (${cadeia.alvo.triplo})${cadeia.cruzada ? ', compilação cruzada' : ''}, ` +
+            `compilador C: ${cadeia.compiladorC.join(' ')}`
+    );
 
     const compilador = new CompiladorLLVM();
+    // Na compilação nativa com clang, o compilador usa o triplo padrão do LLVM, como antes.
+    if (cadeia.cruzada || cadeia.ehZig) {
+        compilador.alvo = cadeia.alvo;
+    }
     const arquivosTemporarios: string[] = [];
 
     try {
@@ -234,10 +303,10 @@ async function principal() {
         );
 
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
-        // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
-        // `nocreateundeforpoison` (LLVM 21+) é só uma dica de otimização em intrínsecos;
-        // clang 19 não reconhece o atributo e rejeita o arquivo inteiro.
-        let irCompativel = ir.replace(/captures\(none\)/g, 'nocapture').replace(/ nocreateundeforpoison\b/g, '');
+        // O LLVM das ligações pode ser mais novo que o do compilador C (clang 19, zig...):
+        // reescreve a sintaxe que o compilador C não conhece (ver compatibilizarIrComLlvm).
+        const versaoLlvmCompiladorC = detectarVersaoLlvm(cadeia);
+        let irCompativel = prepararIrParaAlvo(compatibilizarIrComLlvm(ir, versaoLlvmCompiladorC), cadeia);
         fs.writeFileSync(irPath.replace(/\.ll$/, '_debug.ll'), irCompativel);
         fs.writeFileSync(irPath, irCompativel);
         arquivosTemporarios.push(irPath);
@@ -269,7 +338,7 @@ async function principal() {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            execFileSync('clang', [nivelOtimizacaoC, '-c', arquivoC, '-o', objPath], { stdio: 'pipe' });
+            executarFerramenta(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC), cadeia);
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
@@ -283,9 +352,7 @@ async function principal() {
             const nomeArquivo = `pacote-${hashCaminho}-${path.basename(arquivoC, '.c')}`;
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            execFileSync('clang', [nivelOtimizacaoC, '-I', bibliotecasDir, '-c', arquivoC, '-o', objPath], {
-                stdio: 'pipe',
-            });
+            executarFerramenta(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC, [bibliotecasDir]), cadeia);
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado (pacote): ${path.relative(diretorioProjeto, arquivoC)} → ${path.basename(objPath)}`);
@@ -293,8 +360,6 @@ async function principal() {
 
         taquigrafarEtapa('Linkando binário');
         taquigrafarInfo(`Nível de otimização: ${emitirDebug ? '0' : '2'}`);
-        const objetosStr = arquivosObj.map((o) => `"${o}"`).join(' ');
-        const flagsStr = flagsLink.length > 0 ? ' ' + flagsLink.join(' ') : '';
         // Em modo de depuração, converte #dbg_declare/#dbg_value (novo formato LLVM 18+) para
         // o formato clássico call void @llvm.dbg.declare/llvm.dbg.value. O clang 19 crasha
         // no X86 Assembly Printer ao processar o novo formato com alvo x86_64-pc-windows-msvc
@@ -334,8 +399,11 @@ async function principal() {
                 taquigrafarInfo('Formato de depuração convertido (compatibilidade com clang 19)');
             }
         }
-        const flagsOtimizacao = emitirDebug ? '-O0 -gdwarf-4' : '-O2';
-        execSync(`clang ${flagsOtimizacao} "${irParaCompilacao}" ${objetosStr}${flagsStr} -o "${caminhoBinario}"`, { stdio: 'pipe' });
+        const flagsOtimizacao = emitirDebug ? ['-O0', '-gdwarf-4'] : ['-O2'];
+        executarFerramenta(
+            comandoLigar(cadeia, irParaCompilacao, arquivosObj, flagsLink, caminhoBinario, flagsOtimizacao),
+            cadeia
+        );
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);
 
         taquigrafarEtapa('Limpando arquivos temporários');

@@ -131,12 +131,32 @@ O binário gerado ficará no mesmo diretório do arquivo de entrada, com o mesmo
 |-------|-----------|
 | `-o <nome>` | Define o nome do binário de saída |
 | `-g`, `--debug` | Emite símbolos de depuração DWARF no binário |
+| `--alvo <sistema-arquitetura>` (ou `--target`) | Compila para outro sistema/arquitetura (ver abaixo) |
+| `--listar-alvos` | Lista os alvos disponíveis |
+| `--compilador-c <comando>` | Compilador C do runtime e da ligação (padrão: `clang`; `zig cc` na compilação cruzada, se o zig estiver instalado) |
+| `--sysroot <diretório>` | Cabeçalhos e bibliotecas do alvo, para compilação cruzada com `clang` |
 
 Exemplo com nome de saída personalizado:
 
 ```sh
 npx @designliquido/delegua-llvm meu_programa.delegua -o saida
 ```
+
+### Compilação cruzada
+
+```sh
+npx @designliquido/delegua-llvm programa.delegua --alvo linux-arm64 -o programa-linux-arm64
+```
+
+Alvos: `linux-amd64`, `linux-arm64`, `linux-riscv64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`, `windows-arm64` (também aceitos: `macos-…`, `…-x64`, `…-aarch64`). As mesmas opções podem ficar em `configuracao.delprops` como `compilacao.alvo`, `compilacao.compiladorC` e `compilacao.sysroot`.
+
+O código do alvo é gerado pelo próprio `clang`, que tem todos os backends. Mas compilar o runtime C e ligar o binário exige a biblioteca C do alvo. A forma mais simples é instalar o [zig](https://ziglang.org): ele traz a biblioteca C de cada alvo, e o compilador passa a usar `zig cc` automaticamente na compilação cruzada. Sem o zig, use `--sysroot` com as bibliotecas do alvo.
+
+Observações:
+
+- Com `zig cc`, os executáveis para Windows usam a ABI GNU (MinGW) em vez da MSVC.
+- Os tamanhos de estruturas estrangeiras (`tamanhoEmBytes()`) são calculados para o alvo.
+- Módulos que dependem de bibliotecas do sistema (`http` → libcurl, `criptografia` → OpenSSL) precisam dessas bibliotecas compiladas para o alvo.
 
 ### Depuração simbólica
 

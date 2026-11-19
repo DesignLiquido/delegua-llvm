@@ -1,0 +1,42 @@
+importar { Sondagem, Registro } de "sondagem"
+var processo = importar("processo")
+
+funcao dobro(x: inteiro): inteiro {
+    retorna x * 2
+}
+
+escreva("alvo " + processo.sistemaOperacional() + "-" + processo.arquitetura())
+
+var tamanhoC = Sondagem.tamanho_registro()
+var tamanhoDelegua = Registro.tamanhoEmBytes()
+se tamanhoC == tamanhoDelegua {
+    escreva("layout ok")
+} senao {
+    escreva("layout diferente: C " + texto(tamanhoC) + ", Delegua " + texto(tamanhoDelegua))
+}
+
+var r = Registro()
+r.marca = 7
+r.valor = 3000000000
+r.ativo = verdadeiro
+r.fator = 0.5
+r.nome = "abc"
+r.contagem = 2
+escreva("soma " + texto(Sondagem.somar(r)))
+escreva("retorno " + texto(Sondagem.aplicar(dobro, 21)))
+
+var partes = "a,b,c".dividir(",")
+escreva("texto " + partes.juntar("|"))
+
+var d = {}
+d["um"] = "1"
+d["dois"] = "2"
+var chaves = d.chaves()
+escreva("dicionario " + chaves.juntar(","))
+
+tente {
+    falhar("erro proposital")
+} pegue (erro) {
+    escreva("excecao capturada")
+}
+escreva("fim")

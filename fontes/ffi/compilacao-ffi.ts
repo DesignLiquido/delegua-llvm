@@ -149,7 +149,7 @@ export function registrarEstruturaEstrangeira(this: CompiladorLLVM, declaracao: 
 
 /** Tamanho em bytes de uma estrutura estrangeira (sizeof), na plataforma alvo. */
 export function tamanhoEstruturaEstrangeira(this: CompiladorLLVM, nomeEstrutura: string): number {
-    return Number(this.maquinaAlvo.createDataLayout().getTypeAllocSize(this.registroClasses.get(nomeEstrutura)));
+    return Number(this.layoutDados.getTypeAllocSize(this.registroClasses.get(nomeEstrutura)));
 }
 
 /**
