@@ -189,6 +189,77 @@ var r = LibM.cosseno(0.0)
 
 O compilador emite instruções `declare` no LLVM IR para os símbolos C correspondentes e injeta `!llvm.linker.options` com as flags `-l<biblioteca>` necessárias para o linker.
 
+### Tipos na fronteira com C
+
+| Delégua | C |
+|---|---|
+| `inteiro` | `int` / `int32_t` |
+| `longo` | `int64_t` / `size_t` |
+| `número` | `double` |
+| `lógico` | `bool` |
+| `byte` | `uint8_t` / `char` (lido como `inteiro`) |
+| `texto` | `const char*` |
+| `ponteiro` | `void*` opaco |
+| `função` | ponteiro de função |
+| `texto[]`, `inteiro[]`... | `char**`, `int*`... (apenas parâmetros) |
+| estrutura estrangeira | `struct X*` |
+
+### Estruturas
+
+Uma `classe estrangeira` com campos descreve uma `struct` C, com a mesma disposição de memória do compilador C da plataforma:
+
+```delegua
+classe estrangeira Ponto {
+    x: inteiro
+    y: inteiro
+}
+
+classe estrangeira Retangulo {
+    origem: Ponto            // struct aninhada (por valor)
+    area: longo
+    @definicao(tamanho=20)
+    id: byte                 // unsigned char id[20]
+    nome: texto
+}
+
+var r = Retangulo()          // memória zerada
+r.origem.x = 1
+escreva(Retangulo.tamanhoEmBytes())   // sizeof(Retangulo)
+```
+
+Instâncias são passadas a funções C como ponteiro. Ler um vetor de tamanho fixo (`r.id`) devolve o endereço do primeiro elemento, para uso com o módulo `memoria`.
+
+### Funções de retorno (callbacks)
+
+Um parâmetro `função` recebe uma função Delégua nomeada ou anônima (com parâmetros tipados). O compilador gera um trampolim com convenção C:
+
+```delegua
+funcao contar(item: texto, indice: inteiro, carga: ponteiro): inteiro {
+    var contexto: Contexto = carga     // objeto Delégua passado como void*
+    contexto.total = contexto.total + 1
+    retorna 0
+}
+
+Biblioteca.para_cada(itens, itens.tamanho(), contar, contexto)
+```
+
+Funções anônimas não capturam variáveis: use o parâmetro `ponteiro` de carga, como em C.
+
+### Módulo `memoria`
+
+Para parâmetros de saída (`T** saida`), buffers e acesso a memória sem estrutura declarada. Deslocamentos em bytes:
+
+```delegua
+var memoria = importar("memoria")
+
+var saida = memoria.alocar(memoria.tamanhoPonteiro())
+Git.git_repository_open(saida, ".")
+var repositorio = memoria.lerPonteiro(saida, 0)
+memoria.liberar(saida)
+```
+
+Funções: `alocar`, `liberar`, `tamanhoPonteiro`, `deslocar`, `copiar`, `lerPonteiro`, `lerInteiro`, `lerLongo`, `lerNumero`, `lerByte`, `lerTexto` (char* guardado no endereço), `escreverPonteiro`, `escreverInteiro`, `escreverLongo`, `escreverNumero`, `escreverByte`, `textoDe` (caracteres no endereço) e `textoDeTamanho`.
+
 ### Resolução de nome de classe FFI (implementação interna)
 
 Quando uma `classe estrangeira` é compilada, um objeto sentinela `VariavelEscopo` com `variavelLlvm=null` é inserido no escopo de módulo (o frame mais externo da `PilhaVariaveisEscopo`). O campo `tipo` desse sentinela contém o nome da classe.

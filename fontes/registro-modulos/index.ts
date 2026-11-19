@@ -9,3 +9,4 @@ export { registrarModuloCriptografia } from './criptografia';
 export { registrarModuloDados } from './dados';
 export { registrarModuloArgumentos } from './argumentos';
 export { registrarModuloProcesso } from './processo';
+export { registrarModuloMemoria } from './memoria';

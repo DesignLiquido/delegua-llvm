@@ -144,6 +144,12 @@ char* texto_de_inteiro(int val) {
     return buf;
 }
 
+char* texto_de_longo(long long val) {
+    char* buf = (char*)malloc(32);
+    snprintf(buf, 32, "%lld", val);
+    return buf;
+}
+
 char* texto_de_numero(double val) {
     char* buf = (char*)malloc(64);
     snprintf(buf, 64, "%g", val);

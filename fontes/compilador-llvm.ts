@@ -99,7 +99,20 @@ import {
     registrarModuloMatematica,
     registrarModuloArgumentos,
     registrarModuloProcesso,
+    registrarModuloMemoria,
 } from './registro-modulos';
+import {
+    EstruturaEstrangeira,
+    carregarArgumentoFFI,
+    carregarArgumentoFuncaoFFI,
+    carregarArgumentoPonteiro,
+    lerCampoEstruturaEstrangeira,
+    obterTrampolimFFI,
+    registrarEstruturaEstrangeira,
+    tamanhoEstruturaEstrangeira,
+    tipoFFIParaLlvm,
+    valorParaCampoEstruturaEstrangeira,
+} from './ffi/compilacao-ffi';
 import {
     resolverEMesclarDeclaracoes,
     ehImportacaoResolvida,
@@ -195,6 +208,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
     // Funções C do runtime declaradas sob demanda por obterFuncaoRuntime().
     protected funcoesRuntime: Map<string, llvm.FunctionCallee> = new Map();
+    // FFI: estruturas C declaradas como `classe estrangeira` com campos, e trampolins
+    // gerados para passar funções Delégua a código C (ver ffi/compilacao-ffi.ts).
+    estruturasEstrangeiras: Map<string, EstruturaEstrangeira> = new Map();
+    trampolinsFFI: Map<llvm.Function, llvm.Function> = new Map();
     // Preenchidos por compilar(), para o ligador (ilc): módulos embutidos usados por
     // qualquer arquivo do programa e fontes/bibliotecas nativas declaradas por pacotes.
     modulosUtilizados: Set<string> = new Set();
@@ -298,6 +315,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     registrarModuloMatematica: () => void;
     registrarModuloArgumentos: () => void;
     registrarModuloProcesso: () => void;
+    registrarModuloMemoria: () => void;
+
+    // FFI (implementado via mixin em ffi/compilacao-ffi.ts).
+    tipoFFIParaLlvm: (tipoDelegua: string) => llvm.Type;
+    registrarEstruturaEstrangeira: (declaracao: Classe) => void;
+    tamanhoEstruturaEstrangeira: (nomeEstrutura: string) => number;
+    lerCampoEstruturaEstrangeira: (
+        nomeEstrutura: string,
+        nomeCampo: string,
+        ponteiroCampo: llvm.Value
+    ) => llvm.Value | undefined;
+    valorParaCampoEstruturaEstrangeira: (
+        nomeEstrutura: string,
+        nomeCampo: string,
+        valor: ConstrutoInterface,
+        linha?: number
+    ) => Promise<llvm.Value | undefined>;
+    carregarArgumentoFFI: (argumento: ConstrutoInterface, tipoPar: string) => Promise<llvm.Value>;
+    carregarArgumentoPonteiro: (argumento: ConstrutoInterface) => Promise<llvm.Value>;
+    carregarArgumentoFuncaoFFI: (argumento: ConstrutoInterface) => Promise<llvm.Value>;
+    obterTrampolimFFI: (
+        funcaoAlvo: llvm.Function,
+        tiposParametros: string[],
+        tipoRetorno: string,
+        nomeAlvo: string
+    ) => llvm.Function;
 
     constructor() {
         this.lexador = new Lexador();
@@ -660,18 +703,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
-    // Mapeia tipo Delégua para LLVM, incluindo 'vazio' → void (que obterTipoLlvm não suporta).
-    protected tipoFFIParaLlvm(tipoDelegua: string): llvm.Type {
-        if (tipoDelegua === 'vazio') return llvm.Type.getVoidTy(this.contexto);
-        return this.obterTipoLlvm(tipoDelegua);
-    }
-
     async visitarDeclaracaoClasse(declaracao: Classe): Promise<any> {
         const nomeClasse = declaracao.simbolo.lexema;
 
         // Classe estrangeira com @definicao: emite `declare` via getOrInsertFunction
         // e registra no mapaModulos para despacho sem ponteiro self.
         if (declaracao.estrangeira) {
+            // Campos: a classe estrangeira também descreve uma estrutura C (ver ffi/compilacao-ffi.ts).
+            if (declaracao.propriedades?.length) {
+                this.registrarEstruturaEstrangeira(declaracao);
+                this.classesEstrangeiras.add(nomeClasse);
+                if (!this.mapaModulos.has(nomeClasse)) this.mapaModulos.set(nomeClasse, new Map());
+            }
             const meta = lerMetadadosClasse(declaracao.decoradores);
             if (meta) {
                 // biblioteca="nativo": os símbolos vêm das fontes C do próprio pacote
@@ -687,17 +730,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     const metaMetodo = lerMetadadosMetodo(metodo.decoradores, nomeMetodo, meta.prefixo);
                     const tiposParams = (metodo.funcao?.parametros ?? []).map(p => p.tipoDado ?? 'vazio');
                     const tipoRetorno = metodo.tipo ?? 'vazio';
-                    const tiposLlvm = tiposParams.map(t => this.obterTipoLlvm(t));
-                    const tipoRetornoLlvm = tipoRetorno === 'vazio'
-                        ? llvm.Type.getVoidTy(this.contexto)
-                        : this.obterTipoLlvm(tipoRetorno);
+                    const tiposLlvm = tiposParams.map(t => this.tipoFFIParaLlvm(t));
+                    const tipoRetornoLlvm = this.tipoFFIParaLlvm(tipoRetorno);
                     const tipoFuncao = llvm.FunctionType.get(tipoRetornoLlvm, tiposLlvm, false);
                     const callee = this.modulo.getOrInsertFunction(metaMetodo.simbolo, tipoFuncao);
                     funcoes.set(nomeMetodo, { callee, tiposParametros: tiposParams, tipoRetorno });
                 }
                 this.mapaModulos.set(nomeClasse, funcoes);
                 this.metodosClasse.set(nomeClasse, new Map(
-                    [...funcoes.entries()].map(([nome, e]) => [nome, e.tipoRetorno])
+                    [...funcoes.entries()].map(([nome, e]) => [nome, e.tipoRetorno === 'byte' ? 'inteiro' : e.tipoRetorno])
                 ));
             }
             return;
@@ -1937,6 +1978,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             `${nomeMembro}_ptr`
         );
 
+        // Campos de estrutura estrangeira: vetores fixos e estruturas aninhadas devolvem o
+        // endereço; campos byte são estendidos para inteiro.
+        const campoEstrangeiro = this.lerCampoEstruturaEstrangeira(nomeClasse, nomeMembro, gepPtr);
+        if (campoEstrangeiro) return campoEstrangeiro;
+
         // Campos do tipo vetor: gepPtr já é o %Vetor* esperado pelas funções de vetor.
         // Carregar produziria %Vetor by-value, incompatível com a assinatura (ptr).
         if (tipoEhVetor(tipoProp)) {
@@ -1990,6 +2036,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indice))],
             `${expressao.nomePropriedade}_ptr`
         );
+
+        const campoEstrangeiro = this.lerCampoEstruturaEstrangeira(nomeClasse, expressao.nomePropriedade, gepPtr);
+        if (campoEstrangeiro) return campoEstrangeiro;
 
         if (tipoEhVetor(tipoProp)) {
             return gepPtr;
@@ -2164,6 +2213,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 nomeClasse = this.pilhaVariaveisEscopo.obterValor((expressao.objeto as Variavel).simbolo.lexema)?.tipo;
             } else if (expressao.objeto.constructor === Isto) {
                 nomeClasse = this.pilhaVariaveisEscopo.obterValor('isto')?.tipo;
+            } else {
+                // Acesso encadeado (ex.: `r.origem.x = 1`, com `origem` estrutura aninhada).
+                const tipoInferido = this.resolverTipoConstruto(expressao.objeto as ConstrutoInterface);
+                if (tipoInferido && tipoInferido !== 'qualquer') nomeClasse = tipoInferido;
             }
         }
 
@@ -2199,6 +2252,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indice))],
             `${nomePropriedade}_ptr`
         );
+
+        // Campo de estrutura estrangeira: converte para o tipo C do campo (byte, longo,
+        // lógico, função via trampolim...).
+        const valorCampoEstrangeiro = await this.valorParaCampoEstruturaEstrangeira(
+            nomeClasse,
+            nomePropriedade,
+            expressao.valor,
+            expressao.linha
+        );
+        if (valorCampoEstrangeiro) {
+            this.montador.CreateStore(valorCampoEstrangeiro, gepPtr);
+            return Promise.resolve();
+        }
 
         const novoValor = await expressao.valor.aceitar(this);
         let novoValorLlvm: llvm.Value;
@@ -3489,10 +3555,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // VariavelEscopo (ex.: cópia de outra variável) — em ambos os casos, resolve
             // para o ponteiro direto do objeto (mesma convenção usada em toda leitura de
             // instância de classe: só AllocaInst/GEP precisam de load).
-            const objetoPtr =
-                inicializadorResolvido instanceof VariavelEscopo
-                    ? this.carregarPtrClasseSePreciso(inicializadorResolvido)
-                    : (inicializadorResolvido as llvm.Value);
+            // Variável `ponteiro`/`qualquer` reinterpretada como instância (ex.: o ponteiro de
+            // carga recebido por uma função de retorno chamada por código C): a alloca guarda o
+            // ponteiro do objeto, que precisa ser carregado.
+            const ehPonteiroGenerico =
+                inicializadorResolvido instanceof VariavelEscopo &&
+                (inicializadorResolvido.tipo === 'ponteiro' || inicializadorResolvido.tipo === 'qualquer') &&
+                inicializadorResolvido.variavelLlvm?.constructor === llvm.AllocaInst;
+            const objetoPtr = ehPonteiroGenerico
+                ? this.montador.CreateLoad(
+                      this.montador.getPtrTy(),
+                      (inicializadorResolvido as VariavelEscopo).variavelLlvm,
+                      'ponteiro_para_objeto'
+                  )
+                : inicializadorResolvido instanceof VariavelEscopo
+                  ? this.carregarPtrClasseSePreciso(inicializadorResolvido)
+                  : (inicializadorResolvido as llvm.Value);
             // Sempre aloca um slot real (em vez de vincular o CallInst diretamente): isso é
             // o que permite reatribuição (`x = outraInstancia`) funcionar depois — sem
             // alloca não há memória para um `store` de reatribuição escrever. Usa o bloco de
@@ -4352,6 +4430,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // alloca produzia ponteiro dangling quando armazenado em campo de outra classe.
         const tamanhoStruct = this.maquinaAlvo.createDataLayout().getTypeAllocSize(tipoStruct);
         const tamanhoConst = ConstantInt.get(this.contexto, new APInt(64, tamanhoStruct));
+
+        // Estrutura estrangeira: memória zerada (como uma struct C inicializada com zeros), sem construtor.
+        if (this.estruturasEstrangeiras.has(nomeClasse)) {
+            if (argumentos.length > 0) {
+                throw new ErroCompilador(`Estrutura estrangeira '${nomeClasse}' é criada sem argumentos: ${nomeClasse}().`);
+            }
+            const i64 = llvm.Type.getInt64Ty(this.contexto);
+            const calloc = this.obterFuncaoRuntime('calloc', this.montador.getPtrTy(), [i64, i64]);
+            return this.montador.CreateCall(
+                calloc,
+                [ConstantInt.get(this.contexto, new APInt(64, 1)), tamanhoConst],
+                `estrutura_${nomeClasse}`
+            );
+        }
+
         const objetoAlloc = this.montador.CreateCall(this.funcaoMalloc, [tamanhoConst], `obj_${nomeClasse}`);
 
         // Estampa o id de identidade em tempo de execução (campo oculto __tipoId, sempre no
@@ -4623,6 +4716,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 } else if (tipoPar === 'lógico' || tipoPar === 'logico') {
                     // Na ABI dos módulos, lógico é um int C (0/1).
                     args.push(await this.carregarArgumentoLogicoComoInteiro(argumentos[i]));
+                } else if (tipoPar === 'longo' || tipoPar === 'ponteiro') {
+                    args.push(await this.carregarArgumentoFFI(argumentos[i], tipoPar));
                 } else if (tipoEhVetor(tipoPar)) {
                     // Vetor*: ponteiro para o struct %Vetor.
                     const argResolvido = await argumentos[i].aceitar(this);
@@ -4646,7 +4741,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const tipoLlvm =
                     tipoPar === 'inteiro' || tipoPar === 'lógico' || tipoPar === 'logico'
                         ? this.montador.getInt32Ty()
-                        : tipoPar === 'numero' || tipoPar === 'número'
+                        : tipoPar === 'longo'
+                          ? llvm.Type.getInt64Ty(this.contexto)
+                          : tipoPar === 'numero' || tipoPar === 'número'
                           ? this.montador.getDoubleTy()
                           : this.montador.getPtrTy();
                 args.push(llvm.Constant.getNullValue(tipoLlvm) as unknown as llvm.Value);
@@ -4664,33 +4761,41 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const nomeClasseReal = nomeClasse.slice('classeEstrangeira:'.length);
             const funcoes = this.mapaModulos.get(nomeClasseReal);
             const entrada = funcoes?.get(nomeMetodo);
+            // Estrutura.tamanhoEmBytes(): sizeof da estrutura estrangeira na plataforma alvo.
+            if (!entrada && nomeMetodo === 'tamanhoEmBytes' && this.estruturasEstrangeiras.has(nomeClasseReal)) {
+                return ConstantInt.get(
+                    this.contexto,
+                    new APInt(32, this.tamanhoEstruturaEstrangeira(nomeClasseReal))
+                ) as unknown as llvm.Value;
+            }
             if (!entrada) {
                 const erroMetodo = new ErroCompilador(`Método '${nomeMetodo}' não encontrado na classe estrangeira '${nomeClasseReal}'.`);
                 erroMetodo.linha = acesso.linha;
                 erroMetodo.tamanhoToken = nomeMetodo.length;
                 throw erroMetodo;
             }
+            if (argumentos.length > entrada.tiposParametros.length) {
+                const erroAridade = new ErroCompilador(
+                    `Método '${nomeMetodo}' da classe estrangeira '${nomeClasseReal}' recebe ${entrada.tiposParametros.length} argumento(s), mas recebeu ${argumentos.length}.`
+                );
+                erroAridade.linha = acesso.linha;
+                throw erroAridade;
+            }
             const argsEstrangeira: llvm.Value[] = [];
-            for (let i = 0; i < argumentos.length; i++) {
-                const tipoPar = entrada.tiposParametros[i] ?? 'qualquer';
-                if (tipoPar === 'inteiro') {
-                    argsEstrangeira.push(await this.carregarArgumentoInteiro(argumentos[i]));
-                } else if (tipoPar === 'numero' || tipoPar === 'número') {
-                    argsEstrangeira.push(await this.carregarArgumentoNumero(argumentos[i]));
-                } else if (tipoPar === 'texto') {
-                    argsEstrangeira.push(await this.carregarArgumentoTexto(argumentos[i]));
+            for (let i = 0; i < entrada.tiposParametros.length; i++) {
+                const tipoPar = entrada.tiposParametros[i];
+                if (i < argumentos.length) {
+                    argsEstrangeira.push(await this.carregarArgumentoFFI(argumentos[i], tipoPar));
                 } else {
-                    const argResolvido = await argumentos[i].aceitar(this);
-                    argsEstrangeira.push(
-                        argResolvido instanceof VariavelEscopo
-                            ? this.registroClasses.has(tipoPar)
-                                ? this.carregarPtrClasseSePreciso(argResolvido)
-                                : argResolvido.variavelLlvm
-                            : (argResolvido as llvm.Value)
-                    );
+                    // Argumentos finais omitidos: zero/nulo do tipo C.
+                    argsEstrangeira.push(llvm.Constant.getNullValue(this.tipoFFIParaLlvm(tipoPar)) as unknown as llvm.Value);
                 }
             }
-            return this.montador.CreateCall(entrada.callee, argsEstrangeira);
+            const resultadoEstrangeira = this.montador.CreateCall(entrada.callee, argsEstrangeira);
+            if (entrada.tipoRetorno === 'byte') {
+                return this.montador.CreateZExt(resultadoEstrangeira, this.montador.getInt32Ty(), `${nomeMetodo}_byte`);
+            }
+            return resultadoEstrangeira;
         }
 
         // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
@@ -5511,6 +5616,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return valor;
         }
 
+        // O tipo LLVM do valor decide a conversão quando ele contradiz o tipo inferido (ex.:
+        // retorno de método ou campo de estrutura cujo tipo o avaliador não conhece, que
+        // chega aqui como 'número' por padrão).
+        const tipoLlvmValor = valor.getType();
+        if (tipoLlvmValor.isIntegerTy(64)) {
+            const funcao = this.obterFuncaoRuntime('texto_de_longo', this.montador.getPtrTy(), [
+                llvm.Type.getInt64Ty(this.contexto),
+            ]);
+            return this.montador.CreateCall(funcao, [valor]);
+        }
+        if (tipoLlvmValor.isIntegerTy(1)) {
+            const verdadeiro = this.montador.CreateGlobalStringPtr('verdadeiro', 'texto_verdadeiro', 0, this.modulo);
+            const falso = this.montador.CreateGlobalStringPtr('falso', 'texto_falso', 0, this.modulo);
+            return this.montador.CreateSelect(valor, verdadeiro, falso, 'texto_logico');
+        }
+        if (tipoLlvmValor.isIntegerTy(8)) {
+            valor = this.montador.CreateZExt(valor, this.montador.getInt32Ty(), 'byte_para_int');
+            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
+        }
+        if (tipoLlvmValor.isIntegerTy(32)) {
+            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
+        }
+        if (tipoEhPonteiro(tipoLlvmValor)) {
+            return valor;
+        }
+
         // inteiro → texto (usa %d para evitar notação científica)
         if (tipo === 'inteiro') {
             // Literal inteiro sem tipo explícito chega como double do parser do Delégua
@@ -6235,6 +6366,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ['dados', () => this.registrarModuloDados()],
             ['argumentos', () => this.registrarModuloArgumentos()],
             ['processo', () => this.registrarModuloProcesso()],
+            ['memoria', () => this.registrarModuloMemoria()],
         ]);
 
         if (modulosImportados) {
@@ -6314,6 +6446,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.proximoIdClasse = 0;
         this.mapaModulos = new Map();
         this.funcoesRuntime = new Map();
+        this.estruturasEstrangeiras = new Map();
+        this.trampolinsFFI = new Map();
         this.bibliotecasEstrangeiras = new Set();
         this.classesEstrangeiras = new Set();
         this.pilhaIsto = [];
@@ -6605,3 +6739,13 @@ CompiladorLLVM.prototype.registrarModuloCriptografia = registrarModuloCriptograf
 CompiladorLLVM.prototype.registrarModuloDados = registrarModuloDados;
 CompiladorLLVM.prototype.registrarModuloArgumentos = registrarModuloArgumentos;
 CompiladorLLVM.prototype.registrarModuloProcesso = registrarModuloProcesso;
+CompiladorLLVM.prototype.registrarModuloMemoria = registrarModuloMemoria;
+CompiladorLLVM.prototype.tipoFFIParaLlvm = tipoFFIParaLlvm;
+CompiladorLLVM.prototype.registrarEstruturaEstrangeira = registrarEstruturaEstrangeira;
+CompiladorLLVM.prototype.tamanhoEstruturaEstrangeira = tamanhoEstruturaEstrangeira;
+CompiladorLLVM.prototype.lerCampoEstruturaEstrangeira = lerCampoEstruturaEstrangeira;
+CompiladorLLVM.prototype.valorParaCampoEstruturaEstrangeira = valorParaCampoEstruturaEstrangeira;
+CompiladorLLVM.prototype.carregarArgumentoFFI = carregarArgumentoFFI;
+CompiladorLLVM.prototype.carregarArgumentoPonteiro = carregarArgumentoPonteiro;
+CompiladorLLVM.prototype.carregarArgumentoFuncaoFFI = carregarArgumentoFuncaoFFI;
+CompiladorLLVM.prototype.obterTrampolimFFI = obterTrampolimFFI;
