@@ -13,6 +13,7 @@ export type RegistradorFuncaoModulo = (
  *
  * ABI dos módulos (tipos Delégua → C):
  *   - inteiro, lógico → int (lógico é convertido de/para i1 no despacho);
+ *   - longo           → int64_t;
  *   - número          → double;
  *   - vazio           → void (apenas retorno);
  *   - texto, vetores (`texto[]`), objetos opacos → ponteiro.
@@ -29,6 +30,8 @@ export function criarRegistradorFuncaoModulo(compilador: CompiladorLLVM): Regist
             case 'lógico':
             case 'logico':
                 return i32;
+            case 'longo':
+                return llvm.Type.getInt64Ty(compilador.contexto);
             case 'numero':
             case 'número':
                 return double;
