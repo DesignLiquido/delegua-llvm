@@ -10,3 +10,5 @@ export { registrarModuloDados } from './dados';
 export { registrarModuloArgumentos } from './argumentos';
 export { registrarModuloProcesso } from './processo';
 export { registrarModuloMemoria } from './memoria';
+export { registrarModuloRede } from './rede';
+export { registrarModuloTempo } from './tempo';

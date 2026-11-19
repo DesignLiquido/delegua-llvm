@@ -338,6 +338,39 @@ processo.sair(1)
 
 `executar` não passa por um shell: os argumentos chegam ao programa exatamente como informados. No Windows, `executar("npm", ...)` encontra `npm.cmd` no `PATH`; para arquivos de lote (`.cmd`/`.bat`), argumentos com `%`, `"` ou quebras de linha são recusados, porque o `cmd.exe` os interpretaria.
 
+## Módulo `rede`
+
+Soquetes TCP (IPv4/IPv6) com tempo limite em milissegundos (negativo: sem limite). Soquetes são `ponteiro`; `nulo` indica falha, com o motivo em `ultimoErro()`.
+
+```delegua
+var rede = importar("rede")
+
+// Servidor local de retorno (ex.: autenticação pelo navegador)
+var servidor = rede.escutar("127.0.0.1", 0)          // porta 0: o sistema escolhe
+var porta = rede.portaLocal(servidor)
+var conexao = rede.aceitar(servidor, 120000)          // nulo se ninguém conectar em 2 minutos
+var requisicao = rede.lerAte(conexao, "\r\n\r\n", 65536, 5000)
+rede.escrever(conexao, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+rede.fechar(conexao)
+rede.fechar(servidor)
+
+// Cliente
+var cliente = rede.conectar("exemplo.com", 80, 3000)
+```
+
+Funções: `escutar`, `portaLocal`, `aceitar`, `conectar`, `ler(conexao, maxBytes, tempoLimite)` (o que estiver disponível; `""` quando o outro lado fecha), `lerAte(conexao, delimitador, maxBytes, tempoLimite)`, `escrever`, `fechar`, `ultimoErro`, `codificarComponenteUrl` e `decodificarComponenteUrl`. No Windows o módulo liga o Winsock (`ws2_32`) automaticamente.
+
+## Módulo `tempo`
+
+```delegua
+var tempo = importar("tempo")
+
+tempo.carimboDeTempoUnix()                // segundos desde 1970 (como no delegua-tempo do Node.js)
+tempo.carimboDeTempoUnixMilissegundos()   // milissegundos desde 1970
+tempo.monotonicoMilissegundos()           // relógio monotônico, para medir intervalos e tempos limite
+tempo.dormir(250)
+```
+
 ## Compilação manual (avançado)
 
 Caso queira compilar manualmente a partir de um arquivo `.ll` já gerado, utilize o [Clang](https://clang.llvm.org/):

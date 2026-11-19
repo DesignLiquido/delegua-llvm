@@ -100,6 +100,8 @@ import {
     registrarModuloArgumentos,
     registrarModuloProcesso,
     registrarModuloMemoria,
+    registrarModuloRede,
+    registrarModuloTempo,
 } from './registro-modulos';
 import {
     EstruturaEstrangeira,
@@ -321,6 +323,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     registrarModuloArgumentos: () => void;
     registrarModuloProcesso: () => void;
     registrarModuloMemoria: () => void;
+    registrarModuloRede: () => void;
+    registrarModuloTempo: () => void;
 
     // FFI (implementado via mixin em ffi/compilacao-ffi.ts).
     tipoFFIParaLlvm: (tipoDelegua: string) => llvm.Type;
@@ -3766,6 +3770,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         switch (construto.constructor) {
             case Leia:
                 return 'texto';
+            case Binario: {
+                // Só quando o avaliador não inferiu (ex.: operandos vindos de funções de módulo):
+                // aritmética segue o tipo prevalente dos operandos; comparação é lógico.
+                const binario = construto as Binario;
+                if (construto.tipo && construto.tipo !== 'qualquer') return construto.tipo;
+                const operador = binario.operador?.tipo;
+                if (['MAIOR', 'MENOR', 'MAIOR_IGUAL', 'MENOR_IGUAL', 'IGUAL_IGUAL', 'DIFERENTE'].includes(operador)) {
+                    return 'lógico';
+                }
+                if (['ADICAO', 'SUBTRACAO', 'MULTIPLICACAO', 'MODULO'].includes(operador)) {
+                    const tipoEsquerda = this.resolverTipoConstruto(binario.esquerda);
+                    const tipoDireita = this.resolverTipoConstruto(binario.direita);
+                    const conhecidos = ['inteiro', 'longo', 'número', 'texto'];
+                    if (conhecidos.includes(tipoEsquerda) && conhecidos.includes(tipoDireita)) {
+                        return definirTipoPrevalente(tipoEsquerda, tipoDireita);
+                    }
+                }
+                return construto.tipo;
+            }
             case Variavel: {
                 // O tipo no escopo é o tipo com que o compilador de fato gerou a variável
                 // (inferido do inicializador); o do AST pode ser só o palpite do avaliador.
@@ -6392,6 +6415,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ['argumentos', () => this.registrarModuloArgumentos()],
             ['processo', () => this.registrarModuloProcesso()],
             ['memoria', () => this.registrarModuloMemoria()],
+            ['rede', () => this.registrarModuloRede()],
+            ['tempo', () => this.registrarModuloTempo()],
         ]);
 
         if (modulosImportados) {
@@ -6776,6 +6801,8 @@ CompiladorLLVM.prototype.registrarModuloDados = registrarModuloDados;
 CompiladorLLVM.prototype.registrarModuloArgumentos = registrarModuloArgumentos;
 CompiladorLLVM.prototype.registrarModuloProcesso = registrarModuloProcesso;
 CompiladorLLVM.prototype.registrarModuloMemoria = registrarModuloMemoria;
+CompiladorLLVM.prototype.registrarModuloRede = registrarModuloRede;
+CompiladorLLVM.prototype.registrarModuloTempo = registrarModuloTempo;
 CompiladorLLVM.prototype.tipoFFIParaLlvm = tipoFFIParaLlvm;
 CompiladorLLVM.prototype.registrarEstruturaEstrangeira = registrarEstruturaEstrangeira;
 CompiladorLLVM.prototype.tamanhoEstruturaEstrangeira = tamanhoEstruturaEstrangeira;

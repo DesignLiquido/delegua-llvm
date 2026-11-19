@@ -34,6 +34,35 @@ d["dois"] = "2"
 var chaves = d.chaves()
 escreva("dicionario " + chaves.juntar(","))
 
+// Soquetes: servidor e cliente no mesmo processo (o sistema completa a conexão TCP
+// antes do aceitar), mais tempo limite de aceitar sem cliente.
+var rede = importar("rede")
+var tempo = importar("tempo")
+var servidor = rede.escutar("127.0.0.1", 0)
+var porta = rede.portaLocal(servidor)
+var semCliente = rede.aceitar(servidor, 100)
+se semCliente == nulo {
+    escreva("rede tempo limite ok")
+}
+var cliente = rede.conectar("127.0.0.1", porta, 2000)
+rede.escrever(cliente, "ping
+")
+var conexao = rede.aceitar(servidor, 2000)
+var recebido = rede.lerAte(conexao, "
+", 1024, 2000)
+rede.escrever(conexao, "pong:" + recebido)
+rede.fechar(conexao)
+var resposta = rede.lerAte(cliente, "", 1024, 2000)
+escreva("rede " + resposta.aparar())
+rede.fechar(cliente)
+rede.fechar(servidor)
+
+var antes = tempo.monotonicoMilissegundos()
+tempo.dormir(50)
+se tempo.monotonicoMilissegundos() - antes >= 40 {
+    escreva("tempo ok")
+}
+
 tente {
     falhar("erro proposital")
 } pegue (erro) {
