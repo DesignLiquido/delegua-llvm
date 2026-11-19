@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { createHash } from 'crypto';
+import { execFileSync, execSync } from 'child_process';
 
 import { registrar } from '@designliquido/delprops';
 
@@ -234,7 +235,9 @@ async function principal() {
 
         const irPath = path.join(diretorioSaida, `${nomeBase}.ll`);
         // clang 19 uses `nocapture`; LLVM 20+ IR uses `captures(none)`.
-        let irCompativel = ir.replace(/captures\(none\)/g, 'nocapture');
+        // `nocreateundeforpoison` (LLVM 21+) é só uma dica de otimização em intrínsecos;
+        // clang 19 não reconhece o atributo e rejeita o arquivo inteiro.
+        let irCompativel = ir.replace(/captures\(none\)/g, 'nocapture').replace(/ nocreateundeforpoison\b/g, '');
         fs.writeFileSync(irPath.replace(/\.ll$/, '_debug.ll'), irCompativel);
         fs.writeFileSync(irPath, irCompativel);
         arquivosTemporarios.push(irPath);
@@ -249,24 +252,43 @@ async function principal() {
 
         taquigrafarEtapa('Compilando bibliotecas nativas');
         const bibliotecasDir = path.join(__dirname, 'bibliotecas');
-        const modulos = detectarModulosImportados(codigo);
+        // Módulos importados por qualquer arquivo do programa (inclusive arquivos e pacotes importados).
+        const modulos = Array.from(new Set([...detectarModulosImportados(codigo), ...compilador.modulosUtilizados]));
         const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir);
 
-        // Adiciona flags -l para bibliotecas estrangeiras referenciadas via @definicao.
-        for (const lib of compilador.bibliotecasEstrangeiras) {
-            flagsLink.push(`-l${lib}`);
+        // Adiciona flags -l para bibliotecas estrangeiras referenciadas via @definicao
+        // e para bibliotecas do sistema declaradas por pacotes ("nativo.bibliotecas").
+        for (const lib of [...compilador.bibliotecasEstrangeiras, ...compilador.bibliotecasNativasPacotes]) {
+            if (!flagsLink.includes(`-l${lib}`)) flagsLink.push(`-l${lib}`);
         }
 
         const arquivosObj: string[] = [];
+        const nivelOtimizacaoC = emitirDebug ? '-O0' : '-O2';
 
         for (const arquivoC of arquivosC) {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            execSync(`clang ${emitirDebug ? '-O0' : '-O2'} -c "${arquivoC}" -o "${objPath}"`, { stdio: 'pipe' });
+            execFileSync('clang', [nivelOtimizacaoC, '-c', arquivoC, '-o', objPath], { stdio: 'pipe' });
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
+        }
+
+        // Fontes C de pacotes ("nativo.fontes"). Podem incluir os cabeçalhos do runtime
+        // (ex.: "vetor.h"). O nome do objeto leva um hash do caminho para não colidir
+        // com os objetos do runtime nem com fontes homônimas de outros pacotes.
+        for (const arquivoC of compilador.fontesNativasPacotes) {
+            const hashCaminho = createHash('sha1').update(arquivoC).digest('hex').slice(0, 8);
+            const nomeArquivo = `pacote-${hashCaminho}-${path.basename(arquivoC, '.c')}`;
+            const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
+
+            execFileSync('clang', [nivelOtimizacaoC, '-I', bibliotecasDir, '-c', arquivoC, '-o', objPath], {
+                stdio: 'pipe',
+            });
+            arquivosObj.push(objPath);
+            arquivosTemporarios.push(objPath);
+            taquigrafarSucesso(`Compilado (pacote): ${path.relative(diretorioProjeto, arquivoC)} → ${path.basename(objPath)}`);
         }
 
         taquigrafarEtapa('Linkando binário');

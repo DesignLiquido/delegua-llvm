@@ -18,6 +18,22 @@ char* delegua_arg_argumento(int indice) {
     return __argv[indice + 1];
 }
 
+#elif defined(__APPLE__)
+
+// macOS não tem /proc: o CRT expõe argc/argv por _NSGetArgc/_NSGetArgv.
+#include <crt_externs.h>
+
+int delegua_arg_quantidade_argumentos(void) {
+    int total = *_NSGetArgc();
+    return total > 1 ? total - 1 : 0;
+}
+
+char* delegua_arg_argumento(int indice) {
+    int total = *_NSGetArgc();
+    if (indice < 0 || indice >= total - 1) return "";
+    return (*_NSGetArgv())[indice + 1];
+}
+
 #else
 
 #include <stdio.h>

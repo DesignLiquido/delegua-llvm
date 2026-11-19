@@ -1,0 +1,14 @@
+importar { entreColchetes } de "formato"
+
+@definicao(biblioteca="nativo", prefixo="saudacao_nativo_")
+classe estrangeira Nativo {
+    dobro(x: inteiro): inteiro
+}
+
+funcao saudar(nome: texto): texto {
+    retorna entreColchetes("Olá, " + nome)
+}
+
+funcao dobrar(x: inteiro): inteiro {
+    retorna Nativo.dobro(x)
+}

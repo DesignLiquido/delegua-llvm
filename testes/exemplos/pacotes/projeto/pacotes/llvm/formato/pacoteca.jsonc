@@ -1,0 +1,7 @@
+{
+  // Pacote puramente em Delégua.
+  "nome": "formato",
+  "versao": "1.0.0",
+  "realizacoes": ["llvm"],
+  "pontoDeEntrada": "formato.delegua" /* comentário de bloco */
+}

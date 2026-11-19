@@ -4,9 +4,15 @@ import * as caminho from 'path';
 import { Lexador } from '@designliquido/delegua/lexador';
 import { AvaliadorSintatico } from '@designliquido/delegua/avaliador-sintatico';
 import { cyrb53 } from '@designliquido/delegua/geracao-identificadores';
-import { Declaracao, Classe } from '@designliquido/delegua';
+import { Declaracao, Classe, FuncaoDeclaracao, Var, Const } from '@designliquido/delegua';
+import { InformacaoElementoSintatico } from '@designliquido/delegua/informacao-elemento-sintatico';
+
+import { ehModuloEmbutido } from './bibliotecas-compilacao';
+import { localizarPacote, PacoteLocalizado } from './pacotes';
 
 const regexImportacaoArquivo = /importar\s+.*\s+de\s+['"](\.{1,2}[^'"]*)['"]/;
+const regexImportacaoNomeada = /importar\s+.*\s+de\s+['"]([A-Za-z0-9][A-Za-z0-9_-]*)['"]/;
+const regexImportacaoDinamica = /importar\s*\(\s*['"]([A-Za-z0-9][A-Za-z0-9_-]*)['"]\s*\)/;
 
 export function ehImportacaoArquivo(linha: string): boolean {
     return regexImportacaoArquivo.test(linha);
@@ -15,6 +21,76 @@ export function ehImportacaoArquivo(linha: string): boolean {
 function extrairCaminhoImportacao(linha: string): string | null {
     const correspondencia = regexImportacaoArquivo.exec(linha);
     return correspondencia ? correspondencia[1] : null;
+}
+
+/**
+ * Informações coletadas ao resolver as importações de todos os arquivos do programa.
+ */
+export interface ContextoResolucao {
+    // Módulos embutidos (json, arquivos, processo...) importados em qualquer arquivo.
+    modulosEmbutidos: Set<string>;
+    // Pacotes instalados (pacotes/llvm/<nome>) importados, por nome.
+    pacotes: Map<string, PacoteLocalizado>;
+    // Fontes C e bibliotecas do sistema declaradas pelos pacotes em "nativo".
+    fontesNativas: Set<string>;
+    bibliotecasNativas: Set<string>;
+}
+
+export function criarContextoResolucao(): ContextoResolucao {
+    return { modulosEmbutidos: new Set(), pacotes: new Map(), fontesNativas: new Set(), bibliotecasNativas: new Set() };
+}
+
+/**
+ * Declara no escopo global do avaliador sintático as funções e variáveis de nível superior
+ * vindas de arquivos/pacotes já importados. Sem isso, cada arquivo é analisado sem conhecer
+ * os símbolos dos demais, e qualquer chamada a uma função importada é rejeitada como
+ * "Variável não definida". Deve ser chamada logo após inicializarPilhaEscopos().
+ */
+export function registrarSimbolosImportados(avaliador: any, declaracoes: Declaracao[]): void {
+    const pilhaEscopos = avaliador?.pilhaEscopos;
+    if (!pilhaEscopos?.definirInformacoesVariavel) return;
+    for (const declaracao of declaracoes) {
+        if (declaracao instanceof FuncaoDeclaracao) {
+            const nome = declaracao.simbolo?.lexema;
+            if (!nome) continue;
+            const tipo = (declaracao as any).tipo ?? `função<${declaracao.funcao?.tipo ?? 'qualquer'}>`;
+            pilhaEscopos.definirInformacoesVariavel(nome, new InformacaoElementoSintatico(nome, tipo));
+            pilhaEscopos.registrarReferenciaFuncao?.(nome, declaracao);
+        } else if (declaracao instanceof Var || declaracao instanceof Const) {
+            const nome = declaracao.simbolo?.lexema;
+            if (!nome) continue;
+            pilhaEscopos.definirInformacoesVariavel(nome, new InformacaoElementoSintatico(nome, declaracao.tipo ?? 'qualquer'));
+        }
+    }
+}
+
+/**
+ * Nome do pacote instalado importado por `importar { ... } de "nome"`, ou null se a linha
+ * não importa um pacote (importação de arquivo, módulo embutido ou nome não instalado).
+ */
+function extrairPacoteImportado(linha: string, diretorioBase: string, contexto: ContextoResolucao): PacoteLocalizado | null {
+    const correspondencia = regexImportacaoNomeada.exec(linha);
+    if (!correspondencia) return null;
+    const nome = correspondencia[1];
+    if (ehModuloEmbutido(nome)) return null;
+    if (contexto.pacotes.has(nome)) return contexto.pacotes.get(nome);
+    return localizarPacote(nome, diretorioBase);
+}
+
+/**
+ * Verdadeiro se a linha é uma importação resolvida por resolverEMesclarDeclaracoes
+ * (arquivo relativo ou pacote instalado), e portanto deve ser removida antes da análise.
+ */
+export function ehImportacaoResolvida(linha: string, diretorioBase: string, contexto?: ContextoResolucao): boolean {
+    if (ehImportacaoArquivo(linha)) return true;
+    return extrairPacoteImportado(linha, diretorioBase, contexto ?? criarContextoResolucao()) !== null;
+}
+
+function registrarModuloEmbutido(linha: string, contexto: ContextoResolucao): void {
+    const correspondencia = regexImportacaoDinamica.exec(linha) || regexImportacaoNomeada.exec(linha);
+    if (correspondencia && ehModuloEmbutido(correspondencia[1])) {
+        contexto.modulosEmbutidos.add(correspondencia[1]);
+    }
 }
 
 function normalizarRetornosEstruturados(linhasArquivo: string[]): string[] {
@@ -89,17 +165,30 @@ export async function resolverEMesclarDeclaracoes(
     diretorioBase: string,
     arquivosVisitados: Set<string> = new Set(),
     registroClasses: { [nome: string]: Declaracao } = {},
-    mapaHash: Map<number, string> = new Map()
-): Promise<{ declaracoes: Declaracao[]; mapaHash: Map<number, string> }> {
+    mapaHash: Map<number, string> = new Map(),
+    contexto: ContextoResolucao = criarContextoResolucao()
+): Promise<{ declaracoes: Declaracao[]; mapaHash: Map<number, string>; contexto: ContextoResolucao }> {
     const resultado: Declaracao[] = [];
 
     for (const linha of codigo) {
-        const caminhoImportado = extrairCaminhoImportacao(linha);
-        if (caminhoImportado === null) continue;
+        registrarModuloEmbutido(linha, contexto);
 
-        let caminhoAbsoluto = caminho.resolve(diretorioBase, caminhoImportado);
-        if (!caminhoAbsoluto.endsWith('.delegua')) {
-            caminhoAbsoluto += '.delegua';
+        let caminhoAbsoluto: string;
+        const caminhoImportado = extrairCaminhoImportacao(linha);
+        if (caminhoImportado !== null) {
+            caminhoAbsoluto = caminho.resolve(diretorioBase, caminhoImportado);
+            if (!caminhoAbsoluto.endsWith('.delegua')) {
+                caminhoAbsoluto += '.delegua';
+            }
+        } else {
+            const pacote = extrairPacoteImportado(linha, diretorioBase, contexto);
+            if (!pacote) continue;
+            if (!contexto.pacotes.has(pacote.nome)) {
+                contexto.pacotes.set(pacote.nome, pacote);
+                pacote.fontesNativas.forEach((fonte) => contexto.fontesNativas.add(fonte));
+                pacote.bibliotecasNativas.forEach((biblioteca) => contexto.bibliotecasNativas.add(biblioteca));
+            }
+            caminhoAbsoluto = pacote.pontoDeEntrada;
         }
 
         if (arquivosVisitados.has(caminhoAbsoluto)) continue;
@@ -121,14 +210,17 @@ export async function resolverEMesclarDeclaracoes(
             diretorioArquivo,
             arquivosVisitados,
             registroClasses,
-            mapaHash
+            mapaHash,
+            contexto
         );
         resultado.push(...resultadoDeps.declaracoes);
 
         // Parseia o arquivo com as classes já descobertas pré-registradas.
         // analisar() reseta tiposDefinidosEmCodigo internamente; usa o mesmo hook de
         // inicializarPilhaEscopos para injetar o registroClasses após o reset.
-        const linhasSemImportacoes = linhasArquivo.map((l) => (ehImportacaoArquivo(l) ? '' : l));
+        const linhasSemImportacoes = linhasArquivo.map((l) =>
+            ehImportacaoResolvida(l, diretorioArquivo, contexto) ? '' : l
+        );
 
         const lexador = new Lexador();
         const avaliador = new AvaliadorSintatico();
@@ -136,9 +228,11 @@ export async function resolverEMesclarDeclaracoes(
         const inicializarOriginal = avaliadorAny.inicializarPilhaEscopos?.bind(avaliadorAny);
         if (inicializarOriginal) {
             const capturedRegistro = { ...registroClasses };
+            const simbolosAnteriores = [...resultado];
             avaliadorAny.inicializarPilhaEscopos = () => {
                 inicializarOriginal();
                 Object.assign(avaliadorAny.tiposDefinidosEmCodigo, capturedRegistro);
+                registrarSimbolosImportados(avaliadorAny, simbolosAnteriores);
             };
         }
 
@@ -161,5 +255,5 @@ export async function resolverEMesclarDeclaracoes(
         resultado.push(...retornoAvaliador.declaracoes);
     }
 
-    return { declaracoes: resultado, mapaHash };
+    return { declaracoes: resultado, mapaHash, contexto };
 }
