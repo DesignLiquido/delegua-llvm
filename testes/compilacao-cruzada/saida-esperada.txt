@@ -5,6 +5,7 @@ retorno 42
 texto a|b|c
 dicionario um,dois
 rede tempo limite ok
+rede sobra extra
 rede pong:ping
 tempo ok
 excecao capturada
