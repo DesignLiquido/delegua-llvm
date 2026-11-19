@@ -4,5 +4,8 @@ soma 3000000018
 retorno 42
 texto a|b|c
 dicionario um,dois
+rede tempo limite ok
+rede pong:ping
+tempo ok
 excecao capturada
 fim

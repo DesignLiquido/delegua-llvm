@@ -323,7 +323,7 @@ async function principal() {
         const bibliotecasDir = path.join(__dirname, 'bibliotecas');
         // Módulos importados por qualquer arquivo do programa (inclusive arquivos e pacotes importados).
         const modulos = Array.from(new Set([...detectarModulosImportados(codigo), ...compilador.modulosUtilizados]));
-        const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir);
+        const { arquivosC, flagsLink } = obterBibliotecasParaCompilacao(modulos, bibliotecasDir, cadeia.alvo.sistema);
 
         // Adiciona flags -l para bibliotecas estrangeiras referenciadas via @definicao
         // e para bibliotecas do sistema declaradas por pacotes ("nativo.bibliotecas").
