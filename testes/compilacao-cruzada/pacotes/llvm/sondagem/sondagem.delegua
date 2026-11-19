@@ -1,0 +1,17 @@
+@definicao(biblioteca="nativo", prefixo="sondagem_")
+classe estrangeira Sondagem {
+    tamanho_registro(): inteiro
+    somar(r: Registro): longo
+    aplicar(operacao: função, valor: inteiro): inteiro
+}
+
+classe estrangeira Registro {
+    marca: byte
+    valor: longo
+    ativo: lógico
+    fator: número
+    nome: texto
+    @definicao(tamanho=3)
+    id: byte
+    contagem: inteiro
+}

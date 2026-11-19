@@ -1,0 +1,6 @@
+{
+  // Pacote de teste da compilação cruzada: código C compilado para cada alvo.
+  "nome": "sondagem",
+  "pontoDeEntrada": "sondagem.delegua",
+  "nativo": { "fontes": ["c/sondagem.c"] }
+}

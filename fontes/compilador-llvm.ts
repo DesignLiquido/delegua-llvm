@@ -120,6 +120,7 @@ import {
     registrarSimbolosImportados,
 } from './resolucao-importacoes';
 import { ErroCompilador } from './erros/erro-compilador';
+import { AlvoCompilacao, arquiteturaLlvmDoTriplo } from './alvos';
 import {
     tipoEhInteiroDelegua,
     tipoEhVetor,
@@ -144,6 +145,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     modulo: llvm.Module;
     montador: llvm.IRBuilder;
     maquinaAlvo: llvm.TargetMachine;
+    // Disposição de memória do alvo (tamanhos de estruturas, sizeof).
+    layoutDados: llvm.DataLayout;
+    // Alvo de compilação cruzada (ver alvos.ts). Indefinido: máquina atual.
+    alvo: AlvoCompilacao | undefined;
 
     pilhaVariaveisEscopo: PilhaVariaveisEscopo;
     funcaoEscreva: llvm.FunctionCallee;
@@ -3739,6 +3744,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // função de módulo importado. Undefined se não for um deles.
     protected tipoRetornoMetodoEmbutido(tipoObjeto: string, nomeMetodo: string): string | undefined {
         if (!tipoObjeto || !nomeMetodo) return undefined;
+        // Estrutura.tamanhoEmBytes() (sizeof de estrutura estrangeira).
+        if (nomeMetodo === 'tamanhoEmBytes' && this.estruturasEstrangeiras.has(tipoObjeto)) return 'inteiro';
         if (tipoObjeto === 'texto') return CompiladorLLVM.TIPOS_RETORNO_METODOS_TEXTO[nomeMetodo];
         if (tipoEhDicionario(tipoObjeto)) return CompiladorLLVM.TIPOS_RETORNO_METODOS_DICIONARIO[nomeMetodo];
         if (tipoEhVetor(tipoObjeto)) {
@@ -3759,6 +3766,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         switch (construto.constructor) {
             case Leia:
                 return 'texto';
+            case Variavel: {
+                // O tipo no escopo é o tipo com que o compilador de fato gerou a variável
+                // (inferido do inicializador); o do AST pode ser só o palpite do avaliador.
+                try {
+                    const tipoEscopo = this.pilhaVariaveisEscopo.obterValor((construto as Variavel).simbolo.lexema)?.tipo;
+                    if (tipoEscopo && tipoEscopo !== 'qualquer') return tipoEscopo;
+                } catch {
+                    /* variável não encontrada no escopo */
+                }
+                return construto.tipo;
+            }
             case Isto:
                 try {
                     return this.pilhaVariaveisEscopo.obterValor('isto')?.tipo ?? 'qualquer';
@@ -4428,7 +4446,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoStruct = this.registroClasses.get(nomeClasse);
         // Alocar no montão (heap) para que o objeto sobreviva ao escopo de pilha atual.
         // alloca produzia ponteiro dangling quando armazenado em campo de outra classe.
-        const tamanhoStruct = this.maquinaAlvo.createDataLayout().getTypeAllocSize(tipoStruct);
+        const tamanhoStruct = this.layoutDados.getTypeAllocSize(tipoStruct);
         const tamanhoConst = ConstantInt.get(this.contexto, new APInt(64, tamanhoStruct));
 
         // Estrutura estrangeira: memória zerada (como uma struct C inicializada com zeros), sem construtor.
@@ -4671,9 +4689,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (nomeClasse === 'texto') {
             // chamarMetodoTexto espera ptr* (char**): alloca ou gepPtr.
             // Se objetoPtr for LoadInst/CallInst, já é char* — embrulha em alloca temporária.
+            // Só alloca (variável local), Argument (parâmetro texto, dupla indireção) e GEP
+            // (slot de campo) já são char**; o resto — inclusive literais, que são constantes —
+            // é o próprio char*.
             let textoSlot = objetoPtr;
             const construtorObjPtr = objetoPtr?.constructor;
-            if (construtorObjPtr === llvm.LoadInst || construtorObjPtr === llvm.CallInst) {
+            const ehSlotTexto =
+                construtorObjPtr === llvm.AllocaInst ||
+                construtorObjPtr === llvm.Argument ||
+                construtorObjPtr === llvm.GetElementPtrInst;
+            if (!ehSlotTexto) {
                 textoSlot = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'texto_slot');
                 this.montador.CreateStore(objetoPtr, textoSlot);
             }
@@ -6044,7 +6069,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoPersonalidade = llvm.Function.Create(
             tipoPersonalidade,
             llvm.Function.LinkageTypes.ExternalLinkage,
-            '__gxx_personality_v0',
+            this.alvo?.personalidadeExcecoes ?? '__gxx_personality_v0',
             this.modulo
         );
 
@@ -6459,14 +6484,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.modulo = new llvm.Module('demo', this.contexto);
         this.montador = new llvm.IRBuilder(this.contexto);
 
-        // Define target triple e data layout para a plataforma nativa.
+        // Define target triple e data layout: plataforma nativa ou o alvo de compilação cruzada.
         llvm.InitializeNativeTarget();
         llvm.InitializeNativeTargetAsmPrinter();
-        const triploAlvo = llvm.config.LLVM_DEFAULT_TARGET_TRIPLE;
+        const triploNativo = llvm.config.LLVM_DEFAULT_TARGET_TRIPLE;
+        const triploAlvo = this.alvo?.triplo ?? triploNativo;
         this.modulo.setTargetTriple(triploAlvo);
-        const alvo = llvm.TargetRegistry.lookupTarget(triploAlvo);
-        this.maquinaAlvo = alvo.createTargetMachine(triploAlvo, 'generic', '');
-        this.modulo.setDataLayout(this.maquinaAlvo.createDataLayout());
+        // O LLVM das ligações pode ter só o backend nativo. Para outra arquitetura, a
+        // disposição de memória vem da tabela de alvos e o IR não é otimizado aqui (o clang
+        // otimiza ao gerar o código do alvo).
+        const mesmaArquiteturaNativa = arquiteturaLlvmDoTriplo(triploAlvo) === arquiteturaLlvmDoTriplo(triploNativo);
+        if (mesmaArquiteturaNativa) {
+            const alvoLlvm = llvm.TargetRegistry.lookupTarget(triploAlvo);
+            this.maquinaAlvo = alvoLlvm.createTargetMachine(triploAlvo, 'generic', '');
+            this.layoutDados = this.maquinaAlvo.createDataLayout();
+        } else {
+            this.maquinaAlvo = null;
+            this.layoutDados = new llvm.DataLayout(this.alvo.layoutDados);
+        }
+        this.modulo.setDataLayout(this.layoutDados);
 
         this.tipoEstruturaVetor = null;
         this.contemExcecoes = false;
@@ -6684,7 +6720,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             throw new Error('Falha ao verificar módulo LLVM.');
         }
 
-        if (otimizar) {
+        if (otimizar && this.maquinaAlvo) {
             const passesModulo = new llvm.ModulePassManager();
             const passesFuncao = passesModulo.createFunctionPassManager();
             passesFuncao.addSROAPass();

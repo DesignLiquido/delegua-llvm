@@ -50,3 +50,58 @@ jobs:
         with:
           fail_ci_if_error: false
         continue-on-error: true
+
+  compilacao-cruzada:
+    name: Cross-compile (zig)
+    runs-on: ubuntu-24.04
+
+    env:
+      ZIG_VERSION: 0.17.0
+      # SHA-256 de zig-x86_64-linux-0.17.0.tar.xz, conforme https://ziglang.org/download/index.json
+      ZIG_SHA256: 1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.cache-zig
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'yarn'
+
+      - name: Install LLVM 22 on Ubuntu 24.04
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev
+          echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
+
+      - name: Install qemu and cross C libraries (to run arm64/riscv64 binaries)
+        run: sudo apt-get install -y file qemu-user libc6-arm64-cross libc6-riscv64-cross
+
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        run: |
+          arquivo="zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -sSfL "https://ziglang.org/download/${ZIG_VERSION}/${arquivo}" -o "${RUNNER_TEMP}/${arquivo}"
+          echo "${ZIG_SHA256}  ${RUNNER_TEMP}/${arquivo}" | sha256sum -c -
+          tar -xf "${RUNNER_TEMP}/${arquivo}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/zig-x86_64-linux-${ZIG_VERSION}" >> $GITHUB_PATH
+
+      # zig compila a biblioteca C/C++ de cada alvo no primeiro uso; o cache evita refazer isso.
+      - name: Cache zig
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ZIG_GLOBAL_CACHE_DIR }}
+          key: zig-${{ env.ZIG_VERSION }}-${{ hashFiles('fontes/bibliotecas/**', 'testes/compilacao-cruzada/**') }}
+          restore-keys: zig-${{ env.ZIG_VERSION }}-
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Cross-compile and run sample program
+        run: bash testes/compilacao-cruzada/verificar.sh

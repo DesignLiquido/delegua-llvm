@@ -1,0 +1,8 @@
+alvo {alvo}
+layout ok
+soma 3000000018
+retorno 42
+texto a|b|c
+dicionario um,dois
+excecao capturada
+fim
