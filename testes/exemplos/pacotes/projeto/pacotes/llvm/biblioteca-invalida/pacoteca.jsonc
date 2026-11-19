@@ -1,0 +1,1 @@
+{ "nome": "biblioteca-invalida", "pontoDeEntrada": "x.delegua", "nativo": { "bibliotecas": ["-Wl,--opcao-arbitraria"] } }

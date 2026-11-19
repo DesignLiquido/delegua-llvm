@@ -80,3 +80,129 @@ char* delegua_texto_substituir(const char* s, const char* de, const char* para) 
     strcpy(dest, src);
     return resultado;
 }
+
+// ───────────────────────────────────────────────────────────
+// Aparar, dividir, buscar
+// ───────────────────────────────────────────────────────────
+
+static char* copiar_trecho(const char* inicio, size_t tamanho) {
+    char* resultado = (char*)malloc(tamanho + 1);
+    if (!resultado) return NULL;
+    memcpy(resultado, inicio, tamanho);
+    resultado[tamanho] = '\0';
+    return resultado;
+}
+
+static char* aparar(const char* s, int noInicio, int noFim) {
+    if (!s) return copiar_trecho("", 0);
+    const char* inicio = s;
+    const char* fim = s + strlen(s);
+    if (noInicio) {
+        while (inicio < fim && isspace((unsigned char)*inicio)) inicio++;
+    }
+    if (noFim) {
+        while (fim > inicio && isspace((unsigned char)*(fim - 1))) fim--;
+    }
+    return copiar_trecho(inicio, (size_t)(fim - inicio));
+}
+
+char* delegua_texto_aparar(const char* s) { return aparar(s, 1, 1); }
+char* delegua_texto_aparar_inicio(const char* s) { return aparar(s, 1, 0); }
+char* delegua_texto_aparar_fim(const char* s) { return aparar(s, 0, 1); }
+
+// Acrescenta `parte` a `saida`, crescendo o buffer por duplicação.
+static void acrescentar_parte(Vetor* saida, int* capacidade, char* parte) {
+    if (saida->tamanho >= *capacidade) {
+        int nova = *capacidade > 0 ? *capacidade * 2 : 4;
+        void* novoPtr = realloc(saida->ptr, (size_t)nova * sizeof(char*));
+        if (!novoPtr) return;
+        saida->ptr = novoPtr;
+        *capacidade = nova;
+    }
+    ((char**)saida->ptr)[saida->tamanho++] = parte;
+}
+
+void delegua_texto_dividir(const char* s, const char* delimitador, int limite, Vetor* saida) {
+    if (!saida) return;
+    saida->ptr = NULL;
+    saida->tamanho = 0;
+    if (!s) return;
+    if (!delimitador) delimitador = "";
+
+    int capacidade = 0;
+    size_t tamDelimitador = strlen(delimitador);
+
+    if (tamDelimitador == 0) {
+        for (const char* c = s; *c; c++) {
+            if (limite > 0 && saida->tamanho == limite - 1) {
+                acrescentar_parte(saida, &capacidade, copiar_trecho(c, strlen(c)));
+                return;
+            }
+            acrescentar_parte(saida, &capacidade, copiar_trecho(c, 1));
+        }
+        return;
+    }
+
+    const char* inicio = s;
+    const char* encontrado;
+    while ((limite <= 0 || saida->tamanho < limite - 1) && (encontrado = strstr(inicio, delimitador)) != NULL) {
+        acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, (size_t)(encontrado - inicio)));
+        inicio = encontrado + tamDelimitador;
+    }
+    acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, strlen(inicio)));
+}
+
+int delegua_texto_encontrar(const char* s, const char* sub, int inicio) {
+    if (!s || !sub) return -1;
+    int tam = (int)strlen(s);
+    if (inicio < 0) inicio = 0;
+    if (inicio > tam) return -1;
+    const char* encontrado = strstr(s + inicio, sub);
+    return encontrado ? (int)(encontrado - s) : -1;
+}
+
+int delegua_texto_encontrar_ultimo(const char* s, const char* sub) {
+    if (!s || !sub) return -1;
+    size_t tamSub = strlen(sub);
+    size_t tam = strlen(s);
+    if (tamSub > tam) return -1;
+    for (size_t i = tam - tamSub + 1; i-- > 0;) {
+        if (memcmp(s + i, sub, tamSub) == 0) return (int)i;
+    }
+    return -1;
+}
+
+int delegua_texto_comeca_com(const char* s, const char* prefixo) {
+    if (!s || !prefixo) return 0;
+    return strncmp(s, prefixo, strlen(prefixo)) == 0 ? 1 : 0;
+}
+
+int delegua_texto_termina_com(const char* s, const char* sufixo) {
+    if (!s || !sufixo) return 0;
+    size_t tam = strlen(s);
+    size_t tamSufixo = strlen(sufixo);
+    if (tamSufixo > tam) return 0;
+    return memcmp(s + tam - tamSufixo, sufixo, tamSufixo) == 0 ? 1 : 0;
+}
+
+char* delegua_texto_concatenar(const char* a, const char* b) {
+    if (!a) a = "";
+    if (!b) b = "";
+    size_t tamA = strlen(a);
+    size_t tamB = strlen(b);
+    char* resultado = (char*)malloc(tamA + tamB + 1);
+    if (!resultado) return NULL;
+    memcpy(resultado, a, tamA);
+    memcpy(resultado + tamA, b, tamB + 1);
+    return resultado;
+}
+
+char* delegua_texto_inverter(const char* s) {
+    if (!s) return copiar_trecho("", 0);
+    size_t tam = strlen(s);
+    char* resultado = (char*)malloc(tam + 1);
+    if (!resultado) return NULL;
+    for (size_t i = 0; i < tam; i++) resultado[i] = s[tam - 1 - i];
+    resultado[tam] = '\0';
+    return resultado;
+}

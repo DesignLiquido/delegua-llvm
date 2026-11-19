@@ -28,7 +28,14 @@ const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([
     ],
     ['dados', { arquivosC: ['dados.c'], flagsLink: [] }],
     ['argumentos', { arquivosC: ['argumentos.c'], flagsLink: [] }],
+    ['processo', { arquivosC: ['processo.c'], flagsLink: [] }],
 ]);
+
+// Verdadeiro se `nome` é um módulo embutido do compilador (tem prioridade sobre pacotes
+// instalados de mesmo nome).
+export function ehModuloEmbutido(nome: string): boolean {
+    return MAPA_MODULOS.has(nome);
+}
 
 export function detectarModulosImportados(linhasCodigo: string[]): string[] {
     const modulos: Set<string> = new Set();

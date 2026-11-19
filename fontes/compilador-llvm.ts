@@ -98,8 +98,14 @@ import {
     registrarModuloJson,
     registrarModuloMatematica,
     registrarModuloArgumentos,
+    registrarModuloProcesso,
 } from './registro-modulos';
-import { resolverEMesclarDeclaracoes, ehImportacaoArquivo } from './resolucao-importacoes';
+import {
+    resolverEMesclarDeclaracoes,
+    ehImportacaoResolvida,
+    criarContextoResolucao,
+    registrarSimbolosImportados,
+} from './resolucao-importacoes';
 import { ErroCompilador } from './erros/erro-compilador';
 import {
     tipoEhInteiroDelegua,
@@ -187,6 +193,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
     // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
+    // Funções C do runtime declaradas sob demanda por obterFuncaoRuntime().
+    protected funcoesRuntime: Map<string, llvm.FunctionCallee> = new Map();
+    // Preenchidos por compilar(), para o ligador (ilc): módulos embutidos usados por
+    // qualquer arquivo do programa e fontes/bibliotecas nativas declaradas por pacotes.
+    modulosUtilizados: Set<string> = new Set();
+    fontesNativasPacotes: Set<string> = new Set();
+    bibliotecasNativasPacotes: Set<string> = new Set();
     protected pilhaIsto: llvm.Value[] = [];
     protected classesComMarcadorTipo: Set<string> = new Set();
     protected contadoresNaoNegativos: Set<string> = new Set();
@@ -284,6 +297,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     registrarModuloJson: () => void;
     registrarModuloMatematica: () => void;
     registrarModuloArgumentos: () => void;
+    registrarModuloProcesso: () => void;
 
     constructor() {
         this.lexador = new Lexador();
@@ -660,7 +674,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (declaracao.estrangeira) {
             const meta = lerMetadadosClasse(declaracao.decoradores);
             if (meta) {
-                this.bibliotecasEstrangeiras.add(meta.biblioteca);
+                // biblioteca="nativo": os símbolos vêm das fontes C do próprio pacote
+                // ("nativo.fontes" no pacoteca.jsonc), compiladas junto com o programa —
+                // não há biblioteca do sistema para ligar.
+                if (meta.biblioteca !== CompiladorLLVM.BIBLIOTECA_NATIVA_PACOTE) {
+                    this.bibliotecasEstrangeiras.add(meta.biblioteca);
+                }
                 this.classesEstrangeiras.add(nomeClasse);
                 const funcoes = new Map<string, EntradaFuncaoModulo>();
                 for (const metodo of declaracao.metodos) {
@@ -1147,6 +1166,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve();
         }
 
+        // Dicionário: itera sobre as chaves, em ordem de inserção.
+        if (tipoEhDicionario(iteravelResolvido.tipo)) {
+            const dicionarioPtr = this.resolverPonteiroDireto(iteravelResolvido);
+            const chaves = this.coletarDicionarioEmVetor('chaves', dicionarioPtr);
+            iteravelResolvido = new VariavelEscopo(chaves, undefined, 'vetor<texto>');
+        }
+
         const tipoIterable = iteravelResolvido.tipo ?? 'vetor';
         const ehTexto = tipoIterable === 'texto';
         const ehVetor = tipoEhVetor(tipoIterable);
@@ -1171,11 +1197,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Tamanho do iterável.
         let tamanho: llvm.Value;
+        let vetorPtr: llvm.Value;
         if (ehVetor) {
-            // Para vetor: se for argumento, o valor já é o struct-ptr; senão, carrega.
-            const vetorPtr = ehArgumento
+            // Para vetor: argumento/GEP já é o struct-ptr; uma alloca %Vetor também
+            // (vetor local); só um slot ptr precisa de load.
+            vetorPtr = ehArgumento
                 ? iteravelResolvido.variavelLlvm
-                : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'vetor_ptr');
+                : this.resolverPonteiroEstruturaVetor(iteravelResolvido.variavelLlvm);
             tamanho = this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr], 'para_cada_tam');
         } else {
             // texto: strlen retorna i64; trunca para i32.
@@ -1217,7 +1245,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 declaracao.vetorOuDicionario instanceof Variavel
                     ? declaracao.vetorOuDicionario.simbolo.lexema
                     : nomeElemento + '_vec';
-            const ponteiroElementos = this.carregarPonteiroElementosVetor(nomeVetor, iteravelResolvido.variavelLlvm);
+            const ponteiroElementos = this.carregarPonteiroElementosVetor(nomeVetor, vetorPtr);
             const gepElem = this.montador.CreateInBoundsGEP(tipoElemLlvm, ponteiroElementos, [iCorpo], 'ptr_elem', true);
             const valorElementos = this.montador.CreateLoad(tipoElemLlvm, gepElem, nomeElemento + '_carregado');
             this.montador.CreateStore(valorElementos, alocElemento);
@@ -3111,6 +3139,18 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         await this.visitarCorpoFuncao(declaracao.funcao, objetoLlvmFuncao, parametrosDebugFuncao);
         this.pilhaVariaveisEscopo.removerUltimo();
 
+        // Função que termina sem `retorna` (ex.: procedimento sem tipo de retorno): o último
+        // bloco precisa de um terminador. Devolve o valor nulo do tipo de retorno (0, 0.0,
+        // nulo, vetor vazio), como uma função Delégua sem retorno explícito.
+        const blocoFinal = this.montador.GetInsertBlock();
+        if (blocoFinal && !blocoFinal.getTerminator()) {
+            if (tipoRetorno.isVoidTy()) {
+                this.montador.CreateRetVoid();
+            } else {
+                this.montador.CreateRet(llvm.Constant.getNullValue(tipoRetorno) as unknown as llvm.Value);
+            }
+        }
+
         this.finalizarSubprogramaDebug();
         this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
     }
@@ -3271,6 +3311,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         { valor: valorCarregado, tipo: tipoArgumento || 'texto' },
                         'escreva_var'
                     );
+                } else if (valorCarregado.getType().isIntegerTy(1)) {
+                    valorCarregado = this.montador.CreateZExt(valorCarregado, this.montador.getInt32Ty(), 'logico_escreva');
                 }
                 argumentosResolvidos.push(valorCarregado);
             } else {
@@ -3283,6 +3325,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                             { valor: argumentoResolvido as llvm.Value, tipo: tipoArgumento || 'texto' },
                             'escreva_val'
                         )
+                    );
+                } else if (ehValorLlvm(argumentoResolvido) && (argumentoResolvido as llvm.Value).getType().isIntegerTy(1)) {
+                    // Argumentos variádicos do printf são promovidos a int: um i1 cru
+                    // deixaria os bits altos indefinidos.
+                    argumentosResolvidos.push(
+                        this.montador.CreateZExt(argumentoResolvido as llvm.Value, this.montador.getInt32Ty(), 'logico_escreva')
                     );
                 } else {
                     argumentosResolvidos.push(argumentoResolvido);
@@ -3465,7 +3513,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const tipoElementoDeclarado = tipoElementoVetor(tipoVariavel);
                 (declaracao.inicializador as Vetor).tipo = `${tipoElementoDeclarado}[]`;
             }
-            const estruturaVetor = (await declaracao.inicializador.aceitar(this)) as llvm.Value;
+            const inicializadorVetor = await declaracao.inicializador.aceitar(this);
+            // `var b = a`: vetores são referências — b passa a apontar para o mesmo struct.
+            let estruturaVetor = (
+                inicializadorVetor instanceof VariavelEscopo ? inicializadorVetor.variavelLlvm : inicializadorVetor
+            ) as llvm.Value;
+            // Retorno de função vem como %Vetor por valor: precisa de memória para ser
+            // indexado/modificado como as demais variáveis de vetor.
+            if (estruturaVetor && ehValorLlvm(estruturaVetor) && estruturaVetor.getType().isStructTy()) {
+                estruturaVetor = this.resolverPonteiroEstruturaVetor(estruturaVetor);
+            }
             const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
             topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(estruturaVetor, undefined, tipoVariavel));
             return Promise.resolve();
@@ -3568,6 +3625,58 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return await expressao.expressao.aceitar(this);
     }
 
+    static readonly BIBLIOTECA_NATIVA_PACOTE = 'nativo';
+
+    static readonly TIPOS_RETORNO_METODOS_TEXTO: { [metodo: string]: string } = {
+        aparar: 'texto',
+        apararInicio: 'texto',
+        apararInício: 'texto',
+        apararFim: 'texto',
+        concatenar: 'texto',
+        dividir: 'texto[]',
+        encontrar: 'inteiro',
+        encontrarUltimo: 'inteiro',
+        encontrarÚltimo: 'inteiro',
+        comecaCom: 'lógico',
+        começaCom: 'lógico',
+        terminaCom: 'lógico',
+        inverter: 'texto',
+        maiusculo: 'texto',
+        minusculo: 'texto',
+        subtexto: 'texto',
+        substituir: 'texto',
+        tamanho: 'inteiro',
+    };
+
+    static readonly TIPOS_RETORNO_METODOS_DICIONARIO: { [metodo: string]: string } = {
+        tamanho: 'inteiro',
+        contem: 'lógico',
+        contém: 'lógico',
+        remover: 'lógico',
+        chaves: 'texto[]',
+        valores: 'qualquer[]',
+    };
+
+    // Tipo de retorno de um método embutido (texto, dicionário, vetor) ou de uma
+    // função de módulo importado. Undefined se não for um deles.
+    protected tipoRetornoMetodoEmbutido(tipoObjeto: string, nomeMetodo: string): string | undefined {
+        if (!tipoObjeto || !nomeMetodo) return undefined;
+        if (tipoObjeto === 'texto') return CompiladorLLVM.TIPOS_RETORNO_METODOS_TEXTO[nomeMetodo];
+        if (tipoEhDicionario(tipoObjeto)) return CompiladorLLVM.TIPOS_RETORNO_METODOS_DICIONARIO[nomeMetodo];
+        if (tipoEhVetor(tipoObjeto)) {
+            if (nomeMetodo === 'tamanho') return 'inteiro';
+            if (nomeMetodo === 'juntar') return 'texto';
+            if (nomeMetodo === 'fatiar' || nomeMetodo === 'filtrarPor' || nomeMetodo === 'mapear') return tipoObjeto;
+            return undefined;
+        }
+        if (tipoObjeto.startsWith('modulo:')) {
+            const tipoRetorno = this.mapaModulos.get(tipoObjeto.slice(7))?.get(nomeMetodo)?.tipoRetorno;
+            if (!tipoRetorno || tipoRetorno === 'vazio') return undefined;
+            return tipoRetorno === 'numero' ? 'número' : tipoRetorno === 'logico' ? 'lógico' : tipoRetorno;
+        }
+        return undefined;
+    }
+
     resolverTipoConstruto(construto: ConstrutoInterface): string {
         switch (construto.constructor) {
             case Leia:
@@ -3606,7 +3715,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     const acesso = chamada.entidadeChamada as AcessoMetodoOuPropriedade;
                     const acessoNomeavel = acesso as unknown as AcessoNomeavel;
                     const nomeMetodo = acessoNomeavel.simbolo?.lexema ?? acessoNomeavel.nomeMetodo;
-                    const tipoObjeto = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
+                    let tipoObjeto = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
+                    // O tipo no escopo é mais preciso que o do AST (ex.: 'modulo:json',
+                    // variáveis inferidas a partir do inicializador).
+                    if (acesso.objeto?.constructor === Variavel) {
+                        try {
+                            const tipoEscopo = this.pilhaVariaveisEscopo.obterValor(
+                                (acesso.objeto as Variavel).simbolo.lexema
+                            )?.tipo;
+                            if (tipoEscopo && tipoEscopo !== 'qualquer') tipoObjeto = tipoEscopo;
+                        } catch {
+                            /* variável não encontrada */
+                        }
+                    }
+                    const tipoEmbutido = this.tipoRetornoMetodoEmbutido(tipoObjeto, nomeMetodo);
+                    if (tipoEmbutido) return tipoEmbutido;
                     if (tipoObjeto && tipoObjeto !== 'qualquer') {
                         const tipoRetorno = this.metodosClasse.get(tipoObjeto)?.get(nomeMetodo);
                         if (tipoRetorno && tipoRetorno !== 'vazio') return tipoRetorno;
@@ -4444,6 +4567,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve(resultado);
         }
 
+        // Métodos embutidos de dicionário
+        if (tipoEhDicionario(nomeClasse)) {
+            const dicionarioPtr =
+                objetoResolvido instanceof VariavelEscopo ? this.resolverPonteiroDireto(objetoResolvido) : objetoPtr;
+            return await this.chamarMetodoDicionario(nomeMetodo, dicionarioPtr, argumentos, acesso.linha);
+        }
+
         // Métodos embutidos de texto
         if (nomeClasse === 'texto') {
             // chamarMetodoTexto espera ptr* (char**): alloca ou gepPtr.
@@ -4490,6 +4620,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     args.push(await this.carregarArgumentoNumero(argumentos[i]));
                 } else if (tipoPar === 'texto') {
                     args.push(await this.carregarArgumentoTexto(argumentos[i]));
+                } else if (tipoPar === 'lógico' || tipoPar === 'logico') {
+                    // Na ABI dos módulos, lógico é um int C (0/1).
+                    args.push(await this.carregarArgumentoLogicoComoInteiro(argumentos[i]));
+                } else if (tipoEhVetor(tipoPar)) {
+                    // Vetor*: ponteiro para o struct %Vetor.
+                    const argResolvido = await argumentos[i].aceitar(this);
+                    const valorVetor =
+                        argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : (argResolvido as llvm.Value);
+                    args.push(this.resolverPonteiroEstruturaVetor(valorVetor));
                 } else {
                     const argResolvido = await argumentos[i].aceitar(this);
                     args.push(
@@ -4501,7 +4640,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     );
                 }
             }
-            return this.montador.CreateCall(entrada.callee, args);
+            // Argumentos finais omitidos chegam como zero/nulo (ex.: diretório opcional).
+            for (let i = args.length; i < entrada.tiposParametros.length; i++) {
+                const tipoPar = entrada.tiposParametros[i];
+                const tipoLlvm =
+                    tipoPar === 'inteiro' || tipoPar === 'lógico' || tipoPar === 'logico'
+                        ? this.montador.getInt32Ty()
+                        : tipoPar === 'numero' || tipoPar === 'número'
+                          ? this.montador.getDoubleTy()
+                          : this.montador.getPtrTy();
+                args.push(llvm.Constant.getNullValue(tipoLlvm) as unknown as llvm.Value);
+            }
+            const resultadoModulo = this.montador.CreateCall(entrada.callee, args);
+            if (entrada.tipoRetorno === 'lógico' || entrada.tipoRetorno === 'logico') {
+                return this.inteiroParaLogico(resultadoModulo, `${nomeMetodo}_logico`);
+            }
+            return resultadoModulo;
         }
 
         // Despacho de classe estrangeira (@definicao):
@@ -4744,6 +4898,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     ): Promise<llvm.Value> {
         // Carrega o char* real a partir do ponteiro da variável
         const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
+        const ptr = this.montador.getPtrTy();
+        const i32 = this.montador.getInt32Ty();
 
         switch (nomeMetodo) {
             case 'maiusculo':
@@ -4774,6 +4930,74 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return this.montador.CreateTrunc(len64, this.montador.getInt32Ty(), 'strlen_i32');
             }
 
+            case 'aparar':
+            case 'apararInicio':
+            case 'apararInício':
+            case 'apararFim':
+            case 'inverter': {
+                const nomesC: { [metodo: string]: string } = {
+                    aparar: 'delegua_texto_aparar',
+                    apararInicio: 'delegua_texto_aparar_inicio',
+                    apararInício: 'delegua_texto_aparar_inicio',
+                    apararFim: 'delegua_texto_aparar_fim',
+                    inverter: 'delegua_texto_inverter',
+                };
+                const funcao = this.obterFuncaoRuntime(nomesC[nomeMetodo], ptr, [ptr]);
+                return this.montador.CreateCall(funcao, [strPtr]);
+            }
+
+            case 'concatenar': {
+                const outro = await this.carregarArgumentoTexto(argumentos[0]);
+                const funcao = this.obterFuncaoRuntime('delegua_texto_concatenar', ptr, [ptr, ptr]);
+                return this.montador.CreateCall(funcao, [strPtr, outro]);
+            }
+
+            case 'dividir': {
+                // dividir(delimitador = "", limite = 0) → texto[]
+                const delimitador = argumentos[0]
+                    ? await this.carregarArgumentoTexto(argumentos[0])
+                    : this.montador.CreateGlobalStringPtr('', 'str_vazio', 0, this.modulo);
+                const limite = argumentos[1]
+                    ? await this.carregarArgumentoInteiro(argumentos[1])
+                    : ConstantInt.get(this.contexto, new APInt(32, 0));
+                const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'texto_dividido');
+                const funcao = this.obterFuncaoRuntime('delegua_texto_dividir', llvm.Type.getVoidTy(this.contexto), [
+                    ptr,
+                    ptr,
+                    i32,
+                    ptr,
+                ]);
+                this.montador.CreateCall(funcao, [strPtr, delimitador, limite, saida]);
+                return saida;
+            }
+
+            case 'encontrar': {
+                // encontrar(subtexto, inicio = 0) → inteiro (-1 se não encontrar)
+                const sub = await this.carregarArgumentoTexto(argumentos[0]);
+                const inicio = argumentos[1]
+                    ? await this.carregarArgumentoInteiro(argumentos[1])
+                    : ConstantInt.get(this.contexto, new APInt(32, 0));
+                const funcao = this.obterFuncaoRuntime('delegua_texto_encontrar', i32, [ptr, ptr, i32]);
+                return this.montador.CreateCall(funcao, [strPtr, sub, inicio]);
+            }
+
+            case 'encontrarUltimo':
+            case 'encontrarÚltimo': {
+                const sub = await this.carregarArgumentoTexto(argumentos[0]);
+                const funcao = this.obterFuncaoRuntime('delegua_texto_encontrar_ultimo', i32, [ptr, ptr]);
+                return this.montador.CreateCall(funcao, [strPtr, sub]);
+            }
+
+            case 'comecaCom':
+            case 'começaCom':
+            case 'terminaCom': {
+                const nomeC = nomeMetodo === 'terminaCom' ? 'delegua_texto_termina_com' : 'delegua_texto_comeca_com';
+                const afixo = await this.carregarArgumentoTexto(argumentos[0]);
+                const funcao = this.obterFuncaoRuntime(nomeC, i32, [ptr, ptr]);
+                const resultado = this.montador.CreateCall(funcao, [strPtr, afixo]);
+                return this.inteiroParaLogico(resultado, nomeMetodo);
+            }
+
             default: {
                 const erroTexto = new ErroCompilador(`Método de texto '${nomeMetodo}' não implementado.`);
                 erroTexto.linha = linha;
@@ -4781,6 +5005,120 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 throw erroTexto;
             }
         }
+    }
+
+    protected async chamarMetodoDicionario(
+        nomeMetodo: string,
+        dicionarioPtr: llvm.Value,
+        argumentos: ConstrutoInterface[],
+        linha?: number
+    ): Promise<llvm.Value> {
+        const ptr = this.montador.getPtrTy();
+        const i32 = this.montador.getInt32Ty();
+
+        switch (nomeMetodo) {
+            case 'tamanho':
+                return this.montador.CreateCall(this.funcaoDicionarioTamanho, [dicionarioPtr], 'dict_tamanho');
+
+            case 'contem':
+            case 'contém': {
+                const chave = await this.carregarArgumentoTexto(argumentos[0]);
+                const resultado = this.montador.CreateCall(this.funcaoDicionarioContem, [dicionarioPtr, chave]);
+                return this.inteiroParaLogico(resultado, 'dict_contem');
+            }
+
+            case 'remover': {
+                const chave = await this.carregarArgumentoTexto(argumentos[0]);
+                const funcao = this.obterFuncaoRuntime('delegua_dicionario_remover', i32, [ptr, ptr]);
+                const resultado = this.montador.CreateCall(funcao, [dicionarioPtr, chave]);
+                return this.inteiroParaLogico(resultado, 'dict_removido');
+            }
+
+            case 'chaves':
+            case 'valores':
+                return this.coletarDicionarioEmVetor(nomeMetodo, dicionarioPtr);
+
+            default: {
+                const erroDicionario = new ErroCompilador(`Método de dicionário '${nomeMetodo}' não implementado.`);
+                erroDicionario.linha = linha;
+                erroDicionario.tamanhoToken = nomeMetodo.length;
+                throw erroDicionario;
+            }
+        }
+    }
+
+    // Preenche um %Vetor (alloca) com as chaves (char*) ou os valores (void*) do
+    // dicionário, em ordem de inserção.
+    protected coletarDicionarioEmVetor(qual: 'chaves' | 'valores', dicionarioPtr: llvm.Value): llvm.Value {
+        const ptr = this.montador.getPtrTy();
+        const nomeC = qual === 'chaves' ? 'delegua_dicionario_chaves' : 'delegua_dicionario_valores';
+        const funcao = this.obterFuncaoRuntime(nomeC, llvm.Type.getVoidTy(this.contexto), [ptr, ptr]);
+        const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, `dict_${qual}`);
+        this.montador.CreateCall(funcao, [dicionarioPtr, saida]);
+        return saida;
+    }
+
+    // Declara (uma única vez por módulo) uma função C do runtime e a devolve.
+    // Usado pelos métodos embutidos mais recentes, para não exigir um campo
+    // `funcaoX` + declaração em criarFuncaoNativa() para cada função.
+    protected obterFuncaoRuntime(nomeC: string, tipoRetorno: llvm.Type, tiposParametros: llvm.Type[]): llvm.FunctionCallee {
+        const existente = this.funcoesRuntime.get(nomeC);
+        if (existente) return existente;
+        const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParametros, false);
+        const funcao = this.modulo.getOrInsertFunction(nomeC, tipoFuncao);
+        this.funcoesRuntime.set(nomeC, funcao);
+        return funcao;
+    }
+
+    // Carrega um argumento lógico como int C de 32 bits (0/1).
+    protected async carregarArgumentoLogicoComoInteiro(argumento: ConstrutoInterface): Promise<llvm.Value> {
+        const resolvido = await argumento.aceitar(this);
+        let valor: llvm.Value;
+        if (resolvido instanceof VariavelEscopo) {
+            const tipoLlvm = this.obterTipoLlvm(resolvido.tipo || 'lógico');
+            valor = tipoEhPonteiro(resolvido.variavelLlvm.getType())
+                ? this.montador.CreateLoad(tipoLlvm, resolvido.variavelLlvm, 'load_arg_logico')
+                : resolvido.variavelLlvm;
+        } else {
+            valor = resolvido as llvm.Value;
+        }
+        const tipo = valor.getType();
+        if (tipo.isIntegerTy(32)) return valor;
+        if (tipo.isIntegerTy(1) || tipo.isIntegerTy(8)) {
+            return this.montador.CreateZExt(valor, this.montador.getInt32Ty(), 'logico_para_int');
+        }
+        if (tipo.isIntegerTy(64)) return this.montador.CreateTrunc(valor, this.montador.getInt32Ty(), 'longo_para_int');
+        // double: compara o construtor em vez de isDoubleTy() (ver carregarArgumentoInteiro).
+        if (tipo?.constructor === llvm.Type) {
+            return this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'numero_para_int');
+        }
+        return valor;
+    }
+
+    // Converte um inteiro C (0/1) em lógico (i1).
+    protected inteiroParaLogico(valor: llvm.Value, nome: string): llvm.Value {
+        return this.montador.CreateICmpNE(valor, ConstantInt.get(this.contexto, new APInt(32, 0)), nome);
+    }
+
+    // Resolve um vetor para um ponteiro ao struct %Vetor, que é o que o runtime C
+    // (Vetor*) e os GEPs de elementos esperam:
+    //   - alloca %Vetor (vetor local): já é o ponteiro do struct;
+    //   - alloca ptr (slot que guarda um Vetor*): carrega o ponteiro;
+    //   - valor %Vetor por valor (ex.: retorno de função): guarda numa alloca temporária;
+    //   - Argument, GEP, CallInst que devolve Vetor*: já é o ponteiro do struct.
+    protected resolverPonteiroEstruturaVetor(valor: llvm.Value): llvm.Value {
+        if (!valor) return valor;
+        if (valor.constructor === llvm.AllocaInst) {
+            const tipoAlocado = (valor as llvm.AllocaInst).getAllocatedType();
+            if (tipoAlocado.isStructTy()) return valor;
+            return this.montador.CreateLoad(this.montador.getPtrTy(), valor, 'vetor_ptr');
+        }
+        if (valor.getType().isStructTy()) {
+            const temporario = this.criarAllocaNoBlocoEntrada(valor.getType(), 'vetor_tmp');
+            this.montador.CreateStore(valor, temporario);
+            return temporario;
+        }
+        return valor;
     }
 
     // Insere um alloca no bloco de entrada da função corrente, evitando
@@ -5325,6 +5663,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
 
             for (const [indice, argumento] of expressao.argumentos.entries()) {
+                // Parâmetros texto/dicionário seguem a convenção ptr* (dupla indireção): o corpo
+                // da função faz `load ptr, ptr %arg` antes de usar o valor — a mesma convenção
+                // das chamadas de método. O valor vai numa caixa temporária própria, para que
+                // uma reatribuição do parâmetro dentro da função não altere a variável de quem chamou.
+                const tipoParamDeclarado = tiposParametros[indice];
+                if (tipoParamDeclarado === 'texto' || tipoEhDicionario(tipoParamDeclarado)) {
+                    const valorPonteiro =
+                        tipoParamDeclarado === 'texto'
+                            ? await this.carregarArgumentoTexto(argumento)
+                            : this.resolverPonteiroDireto(await argumento.aceitar(this));
+                    const caixa = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_caixa');
+                    this.montador.CreateStore(valorPonteiro, caixa);
+                    argumentos.push(caixa);
+                    continue;
+                }
+
                 const argumentoAjustado = this.resolverArgumentoChamada(argumento, tiposParametros[indice]);
                 let argumentoResolvido = await argumentoAjustado.aceitar(this);
                 if (argumentoResolvido instanceof VariavelEscopo) {
@@ -5880,6 +6234,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             ['criptografia', () => this.registrarModuloCriptografia()],
             ['dados', () => this.registrarModuloDados()],
             ['argumentos', () => this.registrarModuloArgumentos()],
+            ['processo', () => this.registrarModuloProcesso()],
         ]);
 
         if (modulosImportados) {
@@ -5958,6 +6313,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.idClasse = new Map();
         this.proximoIdClasse = 0;
         this.mapaModulos = new Map();
+        this.funcoesRuntime = new Map();
         this.bibliotecasEstrangeiras = new Set();
         this.classesEstrangeiras = new Set();
         this.pilhaIsto = [];
@@ -6038,6 +6394,22 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         if (typeof nomeTipoObjeto === 'string' && nomeTipoObjeto.match(/^[A-Z]/)) {
                             return 'qualquer';
                         }
+                        // Variável `qualquer` (ex.: `var json = importar("json")`): o avaliador
+                        // não conhece as funções do módulo. O compilador valida a chamada
+                        // depois (função inexistente no módulo gera erro de compilação).
+                        if (nomeTipoObjeto === 'qualquer' && entidadeChamada?.objeto?.constructor === Variavel) {
+                            return 'qualquer';
+                        }
+                        // Métodos embutidos que o compilador implementa além das primitivas
+                        // conhecidas pelo avaliador (ex.: texto.encontrarUltimo, texto.comecaCom).
+                        const nomeMembro = entidadeChamada?.simbolo?.lexema;
+                        const tipoEmbutido =
+                            nomeTipoObjeto === 'texto'
+                                ? CompiladorLLVM.TIPOS_RETORNO_METODOS_TEXTO[nomeMembro]
+                                : tipoEhDicionario(nomeTipoObjeto)
+                                  ? CompiladorLLVM.TIPOS_RETORNO_METODOS_DICIONARIO[nomeMembro]
+                                  : undefined;
+                        if (tipoEmbutido) return tipoEmbutido;
 
                         throw erro;
                     }
@@ -6056,16 +6428,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.mapaHashParaCaminho = new Map();
         this.cacheArquivosDebug = new Map();
 
+        this.modulosUtilizados = new Set();
+        this.fontesNativasPacotes = new Set();
+        this.bibliotecasNativasPacotes = new Set();
+        let contextoResolucao = criarContextoResolucao();
+
         if (diretorioBase) {
             const registroClasses: { [nome: string]: Declaracao } = {};
             const resultadoImportacoes = await resolverEMesclarDeclaracoes(
                 codigo,
                 diretorioBase,
                 new Set(),
-                registroClasses
+                registroClasses,
+                new Map(),
+                contextoResolucao
             );
             declaracoesImportadas = resultadoImportacoes.declaracoes;
             this.mapaHashParaCaminho = resultadoImportacoes.mapaHash;
+            contextoResolucao = resultadoImportacoes.contexto;
+            this.fontesNativasPacotes = contextoResolucao.fontesNativas;
+            this.bibliotecasNativasPacotes = contextoResolucao.bibliotecasNativas;
 
             // analisar() reseta tiposDefinidosEmCodigo logo de início; envolve
             // inicializarPilhaEscopos (chamada depois do reset, antes do loop de parse)
@@ -6075,11 +6457,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 avaliadorComTipagem.inicializarPilhaEscopos = () => {
                     inicializarOriginal();
                     Object.assign(avaliadorComTipagem.tiposDefinidosEmCodigo, registroClasses);
+                    registrarSimbolosImportados(avaliadorComTipagem, declaracoesImportadas);
                 };
             }
 
-            // Remove linhas de importação de arquivo do código principal — já foram resolvidas.
-            codigoPrincipal = codigo.map((l) => (ehImportacaoArquivo(l) ? '' : l));
+            // Remove linhas de importação de arquivo e de pacote do código principal — já foram resolvidas.
+            codigoPrincipal = codigo.map((l) => (ehImportacaoResolvida(l, diretorioBase, contextoResolucao) ? '' : l));
         }
 
         const resultadoLexador = this.lexador.mapear(codigoPrincipal, -1);
@@ -6110,6 +6493,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const match = regexImportar.exec(linha) || regexDe.exec(linha);
             if (match) modulosImportados.add(match[1]);
         }
+        // Módulos usados por arquivos e pacotes importados também precisam ser registrados.
+        contextoResolucao.modulosEmbutidos.forEach((modulo) => modulosImportados.add(modulo));
+        modulosImportados.forEach((modulo) => this.modulosUtilizados.add(modulo));
 
         this.criarFuncaoNativa(modulosImportados);
 
@@ -6121,6 +6507,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             'aleatorioEntre',
             new VariavelEscopo(this.funcaoAleatorioEntre?.getCallee() as llvm.Value)
         );
+
+        // Importações de módulos embutidos antes de tudo: `var json = importar("json")` e
+        // `importar tudo como json de "json"` só criam sentinelas (sem IR), e funções e
+        // métodos compilados a seguir precisam enxergá-las.
+        for (const declaracao of todasDeclaracoes) {
+            const declaracaoQualquer: any = declaracao;
+            if (declaracaoQualquer.constructor === Importar) {
+                await declaracaoQualquer.aceitar(this);
+            } else if (
+                declaracaoQualquer.constructor === Var &&
+                declaracaoQualquer.inicializador?.constructor === ImportarComoConstruto
+            ) {
+                const inicializadorImportacao = declaracaoQualquer.inicializador as ImportarComoConstruto;
+                const sentinela = await inicializadorImportacao.aceitar(this);
+                if (sentinela instanceof VariavelEscopo) {
+                    topoDaPilhaDeVariaveis.set(declaracaoQualquer.simbolo.lexema, sentinela);
+                }
+            }
+        }
 
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = todasDeclaracoes.filter((d) => d instanceof Classe);
@@ -6199,3 +6604,4 @@ CompiladorLLVM.prototype.registrarModuloHttp = registrarModuloHttp;
 CompiladorLLVM.prototype.registrarModuloCriptografia = registrarModuloCriptografia;
 CompiladorLLVM.prototype.registrarModuloDados = registrarModuloDados;
 CompiladorLLVM.prototype.registrarModuloArgumentos = registrarModuloArgumentos;
+CompiladorLLVM.prototype.registrarModuloProcesso = registrarModuloProcesso;

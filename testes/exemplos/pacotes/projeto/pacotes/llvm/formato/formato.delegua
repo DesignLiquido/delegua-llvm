@@ -1,0 +1,3 @@
+funcao entreColchetes(t: texto): texto {
+    retorna "[" + t + "]"
+}

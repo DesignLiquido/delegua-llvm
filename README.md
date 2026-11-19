@@ -197,6 +197,56 @@ Isso permite que chamadas estáticas como `LibM.cosseno(0.0)` resolvam o nome `L
 
 > **Nota:** Essa abordagem de sentinela pode mudar no futuro; consulte o código em `compilarClasseEstrangeira()` e `pilha-variaveis-escopo.ts` para a implementação atual.
 
+## Pacotes
+
+Pacotes instalados pelo gerenciador [`pacote`](https://github.com/DesignLiquido/pacote-go) ficam em `pacotes/llvm/<nome>/` e são importados pelo nome:
+
+```delegua
+importar { comparar, satisfaz } de "semver"
+```
+
+O compilador procura `pacotes/llvm/<nome>/pacoteca.jsonc` a partir do diretório do arquivo que importa, subindo até a raiz, e compila o `pontoDeEntrada` do manifesto junto com o programa. Módulos embutidos (`json`, `arquivos`, `processo`...) têm prioridade sobre pacotes de mesmo nome.
+
+Um pacote pode trazer código C próprio, declarado em `nativo` no `pacoteca.jsonc`:
+
+```jsonc
+{
+  "nome": "git",
+  "pontoDeEntrada": "git.delegua",
+  "nativo": {
+    // Compiladas e ligadas junto com o programa; podem incluir os cabeçalhos do runtime (ex.: "vetor.h").
+    "fontes": ["c/git.c"],
+    // Bibliotecas do sistema (-l): uma lista, ou uma lista por sistema operacional.
+    "bibliotecas": { "linux": ["git2"], "darwin": ["git2"], "windows": ["git2"] }
+  }
+}
+```
+
+As funções dessas fontes são declaradas com `biblioteca="nativo"`, que não gera `-l`:
+
+```delegua
+@definicao(biblioteca="nativo", prefixo="git_delegua_")
+classe estrangeira GitNativo {
+    clonar(url: texto, destino: texto): inteiro
+}
+```
+
+## Módulo `processo`
+
+```delegua
+var processo = importar("processo")
+
+processo.sistemaOperacional()            // "windows", "darwin", "linux"...
+processo.arquitetura()                   // "amd64", "arm64"...
+processo.variavelAmbiente("HOME")        // texto, ou nulo se não definida
+processo.executar("git", ["status"], "./repositorio")       // código de saída (-1: não iniciou)
+processo.executarCapturando("git", ["rev-parse", "HEAD"])   // saída padrão; código em ultimoCodigoSaida()
+processo.escreverErro("mensagem")        // stderr
+processo.sair(1)
+```
+
+`executar` não passa por um shell: os argumentos chegam ao programa exatamente como informados. No Windows, `executar("npm", ...)` encontra `npm.cmd` no `PATH`; para arquivos de lote (`.cmd`/`.bat`), argumentos com `%`, `"` ou quebras de linha são recusados, porque o `cmd.exe` os interpretaria.
+
 ## Compilação manual (avançado)
 
 Caso queira compilar manualmente a partir de um arquivo `.ll` já gerado, utilize o [Clang](https://clang.llvm.org/):

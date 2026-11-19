@@ -1,0 +1,5 @@
+var json = importar("json")
+
+funcao tipoDe(t: texto): texto {
+    retorna json.tipo(json.textoParaJson(t))
+}

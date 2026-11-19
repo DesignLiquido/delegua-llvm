@@ -1,6 +1,7 @@
 #pragma once
 #include <stdlib.h>
 #include <string.h>
+#include "vetor.h"
 
 typedef struct DicionarioEntrada DicionarioEntrada;
 
@@ -8,6 +9,10 @@ typedef struct {
     DicionarioEntrada** baldes;
     int capacidade;
     int tamanho;
+    // Lista duplamente encadeada em ordem de inserção, usada por chaves(),
+    // valores() e `para cada`, para que a iteração seja determinística.
+    DicionarioEntrada* primeiro;
+    DicionarioEntrada* ultimo;
 } Dicionario;
 
 // Cria um dicionário vazio (tabela hash com encadeamento separado).
@@ -25,3 +30,12 @@ int delegua_dicionario_contem(Dicionario* d, const char* chave);
 
 // Retorna o número de pares chave/valor no dicionário.
 int delegua_dicionario_tamanho(Dicionario* d);
+
+// Remove a chave do dicionário. Retorna 1 se a chave existia, 0 caso contrário.
+int delegua_dicionario_remover(Dicionario* d, const char* chave);
+
+// Preenche `saida` com as chaves (char*), em ordem de inserção.
+void delegua_dicionario_chaves(Dicionario* d, Vetor* saida);
+
+// Preenche `saida` com os valores (void*), em ordem de inserção.
+void delegua_dicionario_valores(Dicionario* d, Vetor* saida);

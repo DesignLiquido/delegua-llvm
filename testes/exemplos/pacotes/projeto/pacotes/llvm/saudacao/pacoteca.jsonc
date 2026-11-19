@@ -1,0 +1,11 @@
+{
+  "nome": "saudacao",
+  "versao": "1.0.0",
+  "realizacoes": ["llvm"],
+  "pontoDeEntrada": "saudacao.delegua",
+  "dependencias": { "formato": "^1.0.0" },
+  "nativo": {
+    "fontes": ["c/nativo.c"],
+    "bibliotecas": { "linux": ["m"], "darwin": ["m"], "windows": [], "freebsd": ["m"] }
+  }
+}
