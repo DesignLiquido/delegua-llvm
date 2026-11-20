@@ -3909,6 +3909,30 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return { valor: valorLlvm, tipo: tipo };
     }
 
+    /** Largura em bits de um valor inteiro LLVM (0 se não for inteiro). */
+    protected larguraInteira(valor: llvm.Value): number {
+        const tipo = valor?.getType?.();
+        if (!tipo || tipo.getTypeID() !== llvm.Type.TypeID.IntegerTyID) return 0;
+        for (const bits of [1, 8, 16, 32, 64, 128]) {
+            if (tipo.isIntegerTy(bits)) return bits;
+        }
+        return 0;
+    }
+
+    /**
+     * Operandos inteiros de larguras diferentes (`inteiro` i32 com `longo` i64): estende o mais
+     * estreito, com sinal, para a largura do mais largo, e marca os dois com o tipo dele.
+     */
+    protected igualarLargurasInteiras(esquerdo: OperandoInterface, direito: OperandoInterface): void {
+        if (!tipoEhInteiroDelegua(esquerdo.tipo) || !tipoEhInteiroDelegua(direito.tipo)) return;
+        const larguraEsquerda = this.larguraInteira(esquerdo.valor);
+        const larguraDireita = this.larguraInteira(direito.valor);
+        if (larguraEsquerda <= 1 || larguraDireita <= 1 || larguraEsquerda === larguraDireita) return;
+        const [estreito, largo] = larguraEsquerda < larguraDireita ? [esquerdo, direito] : [direito, esquerdo];
+        estreito.valor = this.montador.CreateSExt(estreito.valor, largo.valor.getType(), 'estender_inteiro');
+        estreito.tipo = largo.tipo;
+    }
+
     protected resolverMultiplicacao(
         operandoEsquerdo: OperandoInterface,
         operandoDireito: OperandoInterface
@@ -4123,6 +4147,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
             operandoDireitoResolvido.tipo = 'número';
         }
+
+        // `longo` com `inteiro` (ex.: tempo.monotonicoMilissegundos() + limite): estende o
+        // operando mais estreito, com sinal, para a largura do outro.
+        this.igualarLargurasInteiras(operandoEsquerdoResolvido, operandoDireitoResolvido);
 
         switch (expressao.operador.tipo) {
             case 'MULTIPLICACAO':
