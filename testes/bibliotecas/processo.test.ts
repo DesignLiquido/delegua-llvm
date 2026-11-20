@@ -28,7 +28,7 @@ describe('Compilador - módulo processo', () => {
             'escreva(casa)',
         ]);
         expect(ir).toContain('call ptr @delegua_processo_variavel_ambiente(');
-        expect(ir).toContain('c"%s \\0A\\00"');
+        expect(ir).toContain('c"%s\\0A\\00"');
     });
 
     it('definirVariavelAmbiente devolve lógico', async () => {

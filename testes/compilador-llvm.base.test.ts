@@ -19,6 +19,6 @@ describe('Compilador - Base', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['escreva(123, "teste")']);
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('@fmt = private unnamed_addr constant [8 x i8] c"%g %s');
+        expect(resultado).toContain('@fmt = private unnamed_addr constant [7 x i8] c"%g %s');
     });
 });
