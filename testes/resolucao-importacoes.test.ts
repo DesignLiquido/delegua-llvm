@@ -111,6 +111,24 @@ describe('resolverEMesclarDeclaracoes', () => {
 });
 
 describe('Compilador - integração com importação de arquivo (diretorioBase)', () => {
+    it('arquivo que importa outro já importado em outro ramo enxerga os símbolos dele', async () => {
+        // O principal importa "compartilhada" e depois "intermediaria", que importa
+        // "usa-compartilhada", que importa "compartilhada" de novo. A segunda importação é
+        // pulada (já visitada), e "usa-compartilhada" é analisada dentro do ramo de
+        // "intermediaria", que não inclui "compartilhada".
+        const resultado = await new CompiladorLLVM().compilar(
+            [
+                'importar { dobro } de "./compartilhada"',
+                'importar { octuplo } de "./intermediaria"',
+                'escreva(dobro(1) + octuplo(2))',
+            ],
+            false,
+            diretorioExemplos
+        );
+        expect(resultado).toContain('define i32 @quadruplo(i32');
+        expect(resultado).toContain('call i32 @dobro(');
+    });
+
     it('arquivo importado usa funções de módulo embutido (json)', async () => {
         const resultado = await new CompiladorLLVM().compilar(
             ['importar { tipoDoJson } de "./usa-modulo-json"', 'escreva(tipoDoJson("{}"))'],
