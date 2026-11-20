@@ -8,7 +8,7 @@ interface BibliotecaCompilacao {
 }
 
 const BIBLIOTECAS_NUCLEO: BibliotecaCompilacao = {
-    arquivosC: ['padrao.c', 'texto.c', 'vetor.c', 'dicionario.c'],
+    arquivosC: ['padrao.c', 'texto.c', 'vetor.c', 'dicionario.c', 'excecoes.c'],
     // -lm: necessário para pow() (operador **), que é sintaxe núcleo, não opcional.
     flagsLink: ['-lm'],
 };

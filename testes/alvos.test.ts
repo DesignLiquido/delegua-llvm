@@ -35,10 +35,9 @@ describe('alvos', () => {
         expect(alvoDaMaquinaAtual('aix', 'ppc64')).toBeUndefined();
     });
 
-    it('com zig, Windows usa a ABI GNU e personalidade SEH', () => {
+    it('com zig, Windows usa a ABI GNU', () => {
         const alvo = ajustarAlvoParaZig(resolverAlvo('windows-arm64'));
         expect(alvo.triplo).toBe('aarch64-w64-windows-gnu');
-        expect(alvo.personalidadeExcecoes).toBe('__gxx_personality_seh0');
         expect(ajustarAlvoParaZig(resolverAlvo('linux-amd64')).triplo).toBe('x86_64-unknown-linux-gnu');
     });
 });
@@ -52,9 +51,14 @@ describe('cadeia de ferramentas', () => {
         expect(bibliotecasSuporteExecucao(cadeia)).toEqual([]);
     });
 
-    it('nativo no Linux liga a biblioteca de exceções C++ (__cxa_throw do runtime)', () => {
-        const cadeia = resolverCadeiaFerramentas({ plataforma: 'linux', arquitetura: 'x64', existeNoPath: semZig });
-        expect(bibliotecasSuporteExecucao(cadeia)).toEqual(['-lstdc++']);
+    it('nenhum alvo precisa da biblioteca C++ (exceções usam setjmp/longjmp)', () => {
+        for (const opcoes of [
+            { plataforma: 'linux', arquitetura: 'x64', existeNoPath: semZig },
+            { plataforma: 'darwin', arquitetura: 'arm64', existeNoPath: semZig },
+            { ...naMaquina, alvo: 'linux-arm64', existeNoPath: comZig },
+        ]) {
+            expect(bibliotecasSuporteExecucao(resolverCadeiaFerramentas(opcoes))).toEqual([]);
+        }
     });
 
     it('cruzada com zig instalado: zig cc -target', () => {
@@ -62,7 +66,6 @@ describe('cadeia de ferramentas', () => {
         expect(cadeia.cruzada).toBe(true);
         expect(cadeia.compiladorC).toEqual(['zig', 'cc']);
         expect(argumentosAlvo(cadeia)).toEqual(['-target', 'aarch64-linux-gnu']);
-        expect(bibliotecasSuporteExecucao(cadeia)).toEqual(['-lc++']);
     });
 
     it('cruzada sem zig: clang --target e --sysroot', () => {
@@ -74,7 +77,6 @@ describe('cadeia de ferramentas', () => {
         });
         expect(cadeia.compiladorC).toEqual(['clang']);
         expect(argumentosAlvo(cadeia)).toEqual(['--target=arm64-apple-macosx11.0.0', '--sysroot=/sdk/MacOSX.sdk']);
-        expect(bibliotecasSuporteExecucao(cadeia)).toEqual(['-lc++']);
     });
 
     it('compilador C explícito tem prioridade; zig explícito no nativo também usa -target', () => {
@@ -94,7 +96,7 @@ describe('cadeia de ferramentas', () => {
         ]);
         expect(comandoLigar(cadeia, 'p.ll', ['a.o'], ['-lm'], 'p', ['-O2'])).toEqual([
             'zig',
-            ['cc', '-target', 'aarch64-linux-gnu', '-Wno-override-module', '-O2', 'p.ll', 'a.o', '-lm', '-lc++', '-o', 'p'],
+            ['cc', '-target', 'aarch64-linux-gnu', '-Wno-override-module', '-O2', 'p.ll', 'a.o', '-lm', '-o', 'p'],
         ]);
     });
 
@@ -137,15 +139,18 @@ describe('compilador com alvo', () => {
         expect(ir).toMatch(/@escreva\(ptr @fmt[.\d]*, i32 16\)/);
     });
 
-    it('Windows com zig usa a personalidade SEH nas exceções', async () => {
-        const ir = await compilarPara(
-            'windows-amd64',
-            ['tente {', '  falhar("x")', '} pegue {', '  escreva("pego")', '}'],
-            true
-        );
-        expect(ir).toContain('target triple = "x86_64-w64-windows-gnu"');
-        expect(ir).toContain('personality ptr @__gxx_personality_seh0');
-        expect(ir).not.toContain('__gxx_personality_v0');
+    it('exceções usam _setjmp com o quadro de pilha nulo no Windows e só o buffer nos demais', async () => {
+        const codigo = ['tente {', '  falhar("x")', '} pegue {', '  escreva("pego")', '}'];
+        const windows = await compilarPara('windows-amd64', codigo, true);
+        expect(windows).toContain('target triple = "x86_64-w64-windows-gnu"');
+        expect(windows).toMatch(/call i32 @_setjmp\(ptr %quadro_excecao, ptr null\)/);
+        const linux = await compilarPara('linux-arm64', codigo);
+        expect(linux).toMatch(/call i32 @_setjmp\(ptr %quadro_excecao\)/);
+        // Windows ARM64 com MinGW (zig): a CRT não tem _setjmp; usa __mingw_setjmp.
+        const windowsArm = await compilarPara('windows-arm64', codigo, true);
+        expect(windowsArm).toMatch(/call i32 @__mingw_setjmp\(ptr %quadro_excecao\)/);
+        expect(windowsArm).not.toContain('@_setjmp');
+        expect(linux).not.toContain('__gxx_personality');
     });
 });
 

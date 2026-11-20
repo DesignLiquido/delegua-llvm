@@ -9,4 +9,6 @@ rede sobra extra
 rede pong:ping
 tempo ok
 excecao capturada
+excecao tipada profundo 42
+ordenados 3,2,1
 fim

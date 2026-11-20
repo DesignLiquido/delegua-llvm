@@ -31,8 +31,14 @@ int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem);
 // Inverte os elementos in-place.
 void delegua_vetor_inverter(Vetor* v, int tam_elem);
 
-// Ordena os elementos in-place (eh_numero: 0 = inteiro, 1 = número/double).
-void delegua_vetor_ordenar(Vetor* v, int tam_elem, int eh_numero);
+// Ordena os elementos in-place, em ordem crescente.
+// tipo: 0 = inteiro, 1 = número (double), 2 = texto (char*, ordem dos bytes, como strcmp).
+void delegua_vetor_ordenar(Vetor* v, int tam_elem, int tipo);
+
+// Ordena in-place com uma função de comparação que recebe ponteiros para dois elementos e
+// devolve > 0 quando o primeiro deve vir depois do segundo. A ordenação é estável:
+// elementos considerados iguais mantêm a ordem original.
+void delegua_vetor_ordenar_com_funcao(Vetor* v, int tam_elem, int (*comparar)(const void*, const void*));
 
 // Fatia o vetor [inicio, fim) e preenche *saida (out-param para evitar ABI de struct).
 void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida);

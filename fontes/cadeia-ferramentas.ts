@@ -83,19 +83,11 @@ export function argumentosAlvo(cadeia: CadeiaFerramentas): string[] {
 }
 
 /**
- * Biblioteca de suporte a exceções C++ (__cxa_throw...) usada pelo runtime (padrao.c).
- * MSVC: fornecida pelo próprio ambiente do clang nativo.
+ * Bibliotecas adicionais exigidas pelo runtime em qualquer alvo. Vazio: as exceções usam
+ * setjmp/longjmp da biblioteca C (excecoes.c), sem a ABI de exceções de C++.
  */
-export function bibliotecasSuporteExecucao(cadeia: CadeiaFerramentas): string[] {
-    if (cadeia.ehZig) return ['-lc++'];
-    switch (cadeia.alvo.sistema) {
-        case 'linux':
-            return ['-lstdc++'];
-        case 'darwin':
-            return ['-lc++'];
-        default:
-            return [];
-    }
+export function bibliotecasSuporteExecucao(_cadeia: CadeiaFerramentas): string[] {
+    return [];
 }
 
 /** Comando para compilar um arquivo C do runtime ou de um pacote em objeto. */

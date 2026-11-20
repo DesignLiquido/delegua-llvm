@@ -19,6 +19,13 @@ static int comparar_numero(const void* a, const void* b) {
     return (da > db) - (da < db);
 }
 
+static int comparar_texto(const void* a, const void* b) {
+    const char* ta = *(const char* const*)a;
+    const char* tb = *(const char* const*)b;
+    if (!ta || !tb) return (ta != NULL) - (tb != NULL);
+    return strcmp(ta, tb);
+}
+
 // ───────────────────────────────────────────────────────────
 // Implementações
 // ───────────────────────────────────────────────────────────
@@ -122,13 +129,46 @@ void delegua_vetor_inverter(Vetor* v, int tam_elem) {
     free(tmp);
 }
 
-void delegua_vetor_ordenar(Vetor* v, int tam_elem, int eh_numero) {
-    if (v->tamanho <= 1) return;
-    if (eh_numero) {
-        qsort(v->ptr, (size_t)v->tamanho, (size_t)tam_elem, comparar_numero);
-    } else {
-        qsort(v->ptr, (size_t)v->tamanho, (size_t)tam_elem, comparar_inteiro);
+void delegua_vetor_ordenar(Vetor* v, int tam_elem, int tipo) {
+    if (!v || v->tamanho <= 1) return;
+    int (*comparar)(const void*, const void*) =
+        tipo == 1 ? comparar_numero : tipo == 2 ? comparar_texto : comparar_inteiro;
+    qsort(v->ptr, (size_t)v->tamanho, (size_t)tam_elem, comparar);
+}
+
+// Ordenação por intercalação (merge sort) de baixo para cima: estável, O(n log n).
+void delegua_vetor_ordenar_com_funcao(Vetor* v, int tam_elem, int (*comparar)(const void*, const void*)) {
+    if (!v || v->tamanho <= 1 || !comparar || tam_elem <= 0) return;
+    size_t n = (size_t)v->tamanho;
+    size_t tamanho = (size_t)tam_elem;
+    char* origem = (char*)v->ptr;
+    char* auxiliar = (char*)malloc(n * tamanho);
+    if (!auxiliar) return;
+
+    char* de = origem;
+    char* para = auxiliar;
+    for (size_t largura = 1; largura < n; largura *= 2) {
+        for (size_t inicio = 0; inicio < n; inicio += 2 * largura) {
+            size_t meio = inicio + largura < n ? inicio + largura : n;
+            size_t fim = inicio + 2 * largura < n ? inicio + 2 * largura : n;
+            size_t i = inicio, j = meio, k = inicio;
+            while (i < meio && j < fim) {
+                // Só passa o da direita na frente quando o da esquerda é estritamente maior.
+                if (comparar(de + i * tamanho, de + j * tamanho) > 0) {
+                    memcpy(para + k++ * tamanho, de + j++ * tamanho, tamanho);
+                } else {
+                    memcpy(para + k++ * tamanho, de + i++ * tamanho, tamanho);
+                }
+            }
+            while (i < meio) memcpy(para + k++ * tamanho, de + i++ * tamanho, tamanho);
+            while (j < fim) memcpy(para + k++ * tamanho, de + j++ * tamanho, tamanho);
+        }
+        char* troca = de;
+        de = para;
+        para = troca;
     }
+    if (de != origem) memcpy(origem, de, n * tamanho);
+    free(auxiliar);
 }
 
 void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida) {

@@ -115,6 +115,17 @@ import {
     tipoFFIParaLlvm,
     valorParaCampoEstruturaEstrangeira,
 } from './ffi/compilacao-ffi';
+import { obterComparadorOrdenacao, ordenarComFuncao } from './ordenacao';
+import {
+    compilarFalhar,
+    compilarTente,
+    criarObjetoExcecao,
+    emitirSaidaDeTentes,
+    herdaDeExcecao,
+    idsDescendentes,
+    mensagemDeExcecao,
+    registrarClasseExcecao,
+} from './excecoes';
 import {
     resolverEMesclarDeclaracoes,
     ehImportacaoResolvida,
@@ -157,10 +168,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoLeia: llvm.FunctionCallee;
     funcaoInteiro: llvm.FunctionCallee;
     funcaoNumero: llvm.FunctionCallee;
-    funcaoFalhar: llvm.FunctionCallee;
-    funcaoPersonalidade: llvm.Function;
-    funcaoBeginCatch: llvm.FunctionCallee;
-    funcaoEndCatch: llvm.FunctionCallee;
     funcaoTextoMaiusculo: llvm.FunctionCallee;
     funcaoTextoMinusculo: llvm.FunctionCallee;
     funcaoTextoInclui: llvm.FunctionCallee;
@@ -197,7 +204,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoStrlen: llvm.FunctionCallee;
     funcaoStrcmp: llvm.FunctionCallee;
     funcaoMalloc: llvm.FunctionCallee;
-    pontoPousoAtual: llvm.BasicBlock | null = null;
 
     protected registroClasses: Map<string, llvm.StructType> = new Map();
     protected indicesPropriedades: Map<string, Map<string, number>> = new Map();
@@ -219,6 +225,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // gerados para passar funções Delégua a código C (ver ffi/compilacao-ffi.ts).
     estruturasEstrangeiras: Map<string, EstruturaEstrangeira> = new Map();
     trampolinsFFI: Map<llvm.Function, llvm.Function> = new Map();
+    // Comparadores C gerados para vetor.ordenar(funcao), por função e tipo de elemento.
+    comparadoresOrdenacao: Map<llvm.Function, Map<string, llvm.Function>> = new Map();
+    // Quantidade de corpos de `tente` abertos na função sendo compilada (ver excecoes.ts):
+    // retorna/sustar/continua precisam remover os tratadores correspondentes.
+    tentesAtivos: number = 0;
+    contadorComparadores: number = 0;
     // Preenchidos por compilar(), para o ligador (ilc): módulos embutidos usados por
     // qualquer arquivo do programa e fontes/bibliotecas nativas declaradas por pacotes.
     modulosUtilizados: Set<string> = new Set();
@@ -228,7 +240,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected classesComMarcadorTipo: Set<string> = new Set();
     protected contadoresNaoNegativos: Set<string> = new Set();
     protected tipoEstruturaVetor: llvm.StructType = null;
-    protected pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock }> = [];
+    protected pilhaBlocosLoop: Array<{ blocoSaida: llvm.BasicBlock; blocoRetorno: llvm.BasicBlock; tentesAtivos?: number }> = [];
     protected contemExcecoes: boolean = false;
     // Tipo de retorno esperado da função sendo compilada no momento (null = main / desconhecido).
     // Usado para converter i1 → i32 quando a função declara retorno 'inteiro'/'lógico'.
@@ -325,6 +337,31 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     registrarModuloMemoria: () => void;
     registrarModuloRede: () => void;
     registrarModuloTempo: () => void;
+
+    // Exceções (implementado via mixin em excecoes.ts).
+    registrarClasseExcecao: () => void;
+    herdaDeExcecao: (nomeClasse: string) => boolean;
+    idsDescendentes: (nomeClasse: string) => number[];
+    mensagemDeExcecao: (objeto: llvm.Value, nomeClasse: string) => llvm.Value;
+    criarObjetoExcecao: (mensagem: llvm.Value) => llvm.Value;
+    compilarFalhar: (expressao: Falhar) => Promise<void>;
+    compilarTente: (declaracao: Tente) => Promise<void>;
+    emitirSaidaDeTentes: (quantidade: number) => void;
+
+    // vetor.ordenar(funcao) (implementado via mixin em ordenacao.ts).
+    ordenarComFuncao: (
+        vetorPtr: llvm.Value,
+        tipoElemento: string,
+        argumento: ConstrutoInterface,
+        linha?: number
+    ) => Promise<llvm.Value>;
+    obterComparadorOrdenacao: (
+        funcaoAlvo: llvm.Function,
+        tiposParametros: string[],
+        tipoRetorno: string,
+        tipoElemento: string,
+        nomeAlvo: string
+    ) => llvm.Function;
 
     // FFI (implementado via mixin em ffi/compilacao-ffi.ts).
     tipoFFIParaLlvm: (tipoDelegua: string) => llvm.Type;
@@ -1029,7 +1066,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateCondBr(cond, blocoCorpo, blocoApos);
 
         this.montador.SetInsertPoint(blocoCorpo);
-        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCond });
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCond, tentesAtivos: this.tentesAtivos });
         await this.aceitarListaDeclaracoes(declaracao.corpo.declaracoes);
         this.pilhaBlocosLoop.pop();
         this.montador.CreateBr(blocoCond);
@@ -1109,7 +1146,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Corpo do laço.
         this.montador.SetInsertPoint(blocoCorpo);
-        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCondicao });
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoCondicao, tentesAtivos: this.tentesAtivos });
         await this.aceitarListaDeclaracoes(
             declaracao.caminhoFazer?.declaracoes
         );
@@ -1356,7 +1393,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
         }
         this.pilhaVariaveisEscopo.empilhar(escopoIteracao);
-        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoInc });
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoApos, blocoRetorno: blocoInc, tentesAtivos: this.tentesAtivos });
 
         await this.processarDeclaracoesBloco(corpo);
 
@@ -1391,202 +1428,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     async visitarDeclaracaoTente(declaracao: Tente): Promise<any> {
         this.definirLocalizacaoDebug(declaracao.linha ?? 0, 0);
-        this.contemExcecoes = true;
-        const funcaoAtual = this.montador.GetInsertBlock().getParent();
-
-        const tipoPontoPouso = llvm.StructType.get(this.contexto, [
-            this.montador.getPtrTy(),
-            this.montador.getInt32Ty(),
-        ]);
-
-        const temFinally =
-            declaracao.caminhoFinalmente &&
-            (Array.isArray(declaracao.caminhoFinalmente) ? declaracao.caminhoFinalmente.length > 0 : true);
-        const temBlocoPegue =
-            declaracao.caminhoPegue &&
-            (Array.isArray(declaracao.caminhoPegue) ? declaracao.caminhoPegue.length > 0 : true);
-        const temSenao =
-            declaracao.caminhoSenao &&
-            (Array.isArray(declaracao.caminhoSenao) ? declaracao.caminhoSenao.length > 0 : true);
-
-        const blocoTenteCorpo = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_CORPO, funcaoAtual);
-        const blocoTenteApos = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_APOS, funcaoAtual);
-        const blocoPegueLanding = llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_LANDING, funcaoAtual);
-        const blocoTenteAposFinal = llvm.BasicBlock.Create(
-            this.contexto,
-            this.NOMES_BLOCOS.TENTE_APOS_FINAL,
-            funcaoAtual
-        );
-
-        const blocoSenao = temSenao
-            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.TENTE_SENAO, funcaoAtual)
-            : null;
-        const blocoPegueCorpo = temBlocoPegue
-            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.PEGUE_CORPO, funcaoAtual)
-            : null;
-        const blocoFinalmenteCorpo = temFinally
-            ? llvm.BasicBlock.Create(this.contexto, this.NOMES_BLOCOS.FINALMENTE_CORPO, funcaoAtual)
-            : null;
-        const blocoFinalmenteSucesso =
-            temFinally && !temBlocoPegue ? llvm.BasicBlock.Create(this.contexto, 'finalmente_sucesso', funcaoAtual) : null;
-        const blocoRelancarExcecao =
-            temFinally && !temBlocoPegue ? llvm.BasicBlock.Create(this.contexto, 'relancar_excecao', funcaoAtual) : null;
-
-        let alocPontoPouso: llvm.AllocaInst | null = null;
-        if (blocoRelancarExcecao) {
-            alocPontoPouso = this.montador.CreateAlloca(tipoPontoPouso, null, 'ponto_pouso_temp');
-        }
-
-        const pontoPousoAnterior = this.pontoPousoAtual;
-        this.pontoPousoAtual = blocoPegueLanding;
-
-        this.montador.CreateBr(blocoTenteCorpo);
-        this.montador.SetInsertPoint(blocoTenteCorpo);
-
-        await this.processarCaminhoTente(declaracao.caminhoTente);
-        // On success: execute senao (if present) before the post-try merge point.
-        this.montador.CreateBr(blocoSenao ?? blocoTenteApos);
-
-        if (blocoSenao) {
-            this.montador.SetInsertPoint(blocoSenao);
-            await this.aceitarListaDeclaracoes(declaracao.caminhoSenao);
-            this.montador.CreateBr(blocoTenteApos);
-        }
-
-        this.montador.SetInsertPoint(blocoPegueLanding);
-        funcaoAtual.setPersonalityFn(this.funcaoPersonalidade);
-
-        const pontoPouso = this.montador.CreateLandingPad(tipoPontoPouso, 1, 'landingpad');
-        const nullPtr = llvm.Constant.getNullValue(this.montador.getPtrTy());
-        pontoPouso.addClause(nullPtr);
-
-        if (blocoPegueCorpo && temBlocoPegue) {
-            this.montador.CreateBr(blocoPegueCorpo);
-            this.montador.SetInsertPoint(blocoPegueCorpo);
-
-            const ponteiroCabecalho = this.montador.CreateExtractValue(pontoPouso, [0], 'exception_header');
-            const ponteiroExcecao = this.montador.CreateCall(
-                this.funcaoBeginCatch,
-                [ponteiroCabecalho],
-                'exception_data'
-            );
-
-            const blocoPegueComParametro = Array.isArray(declaracao.caminhoPegue)
-                ? declaracao.caminhoPegue.find((bloco: BlocoPegue) => bloco.parametro?.lexema)
-                : undefined;
-            if (blocoPegueComParametro) {
-                const nomeParametro = blocoPegueComParametro.parametro.lexema;
-                const tipoTexto = this.obterTipoLlvm('texto');
-                const alocErro = this.montador.CreateAlloca(tipoTexto, null, nomeParametro);
-                this.montador.CreateStore(ponteiroExcecao, alocErro);
-
-                const topo = this.pilhaVariaveisEscopo.topoDaPilha();
-                topo.set(nomeParametro, new VariavelEscopo(alocErro, null, 'texto'));
-            }
-
-            await this.processarCaminhoPegue(declaracao.caminhoPegue);
-            this.montador.CreateCall(this.funcaoEndCatch, []);
-
-            if (blocoFinalmenteCorpo) {
-                this.montador.CreateBr(blocoFinalmenteCorpo);
-            } else {
-                this.montador.CreateBr(blocoTenteAposFinal);
-            }
-        } else if (blocoFinalmenteCorpo && !temBlocoPegue) {
-            if (alocPontoPouso) {
-                this.montador.CreateStore(pontoPouso, alocPontoPouso);
-            }
-            this.montador.CreateBr(blocoFinalmenteCorpo);
-        } else {
-            this.montador.CreateResume(pontoPouso);
-        }
-
-        this.montador.SetInsertPoint(blocoTenteApos);
-        if (blocoFinalmenteSucesso) {
-            this.montador.CreateBr(blocoFinalmenteSucesso);
-        } else if (blocoFinalmenteCorpo) {
-            this.montador.CreateBr(blocoFinalmenteCorpo);
-        } else {
-            this.montador.CreateBr(blocoTenteAposFinal);
-        }
-
-        if (blocoFinalmenteSucesso) {
-            this.montador.SetInsertPoint(blocoFinalmenteSucesso);
-            await this.processarCaminhoFinalmente(declaracao.caminhoFinalmente);
-            this.montador.CreateBr(blocoTenteAposFinal);
-        }
-
-        if (blocoFinalmenteCorpo) {
-            this.montador.SetInsertPoint(blocoFinalmenteCorpo);
-            await this.processarCaminhoFinalmente(declaracao.caminhoFinalmente);
-
-            if (temBlocoPegue) {
-                this.montador.CreateBr(blocoTenteAposFinal);
-            } else if (blocoRelancarExcecao) {
-                this.montador.CreateBr(blocoRelancarExcecao);
-            }
-        }
-
-        if (blocoRelancarExcecao && alocPontoPouso) {
-            this.montador.SetInsertPoint(blocoRelancarExcecao);
-            const pontoPousoCarregado = this.montador.CreateLoad(tipoPontoPouso, alocPontoPouso, 'load_ponto_pouso');
-            this.montador.CreateResume(pontoPousoCarregado);
-        }
-
-        this.pontoPousoAtual = pontoPousoAnterior;
-        this.montador.SetInsertPoint(blocoTenteAposFinal);
+        await this.compilarTente(declaracao);
         return Promise.resolve();
-    }
-
-    protected async processarCaminhoTente(caminhoTente: any): Promise<void> {
-        if (!caminhoTente) return;
-
-        if (Array.isArray(caminhoTente)) {
-            await this.aceitarListaDeclaracoes(caminhoTente);
-            return;
-        }
-
-        if (caminhoTente?.aceitar) {
-            await caminhoTente.aceitar(this);
-            return;
-        }
-
-        if (Array.isArray(caminhoTente?.declaracoes)) {
-            await this.aceitarListaDeclaracoes(caminhoTente.declaracoes);
-        }
-    }
-
-    protected async processarCaminhoPegue(caminhoPegue: BlocoPegue[] | any): Promise<void> {
-        if (!caminhoPegue) return;
-
-        if (Array.isArray(caminhoPegue)) {
-            for (const blocoPegue of caminhoPegue as BlocoPegue[]) {
-                await this.aceitarListaDeclaracoes(blocoPegue.corpo);
-            }
-            return;
-        }
-
-        if (Array.isArray((caminhoPegue as any).declaracoes)) {
-            await this.aceitarListaDeclaracoes((caminhoPegue as any).declaracoes);
-        }
-    }
-
-    protected async processarCaminhoFinalmente(caminhoFinalmente: any): Promise<void> {
-        if (!caminhoFinalmente) return;
-
-        if (Array.isArray(caminhoFinalmente)) {
-            await this.aceitarListaDeclaracoes(caminhoFinalmente);
-            return;
-        }
-
-        if (caminhoFinalmente?.aceitar) {
-            await caminhoFinalmente.aceitar(this);
-            return;
-        }
-
-        if (Array.isArray(caminhoFinalmente?.declaracoes)) {
-            await this.aceitarListaDeclaracoes(caminhoFinalmente.declaracoes);
-        }
     }
 
     async visitarDeclaracaoVarMultiplo(declaracao: VarMultiplo): Promise<any> {
@@ -2425,33 +2268,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarExpressaoFalhar(expressao: Falhar): Promise<any> {
-        const mensagemExpr = expressao.explicacao;
-        if (!mensagemExpr) {
-            const erroFalhar = new ErroCompilador('Falhar precisa de uma mensagem');
-            erroFalhar.linha = expressao.linha;
-            throw erroFalhar;
-        }
-        const mensagemResolvida = await mensagemExpr.aceitar(this);
-        let mensagem: llvm.Value;
-
-        if (mensagemResolvida instanceof VariavelEscopo) {
-            const tipoMensagem = this.obterTipoLlvm('texto');
-            mensagem = this.montador.CreateLoad(tipoMensagem, mensagemResolvida.variavelLlvm, 'load_falhar_msg');
-        } else {
-            mensagem = mensagemResolvida as llvm.Value;
-        }
-
-        const funcaoAtual = this.montador.GetInsertBlock().getParent();
-
-        if (this.pontoPousoAtual) {
-            const blocoSucesso = llvm.BasicBlock.Create(this.contexto, 'falhar_normal', funcaoAtual);
-            this.montador.CreateInvoke(this.funcaoFalhar, blocoSucesso, this.pontoPousoAtual, [mensagem]);
-            this.montador.SetInsertPoint(blocoSucesso);
-            return Promise.resolve();
-        } else {
-            this.montador.CreateCall(this.funcaoFalhar, [mensagem]);
-            return Promise.resolve();
-        }
+        this.definirLocalizacaoDebug(expressao.linha ?? 0, 0);
+        await this.compilarFalhar(expressao);
+        return Promise.resolve();
     }
 
     async visitarExpressaoFazer(expressao: FazerComoConstruto): Promise<any> {
@@ -2612,8 +2431,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!declaracao.valor) {
             // Métodos 'nulo' são compilados com retorno ptr — emite ret null, não ret void.
             if (this.tipoRetornoFuncaoAtual === 'nulo' || this.tipoRetornoFuncaoAtual === 'qualquer') {
+                this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRet(llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value);
             } else {
+                this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRetVoid();
             }
             return Promise.resolve();
@@ -2626,6 +2447,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // Instâncias de classe: o ptr já é o valor final (malloc result ou argumento).
             // Não deve ser carregado — carregarPtrClasseSePreciso resolve alloca(ptr) se necessário.
             if (this.registroClasses.has(valorResolvido.tipo)) {
+                this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRet(this.carregarPtrClasseSePreciso(valorResolvido));
                 return Promise.resolve();
             }
@@ -2636,8 +2458,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     valorResolvido.variavelLlvm,
                     'load_retorno'
                 );
+                this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRet(valorCarregado);
             } else {
+                this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRet(valorResolvido.variavelLlvm);
             }
             return Promise.resolve();
@@ -2659,7 +2483,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
         }
 
-        this.montador.CreateRet(valorFinal);
+        this.emitirSaidaDeTentes(this.tentesAtivos);
+                this.montador.CreateRet(valorFinal);
         return Promise.resolve();
     }
 
@@ -2708,7 +2533,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     visitarExpressaoSustar(declaracao?: Sustar): SustarQuebra | void {
         if (this.montador && this.pilhaBlocosLoop.length > 0) {
-            const { blocoSaida } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            const { blocoSaida, tentesAtivos } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            this.emitirSaidaDeTentes(this.tentesAtivos - (tentesAtivos ?? 0));
             this.montador.CreateBr(blocoSaida);
             // Cria bloco morto para absorver instruções subsequentes no mesmo bloco (nunca alcançado).
             const funcaoAtual = this.montador.GetInsertBlock().getParent();
@@ -2962,8 +2788,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
             }
         }
-        for (const construtoInstrucao of funcaoConstruto.corpo) {
-            await construtoInstrucao.aceitar(this);
+        const tentesAtivosAnteriores = this.tentesAtivos;
+        this.tentesAtivos = 0;
+        try {
+            for (const construtoInstrucao of funcaoConstruto.corpo) {
+                await construtoInstrucao.aceitar(this);
+            }
+        } finally {
+            this.tentesAtivos = tentesAtivosAnteriores;
         }
     }
 
@@ -3161,7 +2993,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tiposParametros: llvm.Type[] = [];
 
         for (const parametro of declaracao.funcao.parametros) {
-            const tipoParametroLlvm = this.obterTipoLlvm(parametro.tipoDado);
+            // Vetores são passados por ponteiro (ptr para o %Vetor), como nos métodos de classe;
+            // quem chama já passa o ponteiro.
+            const tipoParametroLlvm = tipoEhVetor(parametro.tipoDado)
+                ? this.montador.getPtrTy()
+                : this.obterTipoLlvm(parametro.tipoDado);
             tiposParametros.push(tipoParametroLlvm);
         }
 
@@ -3176,7 +3012,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         // Atributos de otimização para funções do usuário.
         objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.NoUnwind));
-        objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.WillReturn));
 
         // Metadados de depuração: cria DISubprogram para esta função.
         const linhaFuncao = (declaracao.simbolo as any).linha ?? 0;
@@ -3371,6 +3206,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         for (const argumento of declaracao.argumentos) {
             const argumentoResolvido = await argumento.aceitar(this);
 
+            if (argumentoResolvido instanceof VariavelEscopo && this.herdaDeExcecao(argumentoResolvido.tipo)) {
+                formatosTexto.push('%s');
+                const objetoExcecao = this.carregarPtrClasseSePreciso(argumentoResolvido);
+                argumentosResolvidos.push(
+                    this.normalizarOperandoParaTextoSeguro(
+                        { valor: this.mensagemDeExcecao(objetoExcecao, argumentoResolvido.tipo), tipo: 'texto' },
+                        'escreva_excecao'
+                    )
+                );
+                continue;
+            }
             if (argumentoResolvido instanceof VariavelEscopo) {
                 const tipoArgumento = argumentoResolvido.tipo || argumento.tipo;
                 formatosTexto.push(this.printfFormatos.get(tipoArgumento));
@@ -3468,7 +3314,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.CreateCondBr(condicao, blocoCorpoLoop, blocoAposLoop);
 
         this.montador.SetInsertPoint(blocoCorpoLoop);
-        this.pilhaBlocosLoop.push({ blocoSaida: blocoAposLoop, blocoRetorno: blocoIncremento });
+        this.pilhaBlocosLoop.push({ blocoSaida: blocoAposLoop, blocoRetorno: blocoIncremento, tentesAtivos: this.tentesAtivos });
         await this.processarDeclaracoesBloco(declaracao.corpo.declaracoes);
         this.pilhaBlocosLoop.pop();
 
@@ -4425,7 +4271,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     visitarExpressaoContinua(_: Continua): ContinuarQuebra {
         if (this.montador && this.pilhaBlocosLoop.length > 0) {
-            const { blocoRetorno } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            const { blocoRetorno, tentesAtivos } = this.pilhaBlocosLoop[this.pilhaBlocosLoop.length - 1];
+            this.emitirSaidaDeTentes(this.tentesAtivos - (tentesAtivos ?? 0));
             this.montador.CreateBr(blocoRetorno);
             // Cria bloco morto para absorver instruções subsequentes no mesmo bloco (nunca alcançado).
             const funcaoAtual = this.montador.GetInsertBlock().getParent();
@@ -4504,10 +4351,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
         }
 
-        const funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
+        let classeDoConstrutor: string | undefined = nomeClasse;
+        let funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
+        while (!funcaoConstrutor && classeDoConstrutor) {
+            classeDoConstrutor = this.superClasses.get(classeDoConstrutor);
+            if (classeDoConstrutor) funcaoConstrutor = this.modulo.getFunction(`${classeDoConstrutor}_construtor`);
+        }
         if (funcaoConstrutor) {
             const args: llvm.Value[] = [objetoAlloc];
-            const paramDefsConstrutor = this.parametrosMetodosClasse.get(nomeClasse)?.get('construtor') ?? [];
+            const paramDefsConstrutor = this.parametrosMetodosClasse.get(classeDoConstrutor)?.get('construtor') ?? [];
             const totalParamsConstrutor = funcaoConstrutor.arg_size() - 1;
             for (let i = 0; i < totalParamsConstrutor; i++) {
                 const tipoEsperado = funcaoConstrutor.getArg(i + 1).getType();
@@ -5214,7 +5066,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Declara (uma única vez por módulo) uma função C do runtime e a devolve.
     // Usado pelos métodos embutidos mais recentes, para não exigir um campo
     // `funcaoX` + declaração em criarFuncaoNativa() para cada função.
-    protected obterFuncaoRuntime(nomeC: string, tipoRetorno: llvm.Type, tiposParametros: llvm.Type[]): llvm.FunctionCallee {
+    obterFuncaoRuntime(nomeC: string, tipoRetorno: llvm.Type, tiposParametros: llvm.Type[]): llvm.FunctionCallee {
         const existente = this.funcoesRuntime.get(nomeC);
         if (existente) return existente;
         const tipoFuncao = llvm.FunctionType.get(tipoRetorno, tiposParametros, false);
@@ -5276,7 +5128,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     // Insere um alloca no bloco de entrada da função corrente, evitando
     // que allocas emitidos dentro de loops consumam stack a cada iteração.
-    private criarAllocaNoBlocoEntrada(tipo: llvm.Type, nome: string): llvm.AllocaInst {
+    protected criarAllocaNoBlocoEntrada(tipo: llvm.Type, nome: string): llvm.AllocaInst {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
         const blocoEntrada = funcaoAtual.getEntryBlock();
 
@@ -5454,8 +5306,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'inverter':
                 return this.montador.CreateCall(this.funcaoVetorInverter, [vetorPtr, tamElem]);
 
-            case 'ordenar':
-                return this.montador.CreateCall(this.funcaoVetorOrdenar, [vetorPtr, tamElem, ehNumero]);
+            case 'ordenar': {
+                // ordenar(funcaoComparacao): ordenação estável guiada pela função.
+                if (argumentos[0]) {
+                    return await this.ordenarComFuncao(vetorPtr, tipoElem, argumentos[0], linha);
+                }
+                // Ordem crescente: 0 = inteiro, 1 = número, 2 = texto (strcmp).
+                const tipoOrdenacao = ConstantInt.get(
+                    this.contexto,
+                    new APInt(32, tipoElem === 'número' || tipoElem === 'numero' ? 1 : tipoElem === 'texto' ? 2 : 0)
+                );
+                this.montador.CreateCall(this.funcaoVetorOrdenar, [vetorPtr, tamElem, tipoOrdenacao]);
+                return vetorPtr;
+            }
 
             case 'fatiar': {
                 const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
@@ -5571,7 +5434,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tiposParamLlvm = tiposParamStr.map((t) => this.obterTipoLlvm(t));
 
         // Tipo de retorno: usa o declarado ou o esperado.
-        const tipoRetornoStr = construto.tipo && construto.tipo !== 'qualquer' ? construto.tipo : tipoRetornoEsperado;
+        // Sem tipo declarado, o avaliador marca a função anônima como 'qualquer' ou 'vazio':
+        // nesses casos vale o tipo esperado por quem recebe a função.
+        const tipoRetornoStr =
+            construto.tipo && construto.tipo !== 'qualquer' && construto.tipo !== 'vazio'
+                ? construto.tipo
+                : tipoRetornoEsperado;
         const tipoRetornoLlvm = this.obterTipoLlvm(tipoRetornoStr);
 
         const tipoFuncao = llvm.FunctionType.get(tipoRetornoLlvm, tiposParamLlvm, false);
@@ -5646,6 +5514,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         let valor: llvm.Value;
         let tipo: string;
 
+        if (resolvido instanceof VariavelEscopo && this.herdaDeExcecao(resolvido.tipo)) {
+            return this.mensagemDeExcecao(this.carregarPtrClasseSePreciso(resolvido), resolvido.tipo);
+        }
         if (resolvido instanceof VariavelEscopo) {
             tipo = resolvido.tipo ?? argumento.tipo ?? 'número';
             // Parâmetros escalares (inteiro/número/lógico) chegam por valor (Argument não é
@@ -5847,6 +5718,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 // das chamadas de método. O valor vai numa caixa temporária própria, para que
                 // uma reatribuição do parâmetro dentro da função não altere a variável de quem chamou.
                 const tipoParamDeclarado = tiposParametros[indice];
+                // Literal de vetor passado a parâmetro tipado (ex.: f([3, 8]) com
+                // `numeros: inteiro[]`): usa o tipo do elemento do parâmetro, como na
+                // declaração de variável — sem isso o literal vira número[] (double).
+                if (tipoEhVetor(tipoParamDeclarado) && argumento instanceof Vetor) {
+                    (argumento as Vetor).tipo = `${tipoElementoVetor(tipoParamDeclarado)}[]`;
+                }
                 if (tipoParamDeclarado === 'texto' || tipoEhDicionario(tipoParamDeclarado)) {
                     const valorPonteiro =
                         tipoParamDeclarado === 'texto'
@@ -6067,42 +5944,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcaoNumero = this.modulo.getOrInsertFunction('numero', tipoFuncaoNumero);
 
         // void falhar(const char *msg)
-        const tipoFuncaoFalhar = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [this.montador.getPtrTy()],
-            false
-        );
 
-        this.funcaoFalhar = this.modulo.getOrInsertFunction('falhar', tipoFuncaoFalhar);
 
-        // Personality function para suporte a exceções C++ (tente/pegue).
-        // Deve ser obtida como llvm.Function pois setPersonalityFn exige esse tipo.
-        const tipoPersonalidade = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [
-                this.montador.getInt32Ty(),
-                this.montador.getInt32Ty(),
-                llvm.Type.getInt64Ty(this.contexto),
-                this.montador.getPtrTy(),
-                this.montador.getPtrTy(),
-            ],
-            false
-        );
-
-        this.funcaoPersonalidade = llvm.Function.Create(
-            tipoPersonalidade,
-            llvm.Function.LinkageTypes.ExternalLinkage,
-            this.alvo?.personalidadeExcecoes ?? '__gxx_personality_v0',
-            this.modulo
-        );
-
-        const tipoBeginCatch = llvm.FunctionType.get(this.montador.getPtrTy(), [this.montador.getPtrTy()], false);
-
-        this.funcaoBeginCatch = this.modulo.getOrInsertFunction('__cxa_begin_catch', tipoBeginCatch);
-
-        const tipoEndCatch = llvm.FunctionType.get(llvm.Type.getVoidTy(this.contexto), [], false);
-
-        this.funcaoEndCatch = this.modulo.getOrInsertFunction('__cxa_end_catch', tipoEndCatch);
 
         // char* delegua_texto_maiusculo(const char* s)
         // char* delegua_texto_minusculo(const char* s)
@@ -6457,11 +6300,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         this.finalizarSubprogramaDebug();
 
-        // Define a personality function apenas se o código contém blocos tente/pegue,
-        // pois sua presença incondicional inibe inlining e otimizações de tail-call.
-        if (this.contemExcecoes) {
-            funcaoInicio.setPersonalityFn(this.funcaoPersonalidade);
-        }
 
         this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
 
@@ -6498,6 +6336,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.funcoesRuntime = new Map();
         this.estruturasEstrangeiras = new Map();
         this.trampolinsFFI = new Map();
+        this.comparadoresOrdenacao = new Map();
+        this.tentesAtivos = 0;
+        this.contadorComparadores = 0;
         this.bibliotecasEstrangeiras = new Set();
         this.classesEstrangeiras = new Set();
         this.pilhaIsto = [];
@@ -6722,6 +6563,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
         }
 
+        // Classe embutida Excecao (falhar/pegue e `classe X herda Excecao`).
+        this.registrarClasseExcecao();
+
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = todasDeclaracoes.filter((d) => d instanceof Classe);
         for (const declaracao of declaracoesClasses) {
@@ -6745,7 +6589,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             throw new Error('Falha ao verificar módulo LLVM.');
         }
 
-        if (otimizar && this.maquinaAlvo) {
+        if (otimizar && this.maquinaAlvo && !this.contemExcecoes) {
             const passesModulo = new llvm.ModulePassManager();
             const passesFuncao = passesModulo.createFunctionPassManager();
             passesFuncao.addSROAPass();
@@ -6812,3 +6656,13 @@ CompiladorLLVM.prototype.carregarArgumentoFFI = carregarArgumentoFFI;
 CompiladorLLVM.prototype.carregarArgumentoPonteiro = carregarArgumentoPonteiro;
 CompiladorLLVM.prototype.carregarArgumentoFuncaoFFI = carregarArgumentoFuncaoFFI;
 CompiladorLLVM.prototype.obterTrampolimFFI = obterTrampolimFFI;
+CompiladorLLVM.prototype.ordenarComFuncao = ordenarComFuncao;
+CompiladorLLVM.prototype.registrarClasseExcecao = registrarClasseExcecao;
+CompiladorLLVM.prototype.herdaDeExcecao = herdaDeExcecao;
+CompiladorLLVM.prototype.idsDescendentes = idsDescendentes;
+CompiladorLLVM.prototype.mensagemDeExcecao = mensagemDeExcecao;
+CompiladorLLVM.prototype.criarObjetoExcecao = criarObjetoExcecao;
+CompiladorLLVM.prototype.compilarFalhar = compilarFalhar;
+CompiladorLLVM.prototype.compilarTente = compilarTente;
+CompiladorLLVM.prototype.emitirSaidaDeTentes = emitirSaidaDeTentes;
+CompiladorLLVM.prototype.obterComparadorOrdenacao = obterComparadorOrdenacao;
