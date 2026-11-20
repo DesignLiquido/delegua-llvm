@@ -19,6 +19,7 @@
         "coverage",
         "docs",
         "dist/**/*",
+        "ferramentas",
         "jest.config.ts",
         "node_modules",
         "rollup.config.ts",
