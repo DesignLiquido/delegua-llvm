@@ -146,6 +146,10 @@ describe('compilador com alvo', () => {
         expect(windows).toMatch(/call i32 @_setjmp\(ptr %quadro_excecao, ptr null\)/);
         const linux = await compilarPara('linux-arm64', codigo);
         expect(linux).toMatch(/call i32 @_setjmp\(ptr %quadro_excecao\)/);
+        // Windows ARM64 com MinGW (zig): a CRT não tem _setjmp; usa __mingw_setjmp.
+        const windowsArm = await compilarPara('windows-arm64', codigo, true);
+        expect(windowsArm).toMatch(/call i32 @__mingw_setjmp\(ptr %quadro_excecao\)/);
+        expect(windowsArm).not.toContain('@_setjmp');
         expect(linux).not.toContain('__gxx_personality');
     });
 });

@@ -221,13 +221,19 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
     const empilhar = this.obterFuncaoRuntime('delegua_excecao_empilhar', vazio, [ptr]);
     this.montador.CreateCall(empilhar, [quadro]);
 
-    // _setjmp: no Windows (MSVC e MinGW) recebe também o quadro de pilha para desempilhar
-    // via SEH; nulo = longjmp só restaura o contexto, sem desempilhar (não há o que limpar).
+    // setjmp de cada plataforma (precisa combinar com o longjmp de excecoes.c):
+    //   - Windows x86-64 (MSVC e MinGW): _setjmp(buf, quadro de pilha); nulo = longjmp só
+    //     restaura o contexto, sem desempilhar via SEH (não há o que limpar);
+    //   - Windows ARM64 com MinGW: __mingw_setjmp(buf) (a CRT não tem _setjmp);
+    //   - demais: _setjmp(buf).
     const triplo = this.alvo?.triplo ?? llvm.config.LLVM_DEFAULT_TARGET_TRIPLE;
     const ehWindows = /windows|mingw/.test(triplo);
-    const setjmp = this.obterFuncaoRuntime('_setjmp', i32, ehWindows ? [ptr, ptr] : [ptr]);
-    this.modulo.getFunction('_setjmp')?.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.ReturnsTwice));
-    const argumentosSetjmp = ehWindows ? [quadro, llvm.Constant.getNullValue(ptr) as unknown as llvm.Value] : [quadro];
+    const ehMingwArm = ehWindows && /^(aarch64|arm)/.test(triplo) && /-gnu|mingw/.test(triplo);
+    const nomeSetjmp = ehMingwArm ? '__mingw_setjmp' : '_setjmp';
+    const comQuadroPilha = ehWindows && !ehMingwArm;
+    const setjmp = this.obterFuncaoRuntime(nomeSetjmp, i32, comQuadroPilha ? [ptr, ptr] : [ptr]);
+    this.modulo.getFunction(nomeSetjmp)?.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.ReturnsTwice));
+    const argumentosSetjmp = comQuadroPilha ? [quadro, llvm.Constant.getNullValue(ptr) as unknown as llvm.Value] : [quadro];
     const retornoSetjmp = this.montador.CreateCall(setjmp, argumentosSetjmp, 'setjmp');
     const primeiraVez = this.montador.CreateICmpEQ(retornoSetjmp, ConstantInt.get(this.contexto, new APInt(32, 0)), 'sem_excecao');
     this.montador.CreateCondBr(primeiraVez, blocoCorpo, blocoDespacho);

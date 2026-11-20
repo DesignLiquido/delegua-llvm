@@ -1,4 +1,10 @@
 #include "excecoes.h"
+
+// MinGW: setjmp/longjmp sem desempilhamento SEH, para combinar com a chamada que o
+// compilador emite (_setjmp(buf, NULL) em x86-64; __mingw_setjmp(buf) em ARM64).
+#if defined(__MINGW32__) && !defined(__USE_MINGW_SETJMP_NON_SEH)
+#define __USE_MINGW_SETJMP_NON_SEH
+#endif
 #include <setjmp.h>
 #include <stddef.h>
 #include <stdio.h>
