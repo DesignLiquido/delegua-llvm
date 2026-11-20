@@ -61,3 +61,43 @@ export function normalizarParaTipoInteiro(tipoBase: string): { tipoInteiro: stri
     const bits = tipoInteiro === 'longo' ? 64 : 32;
     return { tipoInteiro, bits };
 }
+
+// `real` (e o sinônimo `decimal`) é o tipo que o avaliador sintático do núcleo dá a literais
+// com parte decimal e a declarações explícitas. Para o compilador, é o mesmo `número`
+// (double). Substitui também dentro de tipos compostos, como `real[]` ou `função<real>`.
+const padraoTipoReal = /(?<![\p{L}\p{N}_])(real|decimal)(?![\p{L}\p{N}_])/gu;
+
+export function normalizarTipoReal(tipo: string): string {
+    return tipo.replace(padraoTipoReal, 'número');
+}
+
+/**
+ * Percorre a árvore sintática (declarações e construtos) e troca `real`/`decimal` por
+ * `número` em todas as propriedades de tipo (`tipo`, `tipoDado`, `tipoRetorno`...).
+ * Só propriedades cujo nome começa com "tipo" são alteradas; tipos de símbolo do lexador
+ * são maiúsculos e não são afetados.
+ */
+export function normalizarTiposReais(raiz: unknown): void {
+    const visitados = new WeakSet<object>();
+    const pendentes: unknown[] = [raiz];
+    while (pendentes.length > 0) {
+        const atual = pendentes.pop();
+        if (!atual || typeof atual !== 'object' || visitados.has(atual as object)) continue;
+        visitados.add(atual as object);
+        if (Array.isArray(atual)) {
+            pendentes.push(...atual);
+            continue;
+        }
+        for (const [chave, valor] of Object.entries(atual as Record<string, unknown>)) {
+            if (typeof valor === 'string') {
+                if (chave.startsWith('tipo') && padraoTipoReal.test(valor)) {
+                    padraoTipoReal.lastIndex = 0;
+                    (atual as Record<string, unknown>)[chave] = normalizarTipoReal(valor);
+                }
+                padraoTipoReal.lastIndex = 0;
+            } else if (valor && typeof valor === 'object') {
+                pendentes.push(valor);
+            }
+        }
+    }
+}

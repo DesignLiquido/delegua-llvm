@@ -138,6 +138,7 @@ import {
     tipoEhInteiroDelegua,
     tipoEhVetor,
     tipoEhDicionario,
+    normalizarTiposReais,
     tipoElementoVetor,
     definirTipoPrevalente,
     normalizarParaTipoInteiro,
@@ -3421,12 +3422,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     async visitarDeclaracaoVar(declaracao: Var): Promise<any> {
         // Se a variável não tem tipo, o tipo do inicializador deve ser verificado.
         let tipoVariavel = declaracao.tipo;
-        // `var x = f()`: o avaliador pode dar a x o tipo da função ("função<Item>"); o valor
-        // é o retorno. (`var f = funcao` continua com o tipo de função.)
-        const retornoDeChamada = /^fun[cç][aã]o<(.+)>$/.exec(tipoVariavel ?? '');
-        if (retornoDeChamada && declaracao.inicializador?.constructor === Chamada) {
-            tipoVariavel = retornoDeChamada[1];
-        }
         if (tipoVariavel === 'qualquer') {
             // 'nulo' não é um tipo útil para travar a variável: uma var `qualquer`
             // inicializada com nulo quase sempre é reatribuída depois a um valor real.
@@ -3711,11 +3706,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         if (varEscopo?.construtoVariavel) {
                             const funcDecl = varEscopo.construtoVariavel as unknown as FuncaoDeclaracao;
                             if (funcDecl.funcao?.tipo) {
-                                // O avaliador pode registrar o tipo da função ("função<Item>");
-                                // o tipo da chamada é o de retorno ("Item").
-                                const tipoFuncao = funcDecl.funcao.tipo;
-                                const retorno = /^fun[cç][aã]o<(.+)>$/.exec(tipoFuncao);
-                                return retorno ? retorno[1] : tipoFuncao;
+                                return funcDecl.funcao.tipo;
                             }
                         }
                     } catch {
@@ -5744,6 +5735,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     return await this.carregarArgumentoInteiro(expressao.argumentos[0]);
                 }
             }
+            // real(x) / decimal(x): conversão para double. O núcleo envolve em real(...) os
+            // retornos e inicializadores de contexto `real` (garantirTipoReal).
+            if ((nomeEntidadeChamada === 'real' || nomeEntidadeChamada === 'decimal') && expressao.argumentos.length === 1) {
+                const valor = await this.carregarArgumentoNumero(expressao.argumentos[0]);
+                const idTipo = valor.getType().getTypeID();
+                if (idTipo === llvm.Type.TypeID.IntegerTyID) {
+                    return this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'para_real');
+                }
+                return valor;
+            }
             // texto() escolhe a função C com base no tipo do argumento
             if (nomeEntidadeChamada === 'texto') {
                 return await this.chamarFuncaoTexto(expressao.argumentos);
@@ -6625,6 +6626,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const todasDeclaracoes: Declaracao[] = [...declaracoesImportadas, ...resultadoAvaliadorSintatico.declaracoes];
+        // O núcleo tipa literais decimais como `real`; para o compilador, é `número`.
+        normalizarTiposReais(todasDeclaracoes);
 
         // Detecta módulos importados para registrar apenas as funções necessárias.
         const modulosImportados = new Set<string>();
