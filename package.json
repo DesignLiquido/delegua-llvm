@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "deixar-codigo-bonito": "yarn prettier --config .prettierrc --write fontes/**/*.ts",
-    "empacotar": "yarn rimraf ./dist && tsc && yarn copyfiles -V ./package.json ./dist && yarn copyfiles -u 1 \"fontes/bibliotecas/**\" ./dist",
+    "empacotar": "yarn rimraf ./dist && tsc && yarn copyfiles -u 1 \"fontes/bibliotecas/**\" ./dist && node ferramentas/preparar-distribuicao.js",
     "testes-unitarios": "jest --coverage",
     "executar": "ts-node fontes/ilc.ts"
   },
