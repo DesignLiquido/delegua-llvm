@@ -76,6 +76,12 @@ describe('resolverEMesclarDeclaracoes', () => {
         ).rejects.toThrow('Arquivo importado não encontrado');
     });
 
+    it('mensagem de erro de arquivo importado traz linha e descrição', async () => {
+        await expect(
+            resolverEMesclarDeclaracoes(['importar { quebrada } de "./com-erro-sintatico"'], diretorioExemplos)
+        ).rejects.toThrow(/com-erro-sintatico\.delegua:\d+: \S/);
+    });
+
     it('lança erro para arquivo importado com erro sintático', async () => {
         await expect(
             resolverEMesclarDeclaracoes(['importar { quebrada } de "./com-erro-sintatico"'], diretorioExemplos)
@@ -105,6 +111,15 @@ describe('resolverEMesclarDeclaracoes', () => {
 });
 
 describe('Compilador - integração com importação de arquivo (diretorioBase)', () => {
+    it('arquivo importado usa funções de módulo embutido (json)', async () => {
+        const resultado = await new CompiladorLLVM().compilar(
+            ['importar { tipoDoJson } de "./usa-modulo-json"', 'escreva(tipoDoJson("{}"))'],
+            false,
+            diretorioExemplos
+        );
+        expect(resultado).toContain('@delegua_json_tipo');
+    });
+
     it('compila programa principal que importa função de outro arquivo (emite definição da função)', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(
