@@ -3301,7 +3301,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const formatoResolvido = this.montador.CreateGlobalStringPtr(
-            formatosTexto.concat('\n').join(' '), // String formatada ex: "%s %i"
+            // Argumentos separados por espaço, sem espaço antes da quebra de linha (ex.: "%s %i\n").
+            formatosTexto.join(' ') + '\n',
             'fmt',
             0,
             this.modulo
@@ -4852,6 +4853,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         const tmpAllocaCaixa = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box_qualquer');
                         this.montador.CreateStore(caixaArg, tmpAllocaCaixa);
                         args.push(tmpAllocaCaixa);
+                        continue;
+                    }
+
+                    // Parâmetro escalar (ex.: `lógico` declarado no método) e argumento que é
+                    // o endereço de uma variável local ou campo: passa o valor, não o endereço.
+                    if (
+                        tipoParamEsperado &&
+                        !tipoEhPonteiro(tipoParamEsperado) &&
+                        valVE &&
+                        tipoEhPonteiro(valVE.getType()) &&
+                        (construtorInstVE === llvm.AllocaInst || construtorInstVE === llvm.GetElementPtrInst)
+                    ) {
+                        args.push(this.montador.CreateLoad(tipoParamEsperado, valVE, 'load_arg_escalar'));
                         continue;
                     }
 

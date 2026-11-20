@@ -54,7 +54,7 @@ describe('Compilador - métodos de texto adicionais', () => {
         expect(ir).toContain('call i32 @delegua_texto_encontrar_ultimo(');
         expect(ir).toContain('call ptr @delegua_texto_concatenar(');
         // Tipos inferidos: i e j inteiros (%d), c texto (%s).
-        expect(ir).toContain('c"%d \\0A\\00"');
+        expect(ir).toContain('c"%d\\0A\\00"');
     });
 
     it('comecaCom e terminaCom devolvem lógico (i1)', async () => {

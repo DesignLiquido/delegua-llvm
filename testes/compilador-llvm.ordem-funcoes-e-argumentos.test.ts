@@ -150,4 +150,27 @@ describe('Compilador - ordem de declaração de funções e passagem de argument
         expect(corpo).toContain('@delegua_dicionario_definir(');
         expect(corpo).not.toMatch(/load ptr, ptr %2/);
     });
+
+    it('variável local lógico passada a parâmetro lógico de método vai por valor', async () => {
+        const ir = await new CompiladorLLVM().compilar([
+            'classe C {',
+            '    marcar(sim: lógico): inteiro {',
+            '        se sim {',
+            '            retorna 1',
+            '        }',
+            '        retorna 0',
+            '    }',
+            '}',
+            'var c = C()',
+            'var ativo: lógico = verdadeiro',
+            'escreva(c.marcar(ativo))',
+        ]);
+        expect(ir).toMatch(/call i32 @C_marcar\(ptr [^,]+, i1 /);
+    });
+
+    it('escreva não deixa espaço antes da quebra de linha', async () => {
+        const ir = await new CompiladorLLVM().compilar(['escreva("a")', 'escreva(1, "b")']);
+        expect(ir).toContain('c"%s\\0A\\00"');
+        expect(ir).not.toContain(' \\0A\\00"');
+    });
 });
