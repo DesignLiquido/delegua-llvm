@@ -34,6 +34,9 @@ export interface ContextoResolucao {
     // Fontes C e bibliotecas do sistema declaradas pelos pacotes em "nativo".
     fontesNativas: Set<string>;
     bibliotecasNativas: Set<string>;
+    // Ajustes aplicados ao avaliador sintático de cada arquivo importado, os mesmos do arquivo
+    // principal (ex.: inferência de membros de módulos embutidos).
+    prepararAvaliador?: (avaliador: any) => void;
 }
 
 export function criarContextoResolucao(): ContextoResolucao {
@@ -225,6 +228,7 @@ export async function resolverEMesclarDeclaracoes(
         const lexador = new Lexador();
         const avaliador = new AvaliadorSintatico();
         const avaliadorAny = avaliador as any;
+        contexto.prepararAvaliador?.(avaliadorAny);
         const inicializarOriginal = avaliadorAny.inicializarPilhaEscopos?.bind(avaliadorAny);
         if (inicializarOriginal) {
             const capturedRegistro = { ...registroClasses };
@@ -240,9 +244,12 @@ export async function resolverEMesclarDeclaracoes(
         const retornoAvaliador = await avaliador.analisar(retornoLexador, hashArquivo);
 
         if (retornoAvaliador.erros.length > 0) {
-            throw new Error(
-                `Erros ao analisar arquivo importado '${caminhoAbsoluto}': ${JSON.stringify(retornoAvaliador.erros)}`
-            );
+            const descricoes = retornoAvaliador.erros.map((erro: any) => {
+                const linhaErro = erro.simbolo?.linha ?? erro.linha;
+                const mensagem = erro.message || erro.mensagem || JSON.stringify(erro);
+                return `  ${caminhoAbsoluto}:${linhaErro}: ${mensagem}`;
+            });
+            throw new Error(`Erros ao analisar arquivo importado '${caminhoAbsoluto}':\n${descricoes.join('\n')}`);
         }
 
         // Registra classes encontradas para arquivos seguintes.

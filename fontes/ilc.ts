@@ -156,9 +156,17 @@ function executarFerramenta(comando: [string, string[]], cadeia: CadeiaFerrament
     }
 }
 
-function determinarCaminhoBinario(diretorioSaida: string, nomeBinario: string, extensaoExecutavel: string): string {
-    const nomeComExtensao =
-        path.extname(nomeBinario) || !extensaoExecutavel ? nomeBinario : `${nomeBinario}${extensaoExecutavel}`;
+function determinarCaminhoBinario(
+    diretorioSaida: string,
+    nomeBinario: string,
+    extensaoExecutavel: string,
+    nomeExplicito: boolean
+): string {
+    // Um nome dado com -o ou na configuração que já tem extensão é respeitado. O nome
+    // derivado do arquivo fonte ("semver.teste" de "semver.teste.delegua") sempre recebe a
+    // extensão do executável, mesmo contendo um ponto.
+    const manterNome = !extensaoExecutavel || (nomeExplicito && path.extname(nomeBinario) !== '');
+    const nomeComExtensao = manterNome ? nomeBinario : `${nomeBinario}${extensaoExecutavel}`;
 
     let caminhoBinario = path.join(diretorioSaida, nomeComExtensao);
     if (fs.existsSync(caminhoBinario) && fs.statSync(caminhoBinario).isDirectory()) {
@@ -271,7 +279,12 @@ async function principal() {
     const nomeSaidaConfig = configuracao['compilacao.arquivoSaida'];
     const nomeBinario = nomeSaida || nomeSaidaConfig || nomeBase;
     const origemNome = nomeSaida ? '-o' : nomeSaidaConfig ? 'configuracao.delprops' : 'nome do arquivo';
-    const caminhoBinario = determinarCaminhoBinario(diretorioSaida, nomeBinario, cadeia.alvo.extensaoExecutavel);
+    const caminhoBinario = determinarCaminhoBinario(
+        diretorioSaida,
+        nomeBinario,
+        cadeia.alvo.extensaoExecutavel,
+        Boolean(nomeSaida || nomeSaidaConfig)
+    );
 
     taquigrafarEtapa('Lendo código fonte');
     const conteudo = fs.readFileSync(arquivoEntrada, 'utf-8');
