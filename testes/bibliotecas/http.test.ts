@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 import { CompiladorLLVM } from '../../fontes/compilador-llvm';
+import { obterBibliotecasParaCompilacao } from '../../fontes/bibliotecas-compilacao';
 
 describe('Compilador - Biblioteca delegua-http (Fase E.1)', () => {
     describe('Importação dinâmica: var http = importar("http")', () => {
@@ -263,5 +264,18 @@ describe('Compilador - Biblioteca delegua-http (Fase E.1)', () => {
             expect(resultado).toContain('delegua_http_get');
             expect(resultado).toContain('delegua_json_texto_para_objeto');
         });
+    });
+});
+
+describe('Biblioteca http - ligação', () => {
+    it('liga WinHTTP no Windows e libcurl nos demais sistemas', () => {
+        const windows = obterBibliotecasParaCompilacao(['http'], '/b', 'windows');
+        expect(windows.flagsLink).toContain('-lwinhttp');
+        expect(windows.flagsLink).not.toContain('-lcurl');
+        for (const sistema of ['linux', 'darwin']) {
+            const outro = obterBibliotecasParaCompilacao(['http'], '/b', sistema);
+            expect(outro.flagsLink).toContain('-lcurl');
+            expect(outro.flagsLink).not.toContain('-lwinhttp');
+        }
     });
 });

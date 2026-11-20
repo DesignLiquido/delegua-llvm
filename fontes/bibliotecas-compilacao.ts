@@ -20,7 +20,15 @@ const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([
     ['arquivos', { arquivosC: ['arquivos.c'], flagsLink: [] }],
     ['csv', { arquivosC: ['csv.c'], flagsLink: [] }],
     ['json', { arquivosC: ['json.c'], flagsLink: [] }],
-    ['http', { arquivosC: ['http.c'], flagsLink: ['-lcurl'] }],
+    // WinHTTP (parte do sistema) no Windows; libcurl nos demais sistemas.
+    [
+        'http',
+        {
+            arquivosC: ['http.c'],
+            flagsLink: [],
+            flagsLinkPorSistema: { windows: ['-lwinhttp'], linux: ['-lcurl'], darwin: ['-lcurl'] },
+        },
+    ],
     [
         'criptografia',
         {

@@ -1,0 +1,6 @@
+// Usa o módulo http: no Windows ele liga com o WinHTTP do sistema. A verificação só confere
+// que o programa compila e liga para os alvos Windows (não faz requisições).
+var http = importar("http")
+var cliente = http.novoClienteHttp("https://exemplo.invalid", 1000)
+http.adicionarCabecalho(cliente, "Accept: application/json")
+escreva("http pronto")
