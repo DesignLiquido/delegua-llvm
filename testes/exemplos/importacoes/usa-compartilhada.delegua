@@ -1,0 +1,6 @@
+importar { dobro } de "./compartilhada"
+
+funcao quadruplo(n: inteiro): inteiro {
+    var metade: inteiro = dobro(n)
+    retorna dobro(metade)
+}

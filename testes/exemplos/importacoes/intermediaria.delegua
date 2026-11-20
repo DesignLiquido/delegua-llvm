@@ -1,0 +1,6 @@
+importar { quadruplo } de "./usa-compartilhada"
+
+funcao octuplo(n: inteiro): inteiro {
+    var q: inteiro = quadruplo(n)
+    retorna q * 2
+}

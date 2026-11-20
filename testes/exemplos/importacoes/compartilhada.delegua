@@ -1,0 +1,3 @@
+funcao dobro(n: inteiro): inteiro {
+    retorna n * 2
+}

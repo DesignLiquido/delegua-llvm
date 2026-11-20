@@ -37,10 +37,20 @@ export interface ContextoResolucao {
     // Ajustes aplicados ao avaliador sintático de cada arquivo importado, os mesmos do arquivo
     // principal (ex.: inferência de membros de módulos embutidos).
     prepararAvaliador?: (avaliador: any) => void;
+    // Declarações de todos os arquivos já analisados, em qualquer ramo da árvore de
+    // importações. Um arquivo importado de novo é pulado (já visitado), então quem o importa
+    // depois precisa enxergar os símbolos dele por aqui, como já acontece com as classes.
+    declaracoesAnalisadas: Declaracao[];
 }
 
 export function criarContextoResolucao(): ContextoResolucao {
-    return { modulosEmbutidos: new Set(), pacotes: new Map(), fontesNativas: new Set(), bibliotecasNativas: new Set() };
+    return {
+        modulosEmbutidos: new Set(),
+        pacotes: new Map(),
+        fontesNativas: new Set(),
+        bibliotecasNativas: new Set(),
+        declaracoesAnalisadas: [],
+    };
 }
 
 /**
@@ -232,7 +242,7 @@ export async function resolverEMesclarDeclaracoes(
         const inicializarOriginal = avaliadorAny.inicializarPilhaEscopos?.bind(avaliadorAny);
         if (inicializarOriginal) {
             const capturedRegistro = { ...registroClasses };
-            const simbolosAnteriores = [...resultado];
+            const simbolosAnteriores = [...contexto.declaracoesAnalisadas];
             avaliadorAny.inicializarPilhaEscopos = () => {
                 inicializarOriginal();
                 Object.assign(avaliadorAny.tiposDefinidosEmCodigo, capturedRegistro);
@@ -260,6 +270,7 @@ export async function resolverEMesclarDeclaracoes(
         }
 
         resultado.push(...retornoAvaliador.declaracoes);
+        contexto.declaracoesAnalisadas.push(...retornoAvaliador.declaracoes);
     }
 
     return { declaracoes: resultado, mapaHash, contexto };
