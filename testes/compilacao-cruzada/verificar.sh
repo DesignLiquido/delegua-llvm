@@ -75,6 +75,26 @@ for alvo in $ALVOS; do
     echo "::endgroup::"
 done
 
+# Módulo http nos alvos Windows: liga com o WinHTTP, que o zig traz nas bibliotecas do
+# mingw. (Nos demais alvos o módulo usa o libcurl, que não há para compilação cruzada.)
+for alvo in $ALVOS; do
+    [[ "$alvo" == windows-* ]] || continue
+    echo "::group::$alvo (http)"
+    nome="sondagem-http-$alvo"
+    binario="$DIRETORIO/$nome.exe"
+    rm -f "$binario"
+    if ! (cd "$RAIZ" && npx ts-node fontes/ilc.ts "$DIRETORIO/http.delegua" --alvo "$alvo" --compilador-c "zig cc" -o "$nome"); then
+        echo "::error::$alvo: falha na compilação do módulo http"
+        falhas=$((falhas + 1))
+    elif ! grep -Eq "$(formato_esperado "$alvo")" <<<"$(file -b "$binario")"; then
+        echo "::error::$alvo: formato inesperado do binário com http"
+        falhas=$((falhas + 1))
+    else
+        echo "$alvo: módulo http ligado com WinHTTP"
+    fi
+    echo "::endgroup::"
+done
+
 if [[ $falhas -gt 0 ]]; then
     echo "$falhas alvo(s) com falha"
     exit 1
