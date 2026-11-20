@@ -371,6 +371,36 @@ tempo.monotonicoMilissegundos()           // relógio monotônico, para medir in
 tempo.dormir(250)
 ```
 
+## Exceções
+
+Mesma semântica do núcleo de Delégua:
+
+```delegua
+classe ErroRede herda Excecao {
+    codigo: inteiro
+    construtor(mensagem: texto, codigo: inteiro) {
+        super.construtor(mensagem)
+        isto.codigo = codigo
+    }
+}
+
+tente {
+    baixar(url)                         // a exceção pode vir de qualquer profundidade de chamadas
+} pegue (erro: ErroRede) {              // só instâncias de ErroRede (ou subclasses)
+    escreva(erro.mensagem + " " + texto(erro.codigo))
+} pegue (erro) {                        // qualquer outra
+    escreva(erro)                       // escreve a mensagem
+} finalmente {
+    escreva("sempre")
+}
+```
+
+- `falhar <instância de classe>` lança o objeto; `falhar "texto"` (ou outro valor) lança uma instância da classe embutida `Excecao`, com `mensagem`.
+- Vale o primeiro `pegue` correspondente; sem correspondência, `finalmente` executa e a exceção continua propagando. `senão` executa só quando não houve exceção.
+- Exceção não tratada: a mensagem vai para a saída de erro e o programa termina com código 1.
+
+As exceções são implementadas com `setjmp`/`longjmp` da biblioteca C (`bibliotecas/excecoes.c`), sem a ABI de exceções de C++: funcionam igual em Linux, macOS e Windows, inclusive com o clang nativo do Windows (ABI MSVC). Funções que contêm `tente` são compiladas sem otimização (`optnone`), para que variáveis alteradas dentro do `tente` mantenham seus valores no `pegue`.
+
 ## Compilação manual (avançado)
 
 Caso queira compilar manualmente a partir de um arquivo `.ll` já gerado, utilize o [Clang](https://clang.llvm.org/):

@@ -71,4 +71,31 @@ tente {
 } pegue (erro) {
     escreva("excecao capturada")
 }
+
+// Exceção tipada lançada em chamadas recursivas e tratada pela classe.
+classe ErroAlvo herda Excecao {
+    codigo: inteiro
+    construtor(mensagem: texto, codigo: inteiro) {
+        super.construtor(mensagem)
+        isto.codigo = codigo
+    }
+}
+funcao lancarProfundo(n: inteiro): inteiro {
+    se n == 0 {
+        falhar ErroAlvo("profundo", 42)
+    }
+    retorna lancarProfundo(n - 1)
+}
+tente {
+    lancarProfundo(3)
+} pegue (erro: ErroAlvo) {
+    escreva("excecao tipada " + erro.mensagem + " " + texto(erro.codigo))
+}
+
+// Ordenação com função de comparação.
+var ordenados: inteiro[] = [3, 1, 2]
+ordenados.ordenar(funcao(a, b) {
+    retorna b - a
+})
+escreva("ordenados " + ordenados.juntar(","))
 escreva("fim")

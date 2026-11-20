@@ -22,8 +22,6 @@ export interface AlvoCompilacao {
     // Disposição de memória do alvo (sizeof/alinhamento). Usada quando não há backend.
     layoutDados: string;
     extensaoExecutavel: string;
-    // Função de personalidade das exceções (landingpad).
-    personalidadeExcecoes: string;
 }
 
 const LAYOUT_X86_64_ELF = 'e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128';
@@ -34,9 +32,6 @@ const LAYOUT_AARCH64_MACHO = 'e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128
 const LAYOUT_AARCH64_COFF = 'e-m:w-p270:32:32-p271:32:32-p272:64:64-p:64:64-i32:32-i64:64-i128:128-n32:64-S128-Fn32';
 const LAYOUT_RISCV64_ELF = 'e-m:e-p:64:64-i64:64-i128:128-n32:64-S128';
 
-const PERSONALIDADE_ITANIUM = '__gxx_personality_v0';
-// MinGW (Windows com ABI GNU, usada pelo zig) desempilha exceções via SEH.
-const PERSONALIDADE_SEH = '__gxx_personality_seh0';
 
 /**
  * Alvos conhecidos. No Windows, o triplo padrão é a ABI MSVC (clang nativo com as
@@ -51,7 +46,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'x86_64-linux-gnu',
         layoutDados: LAYOUT_X86_64_ELF,
         extensaoExecutavel: '',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'linux-arm64',
@@ -61,7 +55,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'aarch64-linux-gnu',
         layoutDados: LAYOUT_AARCH64_ELF,
         extensaoExecutavel: '',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'linux-riscv64',
@@ -71,7 +64,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'riscv64-linux-gnu',
         layoutDados: LAYOUT_RISCV64_ELF,
         extensaoExecutavel: '',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'darwin-amd64',
@@ -81,7 +73,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'x86_64-macos',
         layoutDados: LAYOUT_X86_64_MACHO,
         extensaoExecutavel: '',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'darwin-arm64',
@@ -91,7 +82,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'aarch64-macos',
         layoutDados: LAYOUT_AARCH64_MACHO,
         extensaoExecutavel: '',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'windows-amd64',
@@ -101,7 +91,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'x86_64-windows-gnu',
         layoutDados: LAYOUT_X86_64_COFF,
         extensaoExecutavel: '.exe',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
     {
         nome: 'windows-arm64',
@@ -111,7 +100,6 @@ export const ALVOS: AlvoCompilacao[] = [
         triploZig: 'aarch64-windows-gnu',
         layoutDados: LAYOUT_AARCH64_COFF,
         extensaoExecutavel: '.exe',
-        personalidadeExcecoes: PERSONALIDADE_ITANIUM,
     },
 ];
 
@@ -169,8 +157,7 @@ export function alvoDaMaquinaAtual(
 }
 
 /**
- * Com `zig cc`, o Windows usa a ABI GNU (MinGW): o triplo do IR passa a ser o do zig
- * e as exceções usam a personalidade SEH.
+ * Com `zig cc`, o Windows usa a ABI GNU (MinGW): o triplo do IR passa a ser o do zig.
  */
 export function ajustarAlvoParaZig(alvo: AlvoCompilacao): AlvoCompilacao {
     if (alvo.sistema !== 'windows') return { ...alvo };
@@ -178,7 +165,6 @@ export function ajustarAlvoParaZig(alvo: AlvoCompilacao): AlvoCompilacao {
     return {
         ...alvo,
         triplo: `${arquiteturaLlvm}-w64-windows-gnu`,
-        personalidadeExcecoes: PERSONALIDADE_SEH,
     };
 }
 

@@ -6,27 +6,11 @@
 #include <string.h>
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#ifndef _WIN32
-void* __cxa_allocate_exception(size_t thrown_size);
-void  __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*));
-void* __cxa_begin_catch(void* exception_header);
-void  __cxa_end_catch(void);
-
-extern void* _ZTIPc;
-#endif
-
-#ifdef __cplusplus
-}
-#endif
-
 int escreva(const char *fmt, ...);
 void *leia(const char *texto, const char *fmt);
 int inteiro(void *valor);
 double numero(void *valor);
+// Lança uma exceção Delégua com a mensagem (ver excecoes.h).
 void falhar(const char *msg);
 double aleatorio(void);
 int aleatorioEntre(double a, double b);

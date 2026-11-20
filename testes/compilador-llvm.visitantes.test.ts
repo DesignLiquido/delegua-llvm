@@ -403,31 +403,6 @@ describe('Compilador LLVM - visitantes', () => {
             expect(resultado).toBe(referencia);
         });
 
-        it('Processadores de caminho cobrem formatos aceitos', async () => {
-            const aceitar = jest.fn().mockResolvedValue(undefined);
-            const aceitarListaDeclaracoes = jest.fn().mockResolvedValue(undefined);
-            (compilador as any).aceitarListaDeclaracoes = aceitarListaDeclaracoes;
-
-            await (compilador as any).processarCaminhoTente({ aceitar });
-            await (compilador as any).processarCaminhoTente({ declaracoes: [{ aceitar }] });
-            await (compilador as any).processarCaminhoTente([{ aceitar }]);
-            await (compilador as any).processarCaminhoTente(undefined);
-
-            // caminhoPegue é sempre BlocoPegue[] em runtime (ver @designliquido/delegua Tente);
-            // cada BlocoPegue expõe seu corpo em `.corpo`, não `.aceitar` nem elementos soltos.
-            await (compilador as any).processarCaminhoPegue([{ corpo: [{ aceitar }] }]);
-            await (compilador as any).processarCaminhoPegue({ declaracoes: [{ aceitar }] });
-            await (compilador as any).processarCaminhoPegue(undefined);
-
-            await (compilador as any).processarCaminhoFinalmente({ aceitar });
-            await (compilador as any).processarCaminhoFinalmente({ declaracoes: [{ aceitar }] });
-            await (compilador as any).processarCaminhoFinalmente([{ aceitar }]);
-            await (compilador as any).processarCaminhoFinalmente(undefined);
-
-            expect(aceitar).toHaveBeenCalledTimes(2);
-            expect(aceitarListaDeclaracoes).toHaveBeenCalledTimes(6);
-        });
-
         it('Resolver argumento de chamada converte para inteiro e longo', () => {
             (compilador as any).resolverTipoConstruto = jest
                 .fn()
