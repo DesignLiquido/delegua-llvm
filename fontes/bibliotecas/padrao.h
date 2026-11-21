@@ -9,6 +9,7 @@
 int escreva(const char *fmt, ...);
 void *leia(const char *texto, const char *fmt);
 int inteiro(void *valor);
+long long longo(void *valor);
 double numero(void *valor);
 // Lança uma exceção Delégua com a mensagem (ver excecoes.h).
 void falhar(const char *msg);

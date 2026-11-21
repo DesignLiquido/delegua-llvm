@@ -151,7 +151,131 @@ import {
     incrementoEhPositivo,
 } from './ajudantes';
 
+import {
+    obterTipoDebug,
+    definirLocalizacaoDebug,
+    criarSubprogramaDebug,
+    finalizarSubprogramaDebug,
+    obterArquivoDebugParaHash,
+    emitirDeclaracaoVariavelDebug,
+    emitirDeclaracaoParametroDebug,
+} from './depuracao';
+import {
+    registrarInterface,
+    registrarMetodosSobrescritos,
+    tipoFuncaoDe,
+    tiposLlvmIguais,
+    assinaturasCompativeis,
+    resolverImplementacaoMetodo,
+    classeDescendeDe,
+    classeImplementaInterface,
+    obterDespachoVirtual,
+    obterDespachoInterface,
+    preencherDespachos,
+} from './despacho';
+import {
+    instanciarClasse,
+    chamarMetodoInstancia,
+} from './classes';
+import {
+    larguraInteira,
+    larguraTipoInteiro,
+    coagirEscalar,
+    igualarLargurasInteiras,
+    resolverMultiplicacao,
+    resolverAdicao,
+    resolverSubtracao,
+    resolverDivisao,
+    resolverModulo,
+    resolverExponenciacao,
+    compararTextos,
+    resolverIgualdade,
+} from './operacoes';
+import {
+    obterLiteralTextoSeguro,
+    garantirPonteiroTextoNaoNulo,
+    normalizarOperandoParaTextoSeguro,
+    chamarMetodoTexto,
+    chamarFuncaoTexto,
+    parsearTemplateString,
+    resolverTextoInterpolado,
+    buscarFormatoLeia,
+} from './texto';
+import {
+    chamarMetodoDicionario,
+    coletarDicionarioEmVetor,
+    embalarValorParaDicionario,
+    embalarValorEmHeap,
+    tamElementoEmBytes,
+    constTamElem,
+    chamarMetodoVetor,
+    chamarMapear,
+    chamarEncontrar,
+} from './colecoes';
+import {
+    criarFuncaoNativa,
+} from './funcoes-nativas';
+
 export class CompiladorLLVM implements VisitanteDeleguaInterface {
+    // Métodos implementados como mixins (ver as atribuições ao protótipo no fim do arquivo).
+    // depuracao.ts
+    obterTipoDebug: typeof obterTipoDebug;
+    definirLocalizacaoDebug: typeof definirLocalizacaoDebug;
+    criarSubprogramaDebug: typeof criarSubprogramaDebug;
+    finalizarSubprogramaDebug: typeof finalizarSubprogramaDebug;
+    obterArquivoDebugParaHash: typeof obterArquivoDebugParaHash;
+    emitirDeclaracaoVariavelDebug: typeof emitirDeclaracaoVariavelDebug;
+    emitirDeclaracaoParametroDebug: typeof emitirDeclaracaoParametroDebug;
+    // despacho.ts
+    registrarInterface: typeof registrarInterface;
+    registrarMetodosSobrescritos: typeof registrarMetodosSobrescritos;
+    tipoFuncaoDe: typeof tipoFuncaoDe;
+    tiposLlvmIguais: typeof tiposLlvmIguais;
+    assinaturasCompativeis: typeof assinaturasCompativeis;
+    resolverImplementacaoMetodo: typeof resolverImplementacaoMetodo;
+    classeDescendeDe: typeof classeDescendeDe;
+    classeImplementaInterface: typeof classeImplementaInterface;
+    obterDespachoVirtual: typeof obterDespachoVirtual;
+    obterDespachoInterface: typeof obterDespachoInterface;
+    preencherDespachos: typeof preencherDespachos;
+    // classes.ts
+    instanciarClasse: typeof instanciarClasse;
+    chamarMetodoInstancia: typeof chamarMetodoInstancia;
+    // operacoes.ts
+    larguraInteira: typeof larguraInteira;
+    larguraTipoInteiro: typeof larguraTipoInteiro;
+    coagirEscalar: typeof coagirEscalar;
+    igualarLargurasInteiras: typeof igualarLargurasInteiras;
+    resolverMultiplicacao: typeof resolverMultiplicacao;
+    resolverAdicao: typeof resolverAdicao;
+    resolverSubtracao: typeof resolverSubtracao;
+    resolverDivisao: typeof resolverDivisao;
+    resolverModulo: typeof resolverModulo;
+    resolverExponenciacao: typeof resolverExponenciacao;
+    compararTextos: typeof compararTextos;
+    resolverIgualdade: typeof resolverIgualdade;
+    // texto.ts
+    obterLiteralTextoSeguro: typeof obterLiteralTextoSeguro;
+    garantirPonteiroTextoNaoNulo: typeof garantirPonteiroTextoNaoNulo;
+    normalizarOperandoParaTextoSeguro: typeof normalizarOperandoParaTextoSeguro;
+    chamarMetodoTexto: typeof chamarMetodoTexto;
+    chamarFuncaoTexto: typeof chamarFuncaoTexto;
+    parsearTemplateString: typeof parsearTemplateString;
+    resolverTextoInterpolado: typeof resolverTextoInterpolado;
+    buscarFormatoLeia: typeof buscarFormatoLeia;
+    // colecoes.ts
+    chamarMetodoDicionario: typeof chamarMetodoDicionario;
+    coletarDicionarioEmVetor: typeof coletarDicionarioEmVetor;
+    embalarValorParaDicionario: typeof embalarValorParaDicionario;
+    embalarValorEmHeap: typeof embalarValorEmHeap;
+    tamElementoEmBytes: typeof tamElementoEmBytes;
+    constTamElem: typeof constTamElem;
+    chamarMetodoVetor: typeof chamarMetodoVetor;
+    chamarMapear: typeof chamarMapear;
+    chamarEncontrar: typeof chamarEncontrar;
+    // funcoes-nativas.ts
+    criarFuncaoNativa: typeof criarFuncaoNativa;
+
     lexador: Lexador;
     avaliadorSintatico: AvaliadorSintatico;
 
@@ -168,6 +292,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoEscreva: llvm.FunctionCallee;
     funcaoLeia: llvm.FunctionCallee;
     funcaoInteiro: llvm.FunctionCallee;
+    funcaoLongo: llvm.FunctionCallee;
     funcaoNumero: llvm.FunctionCallee;
     funcaoTextoMaiusculo: llvm.FunctionCallee;
     funcaoTextoMinusculo: llvm.FunctionCallee;
@@ -217,6 +342,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Atribuído incrementalmente à medida que classes são declaradas.
     protected idClasse: Map<string, number> = new Map();
     protected proximoIdClasse: number = 0;
+    // Interfaces declaradas (`interface Nome { ... }`), registradas antes das classes.
+    protected interfacesDeclaradas: Map<string, InterfaceDeclaracao> = new Map();
+    // Interfaces que cada classe declara implementar diretamente (`implementa A, B`).
+    protected interfacesDaClasse: Map<string, string[]> = new Map();
+    // Funções de despacho dinâmico (chave `Tipo.metodo`), criadas sob demanda nos pontos de
+    // chamada e preenchidas em preencherDespachos(), quando todas as classes já são conhecidas.
+    protected despachos: Map<string, { funcao: llvm.Function; tipo: string; metodo: string; padrao?: llvm.Function }> =
+        new Map();
+    // `Classe.metodo` sobrescrito em alguma subclasse (direta ou indireta): só essas chamadas
+    // precisam de despacho dinâmico. Calculado das declarações antes de compilar as classes.
+    protected metodosSobrescritos: Set<string> = new Set();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
     // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
@@ -278,7 +414,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
-        ['longo', '%ld'],
+        ['longo', '%lld'],
         ['número', '%g'],
         ['texto', '%s'],
         ['lógico', '%d'],
@@ -286,14 +422,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
-        ['longo', '%ld'],
+        ['longo', '%lld'],
         ['número', '%lf'],
         ['texto', '%s'],
     ]);
 
     scanfFormatosCarregados: Map<string, llvm.Constant> = new Map<string, llvm.Constant>();
 
-    protected static readonly METODOS_VETOR_BUILTIN = new Set([
+    static readonly METODOS_VETOR_BUILTIN = new Set([
         'adicionar', 'empilhar', 'removerUltimo', 'removerPrimeiro',
         'inverter', 'ordenar', 'fatiar', 'juntar', 'filtrarPor', 'mapear',
         'tamanho', 'inclui',
@@ -583,160 +719,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     // ─── Auxiliares de depuração DWARF ───────────────────────────────────────
 
-    // Mapeia o nome de tipo Delégua para o DIBasicType correspondente.
-    protected obterTipoDebug(nomeTipo: string): llvm.DIBasicType | null {
-        if (!this.construtorDebug) return null;
-        switch (nomeTipo) {
-            case 'inteiro':
-                return this.construtorDebug.createBasicType('inteiro', 32, llvm.dwarf.TypeKind.DW_ATE_signed);
-            case 'longo':
-                return this.construtorDebug.createBasicType('longo', 64, llvm.dwarf.TypeKind.DW_ATE_signed);
-            case 'número':
-                return this.construtorDebug.createBasicType('numero', 64, llvm.dwarf.TypeKind.DW_ATE_float);
-            case 'lógico':
-                return this.construtorDebug.createBasicType('logico', 1, llvm.dwarf.TypeKind.DW_ATE_boolean);
-            case 'texto':
-                // texto é ponteiro para char; usa DW_ATE_address (64 bits) como tipo DWARF.
-                // createPointerType não está disponível na API llvm-bindings, por isso
-                // usamos um tipo básico de endereço. No LLDB/CodeLLDB use (char*)var ou ,s
-                // no watch para ver o conteúdo da string.
-                return this.construtorDebug.createBasicType('texto', 64, llvm.dwarf.TypeKind.DW_ATE_address);
-            default:
-                return null;
-        }
-    }
-
-    // Define a localização de depuração atual para a próxima instrução emitida.
-    // Não faz nada se não há subprograma ativo ou debug desabilitado.
-    protected definirLocalizacaoDebug(linha: number, coluna: number): void {
-        if (!this.construtorDebug || this.pilhaSubprogramas.length === 0) return;
-        const escopoAtual = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
-        const loc = llvm.DILocation.get(this.contexto, linha, coluna, escopoAtual);
-        this.montador.SetCurrentDebugLocation(loc);
-    }
-
-    // Cria um DISubprogram e o associa a uma Function LLVM.
-    // Empilha o subprograma para uso nas instruções internas.
-    protected criarSubprogramaDebug(
-        funcaoLlvm: llvm.Function,
-        nome: string,
-        linha: number,
-        arquivo?: llvm.DIFile | null
-    ): void {
-        if (!this.construtorDebug || !this.arquivoDebug) return;
-        const arquivoEfetivo = arquivo ?? this.arquivoDebug;
-        const tipoSubrotina = this.construtorDebug.createSubroutineType(
-            this.construtorDebug.getOrCreateTypeArray([null])
-        );
-        const spFlags = llvm.DISubprogram.DISPFlags.SPFlagDefinition;
-        const diFlags = llvm.DINode.DIFlags.FlagPrototyped;
-        const subprograma = this.construtorDebug.createFunction(
-            arquivoEfetivo,
-            nome,
-            nome,
-            arquivoEfetivo,
-            linha,
-            tipoSubrotina,
-            linha,
-            diFlags,
-            spFlags
-        );
-        funcaoLlvm.setSubprogram(subprograma);
-        this.pilhaSubprogramas.push(subprograma);
-        this.arquivoDebugFuncaoAtual = arquivoEfetivo;
-        // Substitui localização legada da função anterior pelo início desta função.
-        // Garante que toda instrução emitida antes do primeiro definirLocalizacaoDebug
-        // tenha um !dbg válido apontando para o subprograma correto.
-        const linhaInicial = linha > 0 ? linha : 1;
-        this.montador.SetCurrentDebugLocation(llvm.DILocation.get(this.contexto, linhaInicial, 0, subprograma));
-    }
-
-    // Finaliza o subprograma no topo da pilha e o remove.
-    protected finalizarSubprogramaDebug(): void {
-        if (!this.construtorDebug) return;
-        const sp = this.pilhaSubprogramas.pop();
-        if (sp) this.construtorDebug.finalizeSubprogram(sp);
-    }
-
-    // Retorna o DIFile para o arquivo identificado pelo hash, criando-o se necessário.
-    protected obterArquivoDebugParaHash(hashArquivo: number | undefined): llvm.DIFile | null {
-        if (!this.construtorDebug) return null;
-        if (hashArquivo === undefined) return this.arquivoDebug;
-        if (this.cacheArquivosDebug.has(hashArquivo)) return this.cacheArquivosDebug.get(hashArquivo)!;
-        const caminho = this.mapaHashParaCaminho.get(hashArquivo);
-        if (!caminho) return this.arquivoDebug;
-        const arquivo = this.construtorDebug.createFile(
-            caminho.replace(/\\/g, '/').split('/').pop() ?? caminho,
-            caminho.replace(/\\/g, '/').split('/').slice(0, -1).join('/') || '.'
-        );
-        this.cacheArquivosDebug.set(hashArquivo, arquivo);
-        return arquivo;
-    }
-
-    // Emite llvm.dbg.declare para uma variável local alocada via alloca.
-    protected emitirDeclaracaoVariavelDebug(
-        alocacao: llvm.Value,
-        nome: string,
-        tipo: string,
-        linha: number
-    ): void {
-        if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
-        const subPrograma = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
-        const tipoDebug = this.obterTipoDebug(tipo);
-        // Tipos sem mapeamento DWARF (ex.: classes, qualquer) retornam null.
-        // Omitir o declare evita crash no emissor DWARF do clang 19 ao derreferenciar
-        // um DIType nulo ao gerar informações de tipo da variável.
-        if (!tipoDebug) return;
-        const varDebug = this.construtorDebug.createAutoVariable(
-            subPrograma,
-            nome,
-            this.arquivoDebugFuncaoAtual ?? this.arquivoDebug,
-            linha,
-            tipoDebug
-        );
-        const localizacao = llvm.DILocation.get(this.contexto, linha, 0, subPrograma);
-        this.construtorDebug.insertDeclare(
-            alocacao,
-            varDebug,
-            this.construtorDebug.createExpression(),
-            localizacao,
-            this.montador.GetInsertBlock()
-        );
-    }
-
-    // Emite llvm.dbg.declare para um parâmetro de função (argNo é 1-based).
-    protected emitirDeclaracaoParametroDebug(
-        alocacao: llvm.Value,
-        nome: string,
-        tipo: string,
-        linha: number,
-        argNo: number
-    ): void {
-        if (!this.construtorDebug || !this.arquivoDebug || this.pilhaSubprogramas.length === 0) return;
-        const subPrograma = this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1];
-        const tipoDebug = this.obterTipoDebug(tipo);
-        // Tipos sem mapeamento DWARF (ex.: classes, qualquer) retornam null.
-        // Omitir o declare evita crash no emissor DWARF do clang 19 ao derreferenciar
-        // um DIType nulo ao gerar informações de tipo do parâmetro.
-        if (!tipoDebug) return;
-        const varDebug = this.construtorDebug.createParameterVariable(
-            subPrograma,
-            nome,
-            argNo,
-            this.arquivoDebugFuncaoAtual ?? this.arquivoDebug,
-            linha,
-            tipoDebug
-        );
-        const localizacao = llvm.DILocation.get(this.contexto, linha, 0, subPrograma);
-        this.construtorDebug.insertDeclare(
-            alocacao,
-            varDebug,
-            this.construtorDebug.createExpression(),
-            localizacao,
-            this.montador.GetInsertBlock()
-        );
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -799,6 +781,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const temSuperClasseRegistrada = !!nomeSuperClasse && this.indicesPropriedades.has(nomeSuperClasse);
 
         this.idClasse.set(nomeClasse, this.proximoIdClasse++);
+        this.interfacesDaClasse.set(nomeClasse, (declaracao.implementa ?? []).map((simbolo) => simbolo.lexema));
 
         // 1. Coletar tipos LLVM das propriedades e construir o struct.
         //    Com herança plana: campos do pai vêm primeiro, depois os próprios.
@@ -1225,7 +1208,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoInterface(_: InterfaceDeclaracao): Promise<any> {
-        // Declarações de interface são apenas metadados de tipo; sem geração de IR.
+        // Interfaces são registradas antes das classes (registrarInterface); sem geração de IR.
         return Promise.resolve();
     }
 
@@ -1625,7 +1608,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!(alvoResolvido instanceof VariavelEscopo) && ehValorLlvm(alvoResolvido)) {
             const tipoInferido = alvoBruto ? this.resolverTipoConstruto(alvoBruto as ConstrutoInterface) : null;
             if (tipoInferido && (tipoInferido === 'texto' || tipoEhDicionario(tipoInferido) || tipoEhVetor(tipoInferido))) {
-                alvoParaIndice = new VariavelEscopo(alvoResolvido as llvm.Value, undefined, tipoInferido);
+                // Um vetor devolvido por função ou método (`fonte.versoes()[0]`) chega como
+                // %Vetor por valor: o GEP precisa do endereço.
+                const valorAlvo = tipoEhVetor(tipoInferido)
+                    ? this.ponteiroParaVetor(alvoResolvido)
+                    : (alvoResolvido as llvm.Value);
+                alvoParaIndice = new VariavelEscopo(valorAlvo, undefined, tipoInferido);
             }
         }
 
@@ -2140,14 +2128,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         // Coerce o valor ao tipo do campo para evitar stores de tamanho errado
-        // (ex.: double 0.0 num campo inteiro escreve 8 bytes em vez de 4).
-        if (novoValorLlvm) {
-            const construtorTipoValor = novoValorLlvm.getType()?.constructor;
-            if ((tipoProp === 'inteiro' || tipoProp === 'inteiro') && construtorTipoValor === llvm.Type) {
-                novoValorLlvm = this.montador.CreateFPToSI(novoValorLlvm, this.montador.getInt32Ty(), 'coerce_int');
-            } else if ((tipoProp === 'número' || tipoProp === 'numero') && construtorTipoValor === llvm.IntegerType) {
-                novoValorLlvm = this.montador.CreateSIToFP(novoValorLlvm, this.montador.getDoubleTy(), 'coerce_double');
-            }
+        // (ex.: double 0.0 num campo inteiro escreve 8 bytes em vez de 4; i32 num campo
+        // `longo` deixa os 4 bytes altos com lixo).
+        if (novoValorLlvm && (tipoEhInteiroDelegua(tipoProp) || tipoProp === 'número' || tipoProp === 'numero')) {
+            novoValorLlvm = this.coagirEscalar(novoValorLlvm, this.obterTipoLlvm(tipoProp), 'coerce_campo');
         }
 
         this.montador.CreateStore(novoValorLlvm, gepPtr);
@@ -3238,6 +3222,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
+    /** O construto é `alvo[chave]` com `alvo` do tipo dicionário. */
+    protected ehLeituraDeDicionario(construto: ConstrutoInterface): boolean {
+        if (construto?.constructor !== AcessoIndiceVariavel) return false;
+        const acesso = construto as unknown as AcessoNomeavel;
+        const alvo = acesso.entidadeChamada ?? acesso.entidade ?? acesso.variavel ?? acesso.objeto;
+        if (!alvo) return false;
+        if (alvo.constructor === Variavel) {
+            try {
+                return tipoEhDicionario(this.pilhaVariaveisEscopo.obterValor((alvo as Variavel).simbolo.lexema)?.tipo);
+            } catch {
+                return false;
+            }
+        }
+        return tipoEhDicionario(this.resolverTipoConstruto(alvo as ConstrutoInterface));
+    }
+
+    /** Formato do printf para um valor numérico pelo tipo LLVM (i32, i64, double); undefined nos demais. */
+    protected formatoNumericoPeloTipoLlvm(tipo: llvm.Type): string | undefined {
+        if (!tipo) return undefined;
+        if (tipo.getTypeID() === llvm.Type.TypeID.DoubleTyID) return this.printfFormatos.get('número');
+        const largura = this.larguraTipoInteiro(tipo);
+        if (largura === 64) return this.printfFormatos.get('longo');
+        if (largura === 32) return this.printfFormatos.get('inteiro');
+        return undefined;
+    }
+
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
         this.definirLocalizacaoDebug(declaracao.simboloEscreva?.linha ?? 0, 0);
         const argumentosResolvidos: llvm.Value[] = [];
@@ -3279,7 +3289,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 argumentosResolvidos.push(valorCarregado);
             } else {
                 const tipoArgumento = this.resolverTipoConstruto(argumento) || argumento.tipo;
-                const formatoArgumento = this.printfFormatos.get(tipoArgumento);
+                let formatoArgumento = this.printfFormatos.get(tipoArgumento);
+                // O tipo inferido de uma expressão pode divergir do valor gerado (ex.: campo
+                // `longo` + literal, inferido como `número`): para números, vale o tipo LLVM.
+                const formatoPeloValor = ehValorLlvm(argumentoResolvido)
+                    ? this.formatoNumericoPeloTipoLlvm((argumentoResolvido as llvm.Value).getType())
+                    : undefined;
+                if (formatoPeloValor && !(formatoArgumento || '').includes('%s')) {
+                    formatoArgumento = formatoPeloValor;
+                }
+                if (!formatoArgumento && this.ehLeituraDeDicionario(argumento)) {
+                    // Valores de dicionário são ponteiros opacos, sem o tipo em tempo de
+                    // execução: sem um tipo declarado, não há como escolher o formato.
+                    const erroTipo = new ErroCompilador(
+                        `Não é possível escrever um valor de dicionário sem tipo conhecido. ` +
+                            `Atribua-o antes a uma variável com tipo declarado (ex.: \`var valor: texto = dicionario["chave"]\`).`
+                    );
+                    erroTipo.linha = argumento.linha;
+                    throw erroTipo;
+                }
                 formatosTexto.push(formatoArgumento);
                 if ((formatoArgumento || '').includes('%s')) {
                     argumentosResolvidos.push(
@@ -3701,6 +3729,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     if (this.registroClasses.has(nomeCallee)) {
                         return nomeCallee;
                     }
+                    if (nomeCallee === 'longo' && chamada.argumentos.length === 1) {
+                        return 'longo';
+                    }
                     // Resolve o tipo de retorno a partir da declaração da função no escopo.
                     try {
                         const varEscopo = this.pilhaVariaveisEscopo.obterValor(nomeCallee);
@@ -3907,190 +3938,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         return { valor: valorLlvm, tipo: tipo };
-    }
-
-    /** Largura em bits de um valor inteiro LLVM (0 se não for inteiro). */
-    protected larguraInteira(valor: llvm.Value): number {
-        const tipo = valor?.getType?.();
-        if (!tipo || tipo.getTypeID() !== llvm.Type.TypeID.IntegerTyID) return 0;
-        for (const bits of [1, 8, 16, 32, 64, 128]) {
-            if (tipo.isIntegerTy(bits)) return bits;
-        }
-        return 0;
-    }
-
-    /**
-     * Operandos inteiros de larguras diferentes (`inteiro` i32 com `longo` i64): estende o mais
-     * estreito, com sinal, para a largura do mais largo, e marca os dois com o tipo dele.
-     */
-    protected igualarLargurasInteiras(esquerdo: OperandoInterface, direito: OperandoInterface): void {
-        if (!tipoEhInteiroDelegua(esquerdo.tipo) || !tipoEhInteiroDelegua(direito.tipo)) return;
-        const larguraEsquerda = this.larguraInteira(esquerdo.valor);
-        const larguraDireita = this.larguraInteira(direito.valor);
-        if (larguraEsquerda <= 1 || larguraDireita <= 1 || larguraEsquerda === larguraDireita) return;
-        const [estreito, largo] = larguraEsquerda < larguraDireita ? [esquerdo, direito] : [direito, esquerdo];
-        estreito.valor = this.montador.CreateSExt(estreito.valor, largo.valor.getType(), 'estender_inteiro');
-        estreito.tipo = largo.tipo;
-    }
-
-    protected resolverMultiplicacao(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            // NSW (No Signed Wrap): overflow é comportamento indefinido em Delégua,
-            // o que permite ao SCEV do LLVM 21 analisar e otimizar laços com esses operandos.
-            return Promise.resolve(this.montador.CreateNSWMul(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-
-        return Promise.resolve(this.montador.CreateFMul(operandoEsquerdo.valor, operandoDireito.valor));
-    }
-
-    protected resolverAdicao(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (operandoEhPonteiroOuTexto(operandoEsquerdo) || operandoEhPonteiroOuTexto(operandoDireito)) {
-            const fmtConcatenar = this.montador.CreateGlobalStringPtr('%s%s', 'fmt_concat', 0, this.modulo);
-            const esquerdaTextoSeguro = this.normalizarOperandoParaTextoSeguro(operandoEsquerdo, 'concat_esq');
-            const direitaTextoSeguro = this.normalizarOperandoParaTextoSeguro(operandoDireito, 'concat_dir');
-            return Promise.resolve(
-                this.montador.CreateCall(this.funcaoFormatar, [
-                    fmtConcatenar,
-                    esquerdaTextoSeguro,
-                    direitaTextoSeguro,
-                ])
-            );
-        }
-
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateNSWAdd(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-
-        return Promise.resolve(this.montador.CreateFAdd(operandoEsquerdo.valor, operandoDireito.valor));
-    }
-
-    protected resolverSubtracao(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateNSWSub(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-
-        return Promise.resolve(this.montador.CreateFSub(operandoEsquerdo.valor, operandoDireito.valor));
-    }
-
-    protected resolverDivisao(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateSDiv(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-
-        return Promise.resolve(this.montador.CreateFDiv(operandoEsquerdo.valor, operandoDireito.valor));
-    }
-
-    protected resolverModulo(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateSRem(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-
-        return Promise.resolve(this.montador.CreateFRem(operandoEsquerdo.valor, operandoDireito.valor));
-    }
-
-    protected resolverExponenciacao(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        // pow() do libm/ucrt só opera em double — promove os operandos e, se ambos eram
-        // inteiros, converte o resultado de volta ao tipo (largura) inteiro original.
-        const baseDouble =
-            operandoEsquerdo.tipo === 'número'
-                ? operandoEsquerdo.valor
-                : this.montador.CreateSIToFP(operandoEsquerdo.valor, this.montador.getDoubleTy(), 'pot_base');
-        const expoenteDouble =
-            operandoDireito.tipo === 'número'
-                ? operandoDireito.valor
-                : this.montador.CreateSIToFP(operandoDireito.valor, this.montador.getDoubleTy(), 'pot_expoente');
-
-        const resultado = this.montador.CreateCall(this.funcaoPotencia, [baseDouble, expoenteDouble], 'pot_resultado');
-
-        const tipoResultado = definirTipoPrevalente(operandoEsquerdo.tipo, operandoDireito.tipo);
-        if (tipoEhInteiroDelegua(tipoResultado)) {
-            return Promise.resolve(
-                this.montador.CreateFPToSI(resultado, this.obterTipoLlvm(tipoResultado), 'pot_int')
-            );
-        }
-        return Promise.resolve(resultado);
-    }
-
-    protected obterLiteralTextoSeguro(valor: string, sufixoNome: string): llvm.Value {
-        return this.montador.CreateGlobalStringPtr(
-            valor,
-            `${sufixoNome}_${++this._contadorNomesAnonimos}`,
-            0,
-            this.modulo
-        );
-    }
-
-    protected garantirPonteiroTextoNaoNulo(textoPtr: llvm.Value, sufixoNome: string): llvm.Value {
-        const nuloPtr = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
-        const vazio = this.obterLiteralTextoSeguro('', `texto_vazio_${sufixoNome}`);
-        const ehNulo = this.montador.CreateICmpEQ(textoPtr, nuloPtr, `texto_nulo_${sufixoNome}`);
-        return this.montador.CreateSelect(ehNulo, vazio, textoPtr, `texto_seguro_${sufixoNome}`);
-    }
-
-    protected normalizarOperandoParaTextoSeguro(operando: OperandoInterface, sufixoNome: string): llvm.Value {
-        if (operando.tipo === 'nulo') {
-            return this.obterLiteralTextoSeguro('', `texto_nulo_${sufixoNome}`);
-        }
-
-        if (!tipoEhPonteiro(operando.valor?.getType?.())) {
-            return this.obterLiteralTextoSeguro('<nao-texto>', `texto_nao_texto_${sufixoNome}`);
-        }
-
-        if (operando.tipo === 'texto' || operando.tipo === 'qualquer') {
-            return this.garantirPonteiroTextoNaoNulo(operando.valor, sufixoNome);
-        }
-
-        // Ponteiro não textual (objeto, vetor etc.): evita uso como C-string e crash de %s/strcmp.
-        return this.obterLiteralTextoSeguro(`<${operando.tipo || 'ponteiro'}>`, `texto_tipo_${sufixoNome}`);
-    }
-
-    protected compararTextos(a: llvm.Value, b: llvm.Value, tipoA: string = 'texto', tipoB: string = 'texto'): llvm.Value {
-        const aSeguro = this.normalizarOperandoParaTextoSeguro({ valor: a, tipo: tipoA }, 'cmp_a');
-        const bSeguro = this.normalizarOperandoParaTextoSeguro({ valor: b, tipo: tipoB }, 'cmp_b');
-        return this.montador.CreateCall(this.funcaoStrcmp, [aSeguro, bSeguro]);
-    }
-
-    protected resolverIgualdade(
-        operandoEsquerdo: OperandoInterface,
-        operandoDireito: OperandoInterface
-    ): Promise<llvm.Value> {
-        if (tipoEhInteiroDelegua(operandoEsquerdo.tipo) && tipoEhInteiroDelegua(operandoDireito.tipo)) {
-            return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-        // Comparação com nulo: ICmpEQ(ptr, null) em vez de strcmp(ptr, null) que crasharia.
-        if (operandoEsquerdo.tipo === 'nulo' || operandoDireito.tipo === 'nulo') {
-            return Promise.resolve(this.montador.CreateICmpEQ(operandoEsquerdo.valor, operandoDireito.valor));
-        }
-        if (operandoEhPonteiroOuTexto(operandoEsquerdo) || operandoEhPonteiroOuTexto(operandoDireito)) {
-            const resultado = this.compararTextos(
-                operandoEsquerdo.valor,
-                operandoDireito.valor,
-                operandoEsquerdo.tipo,
-                operandoDireito.tipo
-            );
-            return Promise.resolve(
-                this.montador.CreateICmpEQ(resultado, llvm.ConstantInt.get(this.montador.getInt32Ty(), 0))
-            );
-        }
-        return Promise.resolve(this.montador.CreateFCmpOEQ(operandoEsquerdo.valor, operandoDireito.valor));
     }
 
     async visitarExpressaoBinaria(expressao: Binario): Promise<any> {
@@ -4382,772 +4229,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return argumento;
     }
 
-    protected async instanciarClasse(nomeClasse: string, argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
-        const tipoStruct = this.registroClasses.get(nomeClasse);
-        // Alocar no montão (heap) para que o objeto sobreviva ao escopo de pilha atual.
-        // alloca produzia ponteiro dangling quando armazenado em campo de outra classe.
-        const tamanhoStruct = this.layoutDados.getTypeAllocSize(tipoStruct);
-        const tamanhoConst = ConstantInt.get(this.contexto, new APInt(64, tamanhoStruct));
-
-        // Estrutura estrangeira: memória zerada (como uma struct C inicializada com zeros), sem construtor.
-        if (this.estruturasEstrangeiras.has(nomeClasse)) {
-            if (argumentos.length > 0) {
-                throw new ErroCompilador(`Estrutura estrangeira '${nomeClasse}' é criada sem argumentos: ${nomeClasse}().`);
-            }
-            const i64 = llvm.Type.getInt64Ty(this.contexto);
-            const calloc = this.obterFuncaoRuntime('calloc', this.montador.getPtrTy(), [i64, i64]);
-            return this.montador.CreateCall(
-                calloc,
-                [ConstantInt.get(this.contexto, new APInt(64, 1)), tamanhoConst],
-                `estrutura_${nomeClasse}`
-            );
-        }
-
-        const objetoAlloc = this.montador.CreateCall(this.funcaoMalloc, [tamanhoConst], `obj_${nomeClasse}`);
-
-        // Estampa o id de identidade em tempo de execução (campo oculto __tipoId, sempre no
-        // índice 0) usado por eInstanciaDe.
-        const indiceTipoId = this.indicesPropriedades.get(nomeClasse)?.get('__tipoId');
-        if (indiceTipoId !== undefined && this.idClasse.has(nomeClasse)) {
-            const gepTipoId = this.montador.CreateInBoundsGEP(
-                tipoStruct,
-                objetoAlloc,
-                [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indiceTipoId))],
-                'tipo_id_ptr'
-            );
-            this.montador.CreateStore(
-                ConstantInt.get(this.contexto, new APInt(32, this.idClasse.get(nomeClasse))),
-                gepTipoId
-            );
-        }
-
-        let classeDoConstrutor: string | undefined = nomeClasse;
-        let funcaoConstrutor = this.modulo.getFunction(`${nomeClasse}_construtor`);
-        while (!funcaoConstrutor && classeDoConstrutor) {
-            classeDoConstrutor = this.superClasses.get(classeDoConstrutor);
-            if (classeDoConstrutor) funcaoConstrutor = this.modulo.getFunction(`${classeDoConstrutor}_construtor`);
-        }
-        if (funcaoConstrutor) {
-            const args: llvm.Value[] = [objetoAlloc];
-            const paramDefsConstrutor = this.parametrosMetodosClasse.get(classeDoConstrutor)?.get('construtor') ?? [];
-            const totalParamsConstrutor = funcaoConstrutor.arg_size() - 1;
-            for (let i = 0; i < totalParamsConstrutor; i++) {
-                const tipoEsperado = funcaoConstrutor.getArg(i + 1).getType();
-                let argResolvido: llvm.Value | VariavelEscopo;
-                let noArgumento: ConstrutoInterface | undefined;
-                if (i < argumentos.length) {
-                    noArgumento = argumentos[i];
-                    argResolvido = await noArgumento.aceitar(this);
-                } else {
-                    const paramDef = paramDefsConstrutor[i];
-                    if (paramDef?.valorPadrao !== undefined) {
-                        noArgumento = paramDef.valorPadrao;
-                        argResolvido = await noArgumento.aceitar(this);
-                    } else {
-                        args.push(llvm.Constant.getNullValue(tipoEsperado) as unknown as llvm.Value);
-                        continue;
-                    }
-                }
-                let valor: llvm.Value;
-                // Construtores Délégua fazem "load ptr, ptr %arg" para parâmetros texto/lógico/
-                // qualquer/dicionário (dupla indireção — passa a alloca/box diretamente). Já
-                // parâmetros de instância de classe são sempre ponteiro direto (single
-                // indirection), mesma convenção usada em toda leitura de instância de classe.
-                const construtorEsperaPtr = tipoEhPonteiro(tipoEsperado);
-                if (argResolvido instanceof VariavelEscopo) {
-                    const llvmValue = argResolvido.variavelLlvm;
-                    if (construtorEsperaPtr && this.registroClasses.has(argResolvido.tipo)) {
-                        valor = this.carregarPtrClasseSePreciso(argResolvido);
-                    } else if (construtorEsperaPtr) {
-                        // Parâmetro ptr: passa alloca diretamente; o construtor faz load para obter o valor.
-                        valor = llvmValue;
-                    } else if (tipoEhPonteiro(llvmValue.getType())) {
-                        // Parâmetro primitivo: carrega o valor da alloca.
-                        const tipoLlvm = this.obterTipoLlvm(argResolvido.tipo ?? 'número');
-                        valor = this.montador.CreateLoad(tipoLlvm, llvmValue, 'load_arg_construtor');
-                    } else {
-                        valor = llvmValue;
-                    }
-                } else {
-                    valor = argResolvido as llvm.Value;
-                    const tipoArgBruto = noArgumento ? this.resolverTipoConstruto(noArgumento) : undefined;
-                    if (construtorEsperaPtr && tipoArgBruto && this.registroClasses.has(tipoArgBruto)) {
-                        // Instância de classe crua (ex.: resultado de método/índice de vetor):
-                        // sempre ponteiro direto, nunca embrulhar em alloca extra.
-                    } else {
-                        const construtorInstanciaValor = valor?.constructor;
-                        // GEP e Alloca já apontam para onde o valor está (ptr indireto): passa diretamente.
-                        // CallInst, ConstantPointerNull, LoadInst, etc. SÃO o valor (ptr direto):
-                        // precisa embrulhar em alloca para o construtor poder fazer load.
-                        const valorEhPtrDireto =
-                            construtorInstanciaValor !== llvm.GetElementPtrInst && construtorInstanciaValor !== llvm.AllocaInst;
-                        if (construtorEsperaPtr && valor && tipoEhPonteiro(valor.getType()) && valorEhPtrDireto) {
-                            const tmpAlloca = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'box_arg_ptr');
-                            this.montador.CreateStore(valor, tmpAlloca);
-                            valor = tmpAlloca;
-                        } else if (valor && tipoEhPonteiro(valor.getType()) && !construtorEsperaPtr) {
-                            valor = this.montador.CreateLoad(tipoEsperado, valor, 'load_arg_construtor_bruto');
-                        }
-                    }
-                }
-                // Conversão de tipos: i32 ↔ double ↔ ptr conforme assinatura do construtor.
-                // Compara o construtor (classe LLVM) em vez da instância de Type (===), pois
-                // instâncias de Type retornadas pelo binding Napi não são singletons garantidos.
-                if (!valor) {
-                    valor = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
-                }
-                const construtorValor = valor.getType()?.constructor;
-                const construtorTipoEsperado = tipoEsperado?.constructor;
-                const tipoEsperadoEhDouble = construtorTipoEsperado === llvm.Type;
-                const tipoEsperadoEhInt = construtorTipoEsperado === llvm.IntegerType;
-                const tipoEsperadoEhPtr = construtorTipoEsperado === llvm.PointerType;
-                const tipoValorEhInt = construtorValor === llvm.IntegerType;
-                const tipoValorEhDouble = construtorValor === llvm.Type;
-                if (tipoEsperadoEhInt && tipoValorEhInt) {
-                    // i32/i64 têm mesmo construtor (IntegerType): usa isIntegerTy(N) para largura.
-                    const valorEh64 = valor.getType().isIntegerTy(64);
-                    const esperadoEh64 = tipoEsperado.isIntegerTy(64);
-                    if (!valorEh64 && esperadoEh64) {
-                        valor = this.montador.CreateSExt(valor, tipoEsperado, 'sext_int');
-                    } else if (valorEh64 && !esperadoEh64) {
-                        valor = this.montador.CreateTrunc(valor, tipoEsperado, 'trunc_int');
-                    }
-                } else if (construtorValor !== construtorTipoEsperado) {
-                    if (tipoEsperadoEhDouble && tipoValorEhInt) {
-                        valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
-                    } else if (tipoEsperadoEhInt && tipoValorEhDouble) {
-                        valor = this.montador.CreateFPToSI(valor, tipoEsperado, 'double_para_int');
-                    } else if (tipoEsperadoEhPtr && (tipoValorEhInt || tipoValorEhDouble)) {
-                        // Valor primitivo passado para parâmetro 'qualquer' (ptr): embala em alloca.
-                        const tmpAlloca = this.criarAllocaNoBlocoEntrada(valor.getType(), 'box_prim');
-                        this.montador.CreateStore(valor, tmpAlloca);
-                        valor = tmpAlloca;
-                    }
-                }
-                args.push(valor);
-            }
-            this.montador.CreateCall(funcaoConstrutor, args);
-        }
-
-        return objetoAlloc;
-    }
-
-    protected async chamarMetodoInstancia(
-        acesso: AcessoMetodo | AcessoMetodoOuPropriedade,
-        argumentos: ConstrutoInterface[]
-    ): Promise<llvm.Value> {
-        const objetoResolvido = await acesso.objeto.aceitar(this);
-        let objetoPtr: llvm.Value;
-        let nomeClasse: string;
-
-        if (objetoResolvido instanceof VariavelEscopo) {
-            objetoPtr = this.carregarPtrClasseSePreciso(objetoResolvido);
-            nomeClasse = objetoResolvido.tipo;
-        } else {
-            objetoPtr = objetoResolvido as llvm.Value;
-            const construtorObjeto = (acesso.objeto as any)?.constructor;
-            if (construtorObjeto === Variavel && (acesso.objeto as Variavel).simbolo?.lexema) {
-                nomeClasse = this.pilhaVariaveisEscopo.obterValor((acesso.objeto as Variavel).simbolo.lexema)?.tipo;
-            }
-        }
-
-        // Acesso encadeado (ex.: isto.simbolos.tamanho()): infere tipo a partir do AST.
-        if (!nomeClasse) {
-            const tipoInferido = this.resolverTipoConstruto(acesso.objeto as ConstrutoInterface);
-            if (tipoInferido) nomeClasse = tipoInferido;
-        }
-
-        // AcessoMetodo usa .nomeMetodo; AcessoMetodoOuPropriedade usa .simbolo.lexema
-        const nomeMetodo = (acesso as AcessoMetodo).nomeMetodo ?? (acesso as AcessoMetodoOuPropriedade).simbolo.lexema;
-
-        // eInstanciaDe(Classe) / éInstânciaDe(Classe): identidade em tempo de execução.
-        // O argumento deve ser o nome literal de uma classe conhecida — classes não são
-        // valores de primeira classe neste compilador, então resolvemos direto do AST em
-        // vez de avaliar como expressão comum.
-        if ((nomeMetodo === 'eInstanciaDe' || nomeMetodo === 'éInstânciaDe') && this.registroClasses.has(nomeClasse)) {
-            const argAlvo = argumentos[0];
-            const nomeClasseAlvo =
-                argAlvo?.constructor === Variavel ? (argAlvo as Variavel).simbolo?.lexema : undefined;
-            if (!nomeClasseAlvo || !this.registroClasses.has(nomeClasseAlvo)) {
-                const erroAlvo = new ErroCompilador(
-                    `eInstanciaDe espera o nome de uma classe conhecida como argumento.`
-                );
-                erroAlvo.linha = acesso.linha;
-                throw erroAlvo;
-            }
-
-            // Conjunto de ids: a classe-alvo e todas as suas subclasses já declaradas
-            // (segue a mesma limitação de ordem de declaração da herança de campos).
-            const idsDescendentes: number[] = [];
-            for (const [nomeCandidata, idCandidata] of this.idClasse) {
-                let atual: string | undefined = nomeCandidata;
-                while (atual) {
-                    if (atual === nomeClasseAlvo) {
-                        idsDescendentes.push(idCandidata);
-                        break;
-                    }
-                    atual = this.superClasses.get(atual);
-                }
-            }
-
-            const indiceTipoIdReceptor = this.indicesPropriedades.get(nomeClasse)?.get('__tipoId');
-            if (indiceTipoIdReceptor === undefined || idsDescendentes.length === 0) {
-                return Promise.resolve(ConstantInt.get(this.contexto, new APInt(1, 0)));
-            }
-
-            const tipoStructReceptor = this.registroClasses.get(nomeClasse);
-            const gepTipoIdReceptor = this.montador.CreateInBoundsGEP(
-                tipoStructReceptor,
-                objetoPtr,
-                [
-                    ConstantInt.get(this.contexto, new APInt(32, 0)),
-                    ConstantInt.get(this.contexto, new APInt(32, indiceTipoIdReceptor)),
-                ],
-                'tipo_id_receptor_ptr'
-            );
-            const idReal = this.montador.CreateLoad(this.montador.getInt32Ty(), gepTipoIdReceptor, 'tipo_id_receptor');
-
-            let resultado: llvm.Value = this.montador.CreateICmpEQ(
-                idReal,
-                ConstantInt.get(this.contexto, new APInt(32, idsDescendentes[0])),
-                'eh_instancia_de'
-            );
-            for (let i = 1; i < idsDescendentes.length; i++) {
-                const cmp = this.montador.CreateICmpEQ(
-                    idReal,
-                    ConstantInt.get(this.contexto, new APInt(32, idsDescendentes[i])),
-                    'eh_instancia_de_or'
-                );
-                resultado = this.montador.CreateOr(resultado, cmp, 'eh_instancia_de_acc');
-            }
-            return Promise.resolve(resultado);
-        }
-
-        // Métodos embutidos de dicionário
-        if (tipoEhDicionario(nomeClasse)) {
-            const dicionarioPtr =
-                objetoResolvido instanceof VariavelEscopo ? this.resolverPonteiroDireto(objetoResolvido) : objetoPtr;
-            return await this.chamarMetodoDicionario(nomeMetodo, dicionarioPtr, argumentos, acesso.linha);
-        }
-
-        // Métodos embutidos de texto
-        if (nomeClasse === 'texto') {
-            // chamarMetodoTexto espera ptr* (char**): alloca ou gepPtr.
-            // Se objetoPtr for LoadInst/CallInst, já é char* — embrulha em alloca temporária.
-            // Só alloca (variável local), Argument (parâmetro texto, dupla indireção) e GEP
-            // (slot de campo) já são char**; o resto — inclusive literais, que são constantes —
-            // é o próprio char*.
-            let textoSlot = objetoPtr;
-            const construtorObjPtr = objetoPtr?.constructor;
-            const ehSlotTexto =
-                construtorObjPtr === llvm.AllocaInst ||
-                construtorObjPtr === llvm.Argument ||
-                construtorObjPtr === llvm.GetElementPtrInst;
-            if (!ehSlotTexto) {
-                textoSlot = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'texto_slot');
-                this.montador.CreateStore(objetoPtr, textoSlot);
-            }
-            return await this.chamarMetodoTexto(nomeMetodo, textoSlot, argumentos, acesso.linha);
-        }
-
-        // Métodos embutidos de vetor
-        if (tipoEhVetor(nomeClasse)) {
-            const tipoElem = tipoElementoVetor(nomeClasse);
-            // Um vetor devolvido por função (`lista().tamanho()`) chega como %Vetor por valor.
-            const vetorPtr = objetoPtr ? this.ponteiroParaVetor(objetoPtr) : objetoPtr;
-            return await this.chamarMetodoVetor(nomeMetodo, vetorPtr, tipoElem, argumentos, acesso.linha);
-        }
-
-        // Fallback: parâmetro tipado como qualquer, mas o método é de vetor (ex.: qualquer.tamanho())
-        if ((!nomeClasse || nomeClasse === 'qualquer') &&
-            CompiladorLLVM.METODOS_VETOR_BUILTIN.has(nomeMetodo)) {
-            return await this.chamarMetodoVetor(nomeMetodo, objetoPtr, 'qualquer', argumentos, acesso.linha);
-        }
-
-        // Despacho de módulo importado:
-        //   var mod = importar('nome')         → tipo 'modulo:nome'
-        //   importar tudo como mod de 'nome'   → tipo 'modulo:nome'
-        if (nomeClasse?.startsWith('modulo:')) {            const nomeModulo = nomeClasse.slice(7);
-            const funcoes = this.mapaModulos.get(nomeModulo);
-            const entrada = funcoes?.get(nomeMetodo);
-            if (!entrada) {
-                const erroModulo = new ErroCompilador(`Função '${nomeMetodo}' não encontrada no módulo '${nomeModulo}'.`);
-                erroModulo.linha = acesso.linha;
-                erroModulo.tamanhoToken = nomeMetodo.length;
-                throw erroModulo;
-            }
-            const args: llvm.Value[] = [];
-            for (let i = 0; i < argumentos.length; i++) {
-                const tipoPar = entrada.tiposParametros[i] ?? 'qualquer';
-                if (tipoPar === 'inteiro') {
-                    args.push(await this.carregarArgumentoInteiro(argumentos[i]));
-                } else if (tipoPar === 'numero' || tipoPar === 'número') {
-                    args.push(await this.carregarArgumentoNumero(argumentos[i]));
-                } else if (tipoPar === 'texto') {
-                    args.push(await this.carregarArgumentoTexto(argumentos[i]));
-                } else if (tipoPar === 'lógico' || tipoPar === 'logico') {
-                    // Na ABI dos módulos, lógico é um int C (0/1).
-                    args.push(await this.carregarArgumentoLogicoComoInteiro(argumentos[i]));
-                } else if (tipoPar === 'longo' || tipoPar === 'ponteiro') {
-                    args.push(await this.carregarArgumentoFFI(argumentos[i], tipoPar));
-                } else if (tipoEhVetor(tipoPar)) {
-                    // Vetor*: ponteiro para o struct %Vetor.
-                    const argResolvido = await argumentos[i].aceitar(this);
-                    const valorVetor =
-                        argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : (argResolvido as llvm.Value);
-                    args.push(this.resolverPonteiroEstruturaVetor(valorVetor));
-                } else {
-                    const argResolvido = await argumentos[i].aceitar(this);
-                    args.push(
-                        argResolvido instanceof VariavelEscopo
-                            ? this.registroClasses.has(tipoPar)
-                                ? this.carregarPtrClasseSePreciso(argResolvido)
-                                : argResolvido.variavelLlvm
-                            : (argResolvido as llvm.Value)
-                    );
-                }
-            }
-            // Argumentos finais omitidos chegam como zero/nulo (ex.: diretório opcional).
-            for (let i = args.length; i < entrada.tiposParametros.length; i++) {
-                const tipoPar = entrada.tiposParametros[i];
-                const tipoLlvm =
-                    tipoPar === 'inteiro' || tipoPar === 'lógico' || tipoPar === 'logico'
-                        ? this.montador.getInt32Ty()
-                        : tipoPar === 'longo'
-                          ? llvm.Type.getInt64Ty(this.contexto)
-                          : tipoPar === 'numero' || tipoPar === 'número'
-                          ? this.montador.getDoubleTy()
-                          : this.montador.getPtrTy();
-                args.push(llvm.Constant.getNullValue(tipoLlvm) as unknown as llvm.Value);
-            }
-            const resultadoModulo = this.montador.CreateCall(entrada.callee, args);
-            if (entrada.tipoRetorno === 'lógico' || entrada.tipoRetorno === 'logico') {
-                return this.inteiroParaLogico(resultadoModulo, `${nomeMetodo}_logico`);
-            }
-            return resultadoModulo;
-        }
-
-        // Despacho de classe estrangeira (@definicao):
-        //   LibM.cosseno(x) → tipo 'classeEstrangeira:LibM'
-        if (nomeClasse?.startsWith('classeEstrangeira:')) {
-            const nomeClasseReal = nomeClasse.slice('classeEstrangeira:'.length);
-            const funcoes = this.mapaModulos.get(nomeClasseReal);
-            const entrada = funcoes?.get(nomeMetodo);
-            // Estrutura.tamanhoEmBytes(): sizeof da estrutura estrangeira na plataforma alvo.
-            if (!entrada && nomeMetodo === 'tamanhoEmBytes' && this.estruturasEstrangeiras.has(nomeClasseReal)) {
-                return ConstantInt.get(
-                    this.contexto,
-                    new APInt(32, this.tamanhoEstruturaEstrangeira(nomeClasseReal))
-                ) as unknown as llvm.Value;
-            }
-            if (!entrada) {
-                const erroMetodo = new ErroCompilador(`Método '${nomeMetodo}' não encontrado na classe estrangeira '${nomeClasseReal}'.`);
-                erroMetodo.linha = acesso.linha;
-                erroMetodo.tamanhoToken = nomeMetodo.length;
-                throw erroMetodo;
-            }
-            if (argumentos.length > entrada.tiposParametros.length) {
-                const erroAridade = new ErroCompilador(
-                    `Método '${nomeMetodo}' da classe estrangeira '${nomeClasseReal}' recebe ${entrada.tiposParametros.length} argumento(s), mas recebeu ${argumentos.length}.`
-                );
-                erroAridade.linha = acesso.linha;
-                throw erroAridade;
-            }
-            const argsEstrangeira: llvm.Value[] = [];
-            for (let i = 0; i < entrada.tiposParametros.length; i++) {
-                const tipoPar = entrada.tiposParametros[i];
-                if (i < argumentos.length) {
-                    argsEstrangeira.push(await this.carregarArgumentoFFI(argumentos[i], tipoPar));
-                } else {
-                    // Argumentos finais omitidos: zero/nulo do tipo C.
-                    argsEstrangeira.push(llvm.Constant.getNullValue(this.tipoFFIParaLlvm(tipoPar)) as unknown as llvm.Value);
-                }
-            }
-            const resultadoEstrangeira = this.montador.CreateCall(entrada.callee, argsEstrangeira);
-            if (entrada.tipoRetorno === 'byte') {
-                return this.montador.CreateZExt(resultadoEstrangeira, this.montador.getInt32Ty(), `${nomeMetodo}_byte`);
-            }
-            return resultadoEstrangeira;
-        }
-
-        // Procura o método na classe e, se não encontrado, sobe a cadeia de herança.
-        let funcaoLlvm = this.modulo.getFunction(`${nomeClasse}_${nomeMetodo}`);
-        if (!funcaoLlvm) {
-            let nomeSuperAtual = this.superClasses.get(nomeClasse);
-            while (nomeSuperAtual && !funcaoLlvm) {
-                funcaoLlvm = this.modulo.getFunction(`${nomeSuperAtual}_${nomeMetodo}`);
-                nomeSuperAtual = this.superClasses.get(nomeSuperAtual);
-            }
-        }
-        if (!funcaoLlvm && (!nomeClasse || nomeClasse === 'qualquer')) {
-            // Fallback para objetos tipados como 'qualquer': busca o método em classes registradas.
-            for (const [nomeClasseRegistrada] of this.metodosClasse) {
-                const candidata = this.modulo.getFunction(`${nomeClasseRegistrada}_${nomeMetodo}`);
-                if (candidata) {
-                    funcaoLlvm = candidata;
-                    break;
-                }
-            }
-            if (funcaoLlvm) {
-                // Para variáveis 'qualquer', variavelLlvm é alloca (ptr-to-ptr): carrega o ptr real.
-                const objPtr = tipoEhPonteiro(objetoPtr?.getType?.())
-                    ? this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'qualquer_obj')
-                    : objetoPtr;
-                const argsQualquer: llvm.Value[] = [objPtr];
-                for (const argumento of argumentos) {
-                    const argResolvido = await argumento.aceitar(this);
-                    argsQualquer.push(
-                        argResolvido instanceof VariavelEscopo
-                            ? argResolvido.variavelLlvm
-                            : (argResolvido as llvm.Value)
-                    );
-                }
-                return this.montador.CreateCall(funcaoLlvm, argsQualquer);
-            }
-        }
-
-        if (!funcaoLlvm) {
-            const erroMetodo = new ErroCompilador(`Método '${nomeMetodo}' não encontrado na classe '${nomeClasse}'.`);
-            erroMetodo.linha = acesso.linha;
-            erroMetodo.tamanhoToken = nomeMetodo.length;
-            throw erroMetodo;
-        }
-
-        const paramDefsMetodo = this.parametrosMetodosClasse.get(nomeClasse)?.get(nomeMetodo) ?? [];
-        const args: llvm.Value[] = [objetoPtr];
-        for (const [indiceArgumento, argumentoOriginal] of argumentos.entries()) {
-            const tipoParamDeclarado = paramDefsMetodo[indiceArgumento]?.tipoDado;
-            const argumento = tipoParamDeclarado
-                ? this.resolverArgumentoChamada(argumentoOriginal, tipoParamDeclarado)
-                : argumentoOriginal;
-            const argResolvido = await argumento.aceitar(this);
-            if (argResolvido instanceof VariavelEscopo) {
-                const valVE = argResolvido.variavelLlvm;
-                const construtorInstVE = valVE?.constructor;
-                // O parâmetro declarado no callee manda: se ele espera uma classe conhecida,
-                // o valor é sempre ponteiro direto para essa classe, mesmo que o TIPO INFERIDO
-                // da expressão de origem seja apenas "qualquer" (ex.: leitura de campo de
-                // `dicionário`). Sem isto, um argumento como `dicionario["chave"]` passado a um
-                // parâmetro `Classe` cai no ramo de baixo (convenção ptr* de "qualquer") e é
-                // reembrulhado numa alloca extra — ponteiro-para-ponteiro que o corpo do
-                // método, ao acessar campo com GEP direto em cima do parâmetro, interpreta
-                // incorretamente como o próprio objeto (endereço de memória arbitrário/lixo).
-                //
-                // No sentido inverso, quando o parâmetro do callee é EXPLICITAMENTE "qualquer",
-                // ele sempre faz um load para desembrulhar (ver Interpretador_criarValor gerado
-                // — `load ptr, ptr %2`); nesse caso NÃO tratamos como classe direta mesmo que o
-                // tipo inferido do argumento seja uma classe conhecida, senão esse load lê os
-                // primeiros 8 bytes do próprio objeto como se fossem um ponteiro (lixo).
-                const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-                const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
-                if (
-                    paramEsperaClasseDireta ||
-                    (!paramExplicitamenteQualquer && this.registroClasses.has(argResolvido.tipo))
-                ) {
-                    // Instâncias de classe são sempre ponteiro direto (single indirection) —
-                    // mesma convenção de carregarPtrClasseSePreciso/resolverOperando: só
-                    // AllocaInst aponta PARA o ponteiro do objeto (precisa de load antes de
-                    // passar); Argument/CallInst/LoadInst/GEP já SÃO o ponteiro do objeto e
-                    // nunca devem ser reembrulhados numa alloca extra (isso criaria um
-                    // ponteiro-para-ponteiro que o corpo do método, ao fazer acesso a campo,
-                    // interpretaria incorretamente como o próprio objeto).
-                    const precisaCarregar = construtorInstVE === llvm.AllocaInst;
-                    args.push(
-                        precisaCarregar
-                            ? this.montador.CreateLoad(this.montador.getPtrTy(), valVE, 'load_obj_arg')
-                            : valVE
-                    );
-                } else {
-                    const indiceArgAtual = args.length;
-                    const tipoParamEsperado =
-                        typeof (funcaoLlvm as any).arg_size === 'function' && indiceArgAtual < funcaoLlvm.arg_size()
-                            ? funcaoLlvm.getArg(indiceArgAtual).getType()
-                            : undefined;
-                    const tipoArgEhEscalarConcreto =
-                        tipoEhInteiroDelegua(argResolvido.tipo) ||
-                        argResolvido.tipo === 'número' ||
-                        argResolvido.tipo === 'lógico';
-                    if (tipoParamEsperado && tipoEhPonteiro(tipoParamEsperado) && tipoArgEhEscalarConcreto) {
-                        // Parâmetro do callee espera qualquer/dicionário, mas o argumento é uma
-                        // variável escalar concreta local (ex.: `número`): a alloca dela NÃO é
-                        // um ponteiro qualquer já boxado — precisa carregar o valor real e
-                        // embalar em heap. Parâmetros qualquer seguem a mesma convenção ptr* de
-                        // dupla indireção que texto/dicionário (ver embalarValorParaDicionario,
-                        // que faz um load antes de reembalar) — por isso a caixa do heap ainda
-                        // precisa ser colocada numa alloca temporária antes de passar.
-                        const tipoLlvmArg = this.obterTipoLlvm(argResolvido.tipo);
-                        const valorCarregado = this.montador.CreateLoad(tipoLlvmArg, valVE, 'load_arg_escalar_ve');
-                        const caixaArg = this.embalarValorEmHeap(valorCarregado, tipoLlvmArg);
-                        const tmpAllocaCaixa = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box_qualquer');
-                        this.montador.CreateStore(caixaArg, tmpAllocaCaixa);
-                        args.push(tmpAllocaCaixa);
-                        continue;
-                    }
-
-                    // Parâmetro escalar (ex.: `lógico` declarado no método) e argumento que é
-                    // o endereço de uma variável local ou campo: passa o valor, não o endereço.
-                    if (
-                        tipoParamEsperado &&
-                        !tipoEhPonteiro(tipoParamEsperado) &&
-                        valVE &&
-                        tipoEhPonteiro(valVE.getType()) &&
-                        (construtorInstVE === llvm.AllocaInst || construtorInstVE === llvm.GetElementPtrInst)
-                    ) {
-                        args.push(this.montador.CreateLoad(tipoParamEsperado, valVE, 'load_arg_escalar'));
-                        continue;
-                    }
-
-                    // texto/lógico/qualquer/dicionário: convenção ptr* — AllocaInst/GEP/Argument
-                    // já são ptr* (apontam PARA o valor) e passam direto; um valor já
-                    // materializado (CallInst/LoadInst) precisa ser embrulhado numa alloca
-                    // temporária para o callee poder fazer o load.
-                    const valVEEhPtrDireto =
-                        construtorInstVE !== llvm.GetElementPtrInst &&
-                        construtorInstVE !== llvm.AllocaInst &&
-                        construtorInstVE !== llvm.Argument;
-                    if (valVE && tipoEhPonteiro(valVE?.getType?.()) && valVEEhPtrDireto) {
-                        const tmpAllocaVE = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box_ve');
-                        this.montador.CreateStore(valVE, tmpAllocaVE);
-                        args.push(tmpAllocaVE);
-                    } else {
-                        args.push(valVE);
-                    }
-                }
-            } else {
-                const val = argResolvido as llvm.Value;
-
-                // Parâmetro do callee espera ponteiro (qualquer/dicionário/texto/...) mas o
-                // valor bruto é um escalar (ex.: resultado de `a + b`): embala em heap em vez
-                // de deixar o CreateCall com tipo de argumento incompatível.
-                const indiceArgAtual = args.length;
-                const tipoParamEsperado =
-                    typeof (funcaoLlvm as any).arg_size === 'function' && indiceArgAtual < funcaoLlvm.arg_size()
-                        ? funcaoLlvm.getArg(indiceArgAtual).getType()
-                        : undefined;
-                if (tipoParamEsperado && tipoEhPonteiro(tipoParamEsperado) && val && !tipoEhPonteiro(val.getType())) {
-                    // Mesma convenção ptr* de dupla indireção do ramo VariavelEscopo acima:
-                    // a caixa do heap precisa ir numa alloca temporária antes de passar.
-                    const caixaArg = this.embalarValorEmHeap(val, val.getType());
-                    const tmpAllocaCaixa = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box_qualquer');
-                    this.montador.CreateStore(caixaArg, tmpAllocaCaixa);
-                    args.push(tmpAllocaCaixa);
-                    continue;
-                }
-
-                // Instância de classe crua (ex.: leitura de vetor de classes via `itens[i]`):
-                // sempre ponteiro direto, nunca reembrulhar (mesma convenção do ramo
-                // VariavelEscopo acima). Mas só quando o parâmetro do callee não é
-                // EXPLICITAMENTE "qualquer": um parâmetro `qualquer` sempre faz um load para
-                // desembrulhar (ver Interpretador_criarValor gerado — `load ptr, ptr %2`), e
-                // passar o ponteiro de objeto cru ali faria esse load ler os primeiros 8 bytes
-                // do próprio objeto como se fossem um ponteiro (lixo). Sem essa exclusão, um
-                // argumento como uma instância de classe passada a um parâmetro `valor: qualquer`
-                // (ex.: `criarValor("funcao", instanciaDeClasse)`) corrompe o ponteiro guardado.
-                const tipoArgBruto = this.resolverTipoConstruto(argumento as ConstrutoInterface);
-                const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-                const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
-                const podeTratarComoClasseDireta =
-                    paramEsperaClasseDireta ||
-                    (!paramExplicitamenteQualquer && !!tipoArgBruto && this.registroClasses.has(tipoArgBruto));
-                if (podeTratarComoClasseDireta) {
-                    args.push(val);
-                    continue;
-                }
-
-                // Délégua usa convenção ptr*: LoadInst/CallInst etc. são ptrs diretos que precisam
-                // de alloca para que o callee possa fazer "load ptr, ptr %arg".
-                // AllocaInst e GetElementPtrInst já são ptr* — passam direto.
-                const construtorInstVal = val?.constructor;
-                const valEhPtrDireto = construtorInstVal !== llvm.GetElementPtrInst && construtorInstVal !== llvm.AllocaInst;
-                if (val && tipoEhPonteiro(val.getType()) && valEhPtrDireto) {
-                    const tmpAlloca = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arg_ptr_box');
-                    this.montador.CreateStore(val, tmpAlloca);
-                    args.push(tmpAlloca);
-                } else {
-                    args.push(val);
-                }
-            }
-        }
-
-        // Preenche argumentos faltantes com zero/null (ex.: chamada com menos args que a assinatura).
-        if (typeof (funcaoLlvm as any).arg_size === 'function') {
-            while (args.length < funcaoLlvm.arg_size()) {
-                const tipoParam = funcaoLlvm.getArg(args.length).getType();
-                args.push(llvm.Constant.getNullValue(tipoParam) as unknown as llvm.Value);
-            }
-        }
-
-        return this.montador.CreateCall(funcaoLlvm, args);
-    }
-
-    protected async chamarMetodoTexto(
-        nomeMetodo: string,
-        objetoPtr: llvm.Value,
-        argumentos: ConstrutoInterface[],
-        linha?: number
-    ): Promise<llvm.Value> {
-        // Carrega o char* real a partir do ponteiro da variável
-        const strPtr = this.montador.CreateLoad(this.montador.getPtrTy(), objetoPtr, 'load_texto');
-        const ptr = this.montador.getPtrTy();
-        const i32 = this.montador.getInt32Ty();
-
-        switch (nomeMetodo) {
-            case 'maiusculo':
-                return this.montador.CreateCall(this.funcaoTextoMaiusculo, [strPtr]);
-
-            case 'minusculo':
-                return this.montador.CreateCall(this.funcaoTextoMinusculo, [strPtr]);
-
-            case 'inclui': {
-                const sub = await this.carregarArgumentoTexto(argumentos[0]);
-                return this.montador.CreateCall(this.funcaoTextoInclui, [strPtr, sub]);
-            }
-
-            case 'subtexto': {
-                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
-                const fim = await this.carregarArgumentoInteiro(argumentos[1]);
-                return this.montador.CreateCall(this.funcaoTextoSubtexto, [strPtr, inicio, fim]);
-            }
-
-            case 'substituir': {
-                const de = await this.carregarArgumentoTexto(argumentos[0]);
-                const para = await this.carregarArgumentoTexto(argumentos[1]);
-                return this.montador.CreateCall(this.funcaoTextoSubstituir, [strPtr, de, para]);
-            }
-
-            case 'tamanho': {
-                const len64 = this.montador.CreateCall(this.funcaoStrlen, [strPtr], 'strlen_res');
-                return this.montador.CreateTrunc(len64, this.montador.getInt32Ty(), 'strlen_i32');
-            }
-
-            case 'aparar':
-            case 'apararInicio':
-            case 'apararInício':
-            case 'apararFim':
-            case 'inverter': {
-                const nomesC: { [metodo: string]: string } = {
-                    aparar: 'delegua_texto_aparar',
-                    apararInicio: 'delegua_texto_aparar_inicio',
-                    apararInício: 'delegua_texto_aparar_inicio',
-                    apararFim: 'delegua_texto_aparar_fim',
-                    inverter: 'delegua_texto_inverter',
-                };
-                const funcao = this.obterFuncaoRuntime(nomesC[nomeMetodo], ptr, [ptr]);
-                return this.montador.CreateCall(funcao, [strPtr]);
-            }
-
-            case 'concatenar': {
-                const outro = await this.carregarArgumentoTexto(argumentos[0]);
-                const funcao = this.obterFuncaoRuntime('delegua_texto_concatenar', ptr, [ptr, ptr]);
-                return this.montador.CreateCall(funcao, [strPtr, outro]);
-            }
-
-            case 'dividir': {
-                // dividir(delimitador = "", limite = 0) → texto[]
-                const delimitador = argumentos[0]
-                    ? await this.carregarArgumentoTexto(argumentos[0])
-                    : this.montador.CreateGlobalStringPtr('', 'str_vazio', 0, this.modulo);
-                const limite = argumentos[1]
-                    ? await this.carregarArgumentoInteiro(argumentos[1])
-                    : ConstantInt.get(this.contexto, new APInt(32, 0));
-                const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'texto_dividido');
-                const funcao = this.obterFuncaoRuntime('delegua_texto_dividir', llvm.Type.getVoidTy(this.contexto), [
-                    ptr,
-                    ptr,
-                    i32,
-                    ptr,
-                ]);
-                this.montador.CreateCall(funcao, [strPtr, delimitador, limite, saida]);
-                return saida;
-            }
-
-            case 'encontrar': {
-                // encontrar(subtexto, inicio = 0) → inteiro (-1 se não encontrar)
-                const sub = await this.carregarArgumentoTexto(argumentos[0]);
-                const inicio = argumentos[1]
-                    ? await this.carregarArgumentoInteiro(argumentos[1])
-                    : ConstantInt.get(this.contexto, new APInt(32, 0));
-                const funcao = this.obterFuncaoRuntime('delegua_texto_encontrar', i32, [ptr, ptr, i32]);
-                return this.montador.CreateCall(funcao, [strPtr, sub, inicio]);
-            }
-
-            case 'encontrarUltimo':
-            case 'encontrarÚltimo': {
-                const sub = await this.carregarArgumentoTexto(argumentos[0]);
-                const funcao = this.obterFuncaoRuntime('delegua_texto_encontrar_ultimo', i32, [ptr, ptr]);
-                return this.montador.CreateCall(funcao, [strPtr, sub]);
-            }
-
-            case 'comecaCom':
-            case 'começaCom':
-            case 'terminaCom': {
-                const nomeC = nomeMetodo === 'terminaCom' ? 'delegua_texto_termina_com' : 'delegua_texto_comeca_com';
-                const afixo = await this.carregarArgumentoTexto(argumentos[0]);
-                const funcao = this.obterFuncaoRuntime(nomeC, i32, [ptr, ptr]);
-                const resultado = this.montador.CreateCall(funcao, [strPtr, afixo]);
-                return this.inteiroParaLogico(resultado, nomeMetodo);
-            }
-
-            default: {
-                const erroTexto = new ErroCompilador(`Método de texto '${nomeMetodo}' não implementado.`);
-                erroTexto.linha = linha;
-                erroTexto.tamanhoToken = nomeMetodo.length;
-                throw erroTexto;
-            }
-        }
-    }
-
-    protected async chamarMetodoDicionario(
-        nomeMetodo: string,
-        dicionarioPtr: llvm.Value,
-        argumentos: ConstrutoInterface[],
-        linha?: number
-    ): Promise<llvm.Value> {
-        const ptr = this.montador.getPtrTy();
-        const i32 = this.montador.getInt32Ty();
-
-        switch (nomeMetodo) {
-            case 'tamanho':
-                return this.montador.CreateCall(this.funcaoDicionarioTamanho, [dicionarioPtr], 'dict_tamanho');
-
-            case 'contem':
-            case 'contém': {
-                const chave = await this.carregarArgumentoTexto(argumentos[0]);
-                const resultado = this.montador.CreateCall(this.funcaoDicionarioContem, [dicionarioPtr, chave]);
-                return this.inteiroParaLogico(resultado, 'dict_contem');
-            }
-
-            case 'remover': {
-                const chave = await this.carregarArgumentoTexto(argumentos[0]);
-                const funcao = this.obterFuncaoRuntime('delegua_dicionario_remover', i32, [ptr, ptr]);
-                const resultado = this.montador.CreateCall(funcao, [dicionarioPtr, chave]);
-                return this.inteiroParaLogico(resultado, 'dict_removido');
-            }
-
-            case 'chaves':
-            case 'valores':
-                return this.coletarDicionarioEmVetor(nomeMetodo, dicionarioPtr);
-
-            default: {
-                const erroDicionario = new ErroCompilador(`Método de dicionário '${nomeMetodo}' não implementado.`);
-                erroDicionario.linha = linha;
-                erroDicionario.tamanhoToken = nomeMetodo.length;
-                throw erroDicionario;
-            }
-        }
-    }
-
-    // Preenche um %Vetor (alloca) com as chaves (char*) ou os valores (void*) do
-    // dicionário, em ordem de inserção.
-    protected coletarDicionarioEmVetor(qual: 'chaves' | 'valores', dicionarioPtr: llvm.Value): llvm.Value {
-        const ptr = this.montador.getPtrTy();
-        const nomeC = qual === 'chaves' ? 'delegua_dicionario_chaves' : 'delegua_dicionario_valores';
-        const funcao = this.obterFuncaoRuntime(nomeC, llvm.Type.getVoidTy(this.contexto), [ptr, ptr]);
-        const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, `dict_${qual}`);
-        this.montador.CreateCall(funcao, [dicionarioPtr, saida]);
-        return saida;
-    }
-
     // Declara (uma única vez por módulo) uma função C do runtime e a devolve.
     // Usado pelos métodos embutidos mais recentes, para não exigir um campo
     // `funcaoX` + declaração em criarFuncaoNativa() para cada função.
@@ -5255,7 +4336,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected carregarPtrClasseSePreciso(objVar: VariavelEscopo): llvm.Value {
         const llvmVal = objVar.variavelLlvm;
-        if (llvmVal && llvmVal.constructor === llvm.AllocaInst && this.registroClasses.has(objVar.tipo)) {
+        if (
+            llvmVal &&
+            llvmVal.constructor === llvm.AllocaInst &&
+            (this.registroClasses.has(objVar.tipo) || this.interfacesDeclaradas.has(objVar.tipo))
+        ) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), llvmVal, 'load_obj_ptr');
         }
         return llvmVal;
@@ -5306,198 +4391,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return ehPtrDireto ? valorLlvm : this.montador.CreateLoad(this.montador.getPtrTy(), valorLlvm, 'ptr_direto');
         }
         return resolvido as llvm.Value;
-    }
-
-    // Resolve um valor a ser armazenado como valor de dicionário (sempre void*).
-    // Ponteiros (qualquer/texto/vetor/instâncias) são usados diretamente; escalares
-    // (inteiro/número/lógico/longo) são embalados em uma célula no heap, já que um
-    // dicionário sobrevive ao escopo/pilha de onde o valor foi lido.
-    protected embalarValorParaDicionario(resolvido: any): llvm.Value {
-        if (resolvido instanceof VariavelEscopo) {
-            const tipo = resolvido.tipo;
-            const ehPonteiro =
-                tipoEhDicionario(tipo) ||
-                tipo === 'texto' ||
-                tipo === 'qualquer' ||
-                tipoEhVetor(tipo) ||
-                this.registroClasses.has(tipo);
-            if (ehPonteiro) {
-                return this.resolverPonteiroDireto(resolvido);
-            }
-            const tipoLlvmEscalar = this.obterTipoLlvm(tipo);
-            const valorCarregado = this.montador.CreateLoad(tipoLlvmEscalar, resolvido.variavelLlvm, 'dict_valor_escalar');
-            return this.embalarValorEmHeap(valorCarregado, tipoLlvmEscalar);
-        }
-
-        const valorLlvm = resolvido as llvm.Value;
-        const construtorTipo = valorLlvm?.getType()?.constructor;
-        if (construtorTipo === llvm.PointerType) {
-            return valorLlvm;
-        }
-        return this.embalarValorEmHeap(valorLlvm, valorLlvm.getType());
-    }
-
-    // Aloca uma célula no heap (malloc) do tamanho do tipo dado e armazena o valor nela.
-    protected embalarValorEmHeap(valor: llvm.Value, tipo: llvm.Type): llvm.Value {
-        const construtorTipo = tipo?.constructor;
-        const tamanhoBytes =
-            construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
-                ? 4
-                : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
-                  ? 1
-                  : 8;
-        const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
-        const caixa = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'dict_caixa');
-        this.montador.CreateStore(valor, caixa);
-        return caixa;
-    }
-
-    protected tamElementoEmBytes(tipoElem: string): number {
-        if (tipoElem === 'inteiro') return 4;
-        // número, longo, texto (ponteiro 64-bit) → 8 bytes
-        return 8;
-    }
-
-    // Constante i32 para tamanho de elemento.
-    protected constTamElem(tipoElem: string): llvm.Value {
-        return ConstantInt.get(this.contexto, new APInt(32, this.tamElementoEmBytes(tipoElem)));
-    }
-
-    protected async chamarMetodoVetor(
-        nomeMetodo: string,
-        vetorPtr: llvm.Value,
-        tipoElem: string,
-        argumentos: ConstrutoInterface[],
-        linha?: number
-    ): Promise<llvm.Value> {
-        const tamElem = this.constTamElem(tipoElem);
-        const ehNumero = ConstantInt.get(
-            this.contexto,
-            new APInt(32, tipoElem === 'número' || tipoElem === 'numero' ? 1 : 0)
-        );
-
-        switch (nomeMetodo) {
-            case 'adicionar':
-            case 'empilhar': {
-                // Aloca um slot temporário no bloco de entrada para evitar stack overflow em loops.
-                const tipoLlvmElem = this.obterTipoLlvm(tipoElem);
-                const alocElem = this.criarAllocaNoBlocoEntrada(tipoLlvmElem, 'novo_elem');
-                let valorElem: llvm.Value;
-                if (tipoElem === 'inteiro') {
-                    valorElem = await this.carregarArgumentoInteiro(argumentos[0]);
-                } else if (tipoElem === 'número' || tipoElem === 'numero') {
-                    valorElem = await this.carregarArgumentoNumero(argumentos[0]);
-                } else if (this.registroClasses.has(tipoElem)) {
-                    // Objeto de classe: elemento do vetor é o ponteiro direto do objeto, não o
-                    // conteúdo — mesma convenção de carregarPtrClasseSePreciso. Sem isso, uma
-                    // VariavelEscopo alocada (AllocaInst) guardaria o endereço do slot da
-                    // pilha em vez do ponteiro do objeto, virando um ponteiro pendurado assim
-                    // que a função que a declarou retornar.
-                    const argResolvido = await argumentos[0].aceitar(this);
-                    valorElem =
-                        argResolvido instanceof VariavelEscopo
-                            ? this.carregarPtrClasseSePreciso(argResolvido)
-                            : (argResolvido as llvm.Value);
-                } else {
-                    valorElem = await this.carregarArgumentoTexto(argumentos[0]);
-                }
-                this.montador.CreateStore(valorElem, alocElem);
-                this.cachePointerVetor.clear();
-                return this.montador.CreateCall(this.funcaoVetorAdicionar, [vetorPtr, alocElem, tamElem]);
-            }
-
-            case 'removerUltimo':
-                return this.montador.CreateCall(this.funcaoVetorRemoverUltimo, [vetorPtr]);
-
-            case 'removerPrimeiro':
-                return this.montador.CreateCall(this.funcaoVetorRemoverPrimeiro, [vetorPtr, tamElem]);
-
-            case 'inverter':
-                return this.montador.CreateCall(this.funcaoVetorInverter, [vetorPtr, tamElem]);
-
-            case 'ordenar': {
-                // ordenar(funcaoComparacao): ordenação estável guiada pela função.
-                if (argumentos[0]) {
-                    return await this.ordenarComFuncao(vetorPtr, tipoElem, argumentos[0], linha);
-                }
-                // Ordem crescente: 0 = inteiro, 1 = número, 2 = texto (strcmp).
-                const tipoOrdenacao = ConstantInt.get(
-                    this.contexto,
-                    new APInt(32, tipoElem === 'número' || tipoElem === 'numero' ? 1 : tipoElem === 'texto' ? 2 : 0)
-                );
-                this.montador.CreateCall(this.funcaoVetorOrdenar, [vetorPtr, tamElem, tipoOrdenacao]);
-                return vetorPtr;
-            }
-
-            case 'fatiar': {
-                const inicio = await this.carregarArgumentoInteiro(argumentos[0]);
-                const fim = argumentos[1]
-                    ? await this.carregarArgumentoInteiro(argumentos[1])
-                    : ConstantInt.get(this.contexto, new APInt(32, 0x7fffffff));
-                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'fatia');
-                this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem, alocSaida]);
-                return alocSaida;
-            }
-
-            case 'juntar': {
-                const sep = await this.carregarArgumentoTexto(argumentos[0]);
-                if (tipoElem === 'inteiro') {
-                    return this.montador.CreateCall(this.funcaoVetorJuntarInteiro, [vetorPtr, sep]);
-                } else if (tipoElem === 'número' || tipoElem === 'numero') {
-                    return this.montador.CreateCall(this.funcaoVetorJuntarNumero, [vetorPtr, sep]);
-                } else {
-                    return this.montador.CreateCall(this.funcaoVetorJuntarTexto, [vetorPtr, sep]);
-                }
-            }
-
-            case 'filtrarPor': {
-                const fnPtr = await this.resolverPonteiroDeFuncao(
-                    argumentos[0],
-                    [tipoElem],
-                    'inteiro' // predicado retorna inteiro (0/1)
-                );
-                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'filtrado');
-                if (tipoElem === 'inteiro') {
-                    this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
-                } else {
-                    this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
-                }
-                return alocSaida;
-            }
-
-            case 'mapear': {
-                const tipoRetorno = tipoElem;
-                const fnPtr = await this.resolverPonteiroDeFuncao(argumentos[0], [tipoElem], tipoRetorno);
-                const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
-                if (tipoElem === 'inteiro') {
-                    this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
-                } else if (tipoElem === 'número' || tipoElem === 'numero') {
-                    this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
-                } else {
-                    this.montador.CreateCall(this.funcaoVetorMapearTexto, [vetorPtr, fnPtr, alocSaida]);
-                }
-                return alocSaida;
-            }
-            case 'tamanho':
-                return this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr]);
-
-            case 'inclui': {
-                if (tipoElem === 'texto') {
-                    const valorBusca = await this.carregarArgumentoTexto(argumentos[0]);
-                    return this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
-                }
-                const erroInclui = new ErroCompilador(`Método 'inclui' só suportado para vetor<texto>.`);
-                erroInclui.linha = linha;
-                throw erroInclui;
-            }
-
-            default: {
-                const erroVetor = new ErroCompilador(`Método de vetor '${nomeMetodo}' não implementado.`);
-                erroVetor.linha = linha;
-                erroVetor.tamanhoToken = nomeMetodo.length;
-                throw erroVetor;
-            }
-        }
     }
 
     // Resolve o ponteiro LLVM de uma função passada como argumento.
@@ -5616,130 +4509,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return valor;
     }
 
-    protected async chamarFuncaoTexto(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
-        const argumento = argumentos[0];
-        const resolvido = await argumento.aceitar(this);
-
-        let valor: llvm.Value;
-        let tipo: string;
-
-        if (resolvido instanceof VariavelEscopo && this.herdaDeExcecao(resolvido.tipo)) {
-            return this.mensagemDeExcecao(this.carregarPtrClasseSePreciso(resolvido), resolvido.tipo);
-        }
-        if (resolvido instanceof VariavelEscopo) {
-            tipo = resolvido.tipo ?? argumento.tipo ?? 'número';
-            // Parâmetros escalares (inteiro/número/lógico) chegam por valor (Argument não é
-            // ponteiro) — só carrega se variavelLlvm realmente for um ponteiro (alloca local
-            // ou parâmetro texto/qualquer/dicionário de dupla indireção).
-            valor = tipoEhPonteiro(resolvido.variavelLlvm.getType())
-                ? this.montador.CreateLoad(this.obterTipoLlvm(tipo), resolvido.variavelLlvm, 'load_texto_arg')
-                : resolvido.variavelLlvm;
-        } else {
-            valor = resolvido as llvm.Value;
-            tipo = argumento.tipo ?? 'número';
-        }
-
-        // Se já é texto, retorna o ponteiro diretamente
-        if (tipo === 'texto') {
-            return valor;
-        }
-
-        // O tipo LLVM do valor decide a conversão quando ele contradiz o tipo inferido (ex.:
-        // retorno de método ou campo de estrutura cujo tipo o avaliador não conhece, que
-        // chega aqui como 'número' por padrão).
-        const tipoLlvmValor = valor.getType();
-        if (tipoLlvmValor.isIntegerTy(64)) {
-            const funcao = this.obterFuncaoRuntime('texto_de_longo', this.montador.getPtrTy(), [
-                llvm.Type.getInt64Ty(this.contexto),
-            ]);
-            return this.montador.CreateCall(funcao, [valor]);
-        }
-        if (tipoLlvmValor.isIntegerTy(1)) {
-            const verdadeiro = this.montador.CreateGlobalStringPtr('verdadeiro', 'texto_verdadeiro', 0, this.modulo);
-            const falso = this.montador.CreateGlobalStringPtr('falso', 'texto_falso', 0, this.modulo);
-            return this.montador.CreateSelect(valor, verdadeiro, falso, 'texto_logico');
-        }
-        if (tipoLlvmValor.isIntegerTy(8)) {
-            valor = this.montador.CreateZExt(valor, this.montador.getInt32Ty(), 'byte_para_int');
-            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
-        }
-        if (tipoLlvmValor.isIntegerTy(32)) {
-            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
-        }
-        if (tipoEhPonteiro(tipoLlvmValor)) {
-            return valor;
-        }
-
-        // inteiro → texto (usa %d para evitar notação científica)
-        if (tipo === 'inteiro') {
-            // Literal inteiro sem tipo explícito chega como double do parser do Delégua
-            if (tipo !== 'inteiro' || argumento.tipo === 'número') {
-                valor = this.montador.CreateFPToSI(valor, this.montador.getInt32Ty(), 'double_para_int_texto');
-            }
-            return this.montador.CreateCall(this.funcaoTextoDeInteiro, [valor]);
-        }
-
-        // número (double) → texto
-        // Se a variável era inteiro mas não temos conversão ainda, eleva para double
-        if (tipo === 'inteiro') {
-            valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double_texto');
-        }
-        return this.montador.CreateCall(this.funcaoTextoDeNumero, [valor]);
-    }
-
     protected async chamarAleatorioEntre(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
         const a = await this.carregarArgumentoNumero(argumentos[0]);
         const b = await this.carregarArgumentoNumero(argumentos[1]);
         return this.montador.CreateCall(this.funcaoAleatorioEntre, [a, b]);
-    }
-
-    protected async chamarMapear(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
-        // mapear(lista, fn)  →  novo vetor com fn aplicada a cada elemento
-        const vetorArg = argumentos[0];
-        const fnArg = argumentos[1];
-
-        // Resolve o vetor de entrada
-        const vetorResolvido = await vetorArg.aceitar(this);
-        const vetorPtr: llvm.Value =
-            vetorResolvido instanceof VariavelEscopo ? vetorResolvido.variavelLlvm : (vetorResolvido as llvm.Value);
-
-        // Determina o tipo do elemento
-        const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
-        const tipoElem = tipoElementoVetor(tipoVetor);
-        const ehNumero = tipoElem === 'número' || tipoElem === 'numero';
-
-        const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], tipoElem);
-
-        const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
-        if (ehNumero) {
-            this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
-        } else {
-            this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
-        }
-        return alocSaida;
-    }
-
-    protected async chamarEncontrar(argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
-        // encontrar(lista, fn) → novo vetor com todos os elementos que satisfazem fn
-        const vetorArg = argumentos[0];
-        const fnArg = argumentos[1];
-
-        const vetorResolvido = await vetorArg.aceitar(this);
-        const vetorPtr: llvm.Value =
-            vetorResolvido instanceof VariavelEscopo ? vetorResolvido.variavelLlvm : (vetorResolvido as llvm.Value);
-
-        const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
-        const tipoElem = tipoElementoVetor(tipoVetor);
-
-        const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], 'inteiro');
-
-        const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'encontrado');
-        if (tipoElem === 'inteiro') {
-            this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
-        } else {
-            this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
-        }
-        return alocSaida;
     }
 
     protected async carregarArgumentoNumero(argumento: ConstrutoInterface): Promise<llvm.Value> {
@@ -5776,6 +4549,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 if (tipoArgumento === 'número' || tipoArgumento === 'numero' || tipoArgumento === 'inteiro' || tipoArgumento === 'longo') {
                     return await this.carregarArgumentoInteiro(expressao.argumentos[0]);
                 }
+            }
+            // longo(x): com x numérico converte para i64; com texto, chama a função C (strtoll).
+            if (nomeEntidadeChamada === 'longo' && expressao.argumentos.length === 1) {
+                const tipoI64 = llvm.Type.getInt64Ty(this.contexto);
+                const tipoArgumento = this.resolverTipoConstruto(expressao.argumentos[0]);
+                if (tipoArgumento === 'número' || tipoArgumento === 'numero') {
+                    const valor = await this.carregarArgumentoNumero(expressao.argumentos[0]);
+                    return this.coagirEscalar(valor, tipoI64, 'para_longo');
+                }
+                if (tipoEhInteiroDelegua(tipoArgumento)) {
+                    const valor = await this.carregarArgumentoInteiro(expressao.argumentos[0]);
+                    return this.coagirEscalar(valor, tipoI64, 'para_longo');
+                }
+                const textoPtr = await this.carregarArgumentoTexto(expressao.argumentos[0]);
+                return this.montador.CreateCall(this.funcaoLongo, [textoPtr], 'texto_para_longo');
             }
             // real(x) / decimal(x): conversão para double. O núcleo envolve em real(...) os
             // retornos e inicializadores de contexto `real` (garantirTipoReal).
@@ -5960,454 +4748,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return Promise.resolve(
                     llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value
                 );
-        }
-    }
-
-    protected parsearTemplateString(modelo: string): Array<string | { nomeVar: string }> {
-        const partes: Array<string | { nomeVar: string }> = [];
-        const regex = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
-        let ultimaPos = 0;
-        let correspondencia: RegExpExecArray;
-
-        while ((correspondencia = regex.exec(modelo)) !== null) {
-            if (correspondencia.index > ultimaPos) {
-                partes.push(modelo.slice(ultimaPos, correspondencia.index));
-            }
-            partes.push({ nomeVar: correspondencia[1] });
-            ultimaPos = correspondencia.index + correspondencia[0].length;
-        }
-
-        if (ultimaPos < modelo.length) {
-            partes.push(modelo.slice(ultimaPos));
-        }
-
-        return partes;
-    }
-
-    protected async resolverTextoInterpolado(modelo: string): Promise<llvm.Value> {
-        const partes = this.parsearTemplateString(modelo);
-        const segmentosFormato: string[] = [];
-        const argumentos: llvm.Value[] = [];
-
-        for (const parte of partes) {
-            if (typeof parte === 'string') {
-                // Escapa '%' em trechos estáticos para que não seja interpretado pelo printf
-                segmentosFormato.push(parte.replace(/%/g, '%%'));
-            } else {
-                const varEscopo = this.pilhaVariaveisEscopo.obterValor(parte.nomeVar);
-                const tipo = varEscopo.tipo ?? 'número';
-                const formato = this.printfFormatos.get(tipo) ?? '%s';
-                segmentosFormato.push(formato);
-
-                const tipoLlvm = this.obterTipoLlvm(tipo);
-                let valor: llvm.Value = this.montador.CreateLoad(
-                    tipoLlvm,
-                    varEscopo.variavelLlvm,
-                    `load_interp_${parte.nomeVar}`
-                );
-                if (formato.includes('%s')) {
-                    valor = this.normalizarOperandoParaTextoSeguro(
-                        { valor, tipo: tipo || 'texto' },
-                        `interp_${parte.nomeVar}`
-                    );
-                }
-                argumentos.push(valor);
-            }
-        }
-
-        const formatoFinal = segmentosFormato.join('');
-        const formatoPtr = this.montador.CreateGlobalStringPtr(formatoFinal, 'fmt_interp', 0, this.modulo);
-
-        return this.montador.CreateCall(this.funcaoFormatar, [formatoPtr, ...argumentos]);
-    }
-
-    protected buscarFormatoLeia(tipoDelegua: string): llvm.Constant {
-        let formatoScanf = this.scanfFormatosCarregados.get(tipoDelegua);
-
-        if (!formatoScanf) {
-            const formatoString = this.scanfFormatos.get(tipoDelegua);
-            formatoScanf = this.montador.CreateGlobalStringPtr(
-                formatoString,
-                `formato_leia_${tipoDelegua}`,
-                0,
-                this.modulo
-            );
-            this.scanfFormatosCarregados.set(tipoDelegua, formatoScanf);
-        }
-
-        return formatoScanf;
-    }
-
-    /**
-     * Aqui ficam as ideias de implementação encontradas em
-     * https://gist.github.com/seven1m/2ca74265cca9ef6f493ef1de87e9252d.
-     *
-     * Outras ideias que foram testadas, mas não funcionaram muito bem,
-     * estão em:
-     *
-     * - https://gist.github.com/alendit/defe3d518cd8f3f3e28cb46708d4c9d6
-     * - https://github.com/numba/numba/blob/c699ef8679316f40af8d0678219fa197522a741f/numba/cgutils.py#L975
-     *
-     * No entanto, elas podem servir de inspiração para funções futuras.
-     */
-    protected criarFuncaoNativa(modulosImportados?: Set<string>): void {
-        // %Vetor = type { ptr, i32 }  (ponteiro para elementos + tamanho)
-        this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
-        this.tipoEstruturaVetor.setBody([llvm.PointerType.get(this.contexto, 0), this.montador.getInt32Ty()]);
-
-        // int escreva(const char *fmt, ...)
-        const tipoRetornoPrinter = this.montador.getInt32Ty();
-        const tipoFuncaoPrinter = llvm.FunctionType.get(tipoRetornoPrinter, [this.montador.getPtrTy()], true);
-
-        this.funcaoEscreva = this.modulo.getOrInsertFunction('escreva', tipoFuncaoPrinter);
-
-        // void* leia(const char* texto, const char *fmt)
-        const tipoFuncaoLeia = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-
-        this.funcaoLeia = this.modulo.getOrInsertFunction('leia', tipoFuncaoLeia);
-
-        // int inteiro(void *valor)
-        const tipoFuncaoInteiro = llvm.FunctionType.get(this.montador.getInt32Ty(), [this.montador.getPtrTy()], false);
-
-        this.funcaoInteiro = this.modulo.getOrInsertFunction('inteiro', tipoFuncaoInteiro);
-
-        // double numero(void *valor)
-        const tipoFuncaoNumero = llvm.FunctionType.get(this.montador.getDoubleTy(), [this.montador.getPtrTy()], false);
-
-        this.funcaoNumero = this.modulo.getOrInsertFunction('numero', tipoFuncaoNumero);
-
-        // void falhar(const char *msg)
-
-
-
-        // char* delegua_texto_maiusculo(const char* s)
-        // char* delegua_texto_minusculo(const char* s)
-        const tipoFuncaoTextoPtr1 = llvm.FunctionType.get(this.montador.getPtrTy(), [this.montador.getPtrTy()], false);
-        this.funcaoTextoMaiusculo = this.modulo.getOrInsertFunction('delegua_texto_maiusculo', tipoFuncaoTextoPtr1);
-        this.funcaoTextoMinusculo = this.modulo.getOrInsertFunction('delegua_texto_minusculo', tipoFuncaoTextoPtr1);
-
-        // int delegua_texto_inclui(const char* s, const char* sub)
-        const tipoFuncaoTextoInclui = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoTextoInclui = this.modulo.getOrInsertFunction('delegua_texto_inclui', tipoFuncaoTextoInclui);
-
-        // char* delegua_texto_subtexto(const char* s, int inicio, int fim)
-        const tipoFuncaoTextoSubtexto = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoTextoSubtexto = this.modulo.getOrInsertFunction('delegua_texto_subtexto', tipoFuncaoTextoSubtexto);
-
-        // char* delegua_texto_substituir(const char* s, const char* de, const char* para)
-        const tipoFuncaoTextoSubstituir = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoTextoSubstituir = this.modulo.getOrInsertFunction(
-            'delegua_texto_substituir',
-            tipoFuncaoTextoSubstituir
-        );
-
-        // double aleatorio(void)
-        const tipoFuncaoAleatorio = llvm.FunctionType.get(this.montador.getDoubleTy(), [], false);
-        this.funcaoAleatorio = this.modulo.getOrInsertFunction('aleatorio', tipoFuncaoAleatorio);
-
-        // int aleatorioEntre(double a, double b)
-        const tipoFuncaoAleatorioEntre = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getDoubleTy(), this.montador.getDoubleTy()],
-            false
-        );
-        this.funcaoAleatorioEntre = this.modulo.getOrInsertFunction('aleatorioEntre', tipoFuncaoAleatorioEntre);
-
-        // char* texto_de_inteiro(int val)
-        const tipoFuncaoTextoDeInteiro = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoTextoDeInteiro = this.modulo.getOrInsertFunction('texto_de_inteiro', tipoFuncaoTextoDeInteiro);
-
-        // char* texto_de_numero(double val)
-        const tipoFuncaoTextoDeNumero = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getDoubleTy()],
-            false
-        );
-        this.funcaoTextoDeNumero = this.modulo.getOrInsertFunction('texto_de_numero', tipoFuncaoTextoDeNumero);
-
-        // char* delegua_formatar(const char* fmt, ...)  — sprintf alocador para interpolação de texto
-        const tipoFuncaoFormatar = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy()],
-            true // variadic
-        );
-        this.funcaoFormatar = this.modulo.getOrInsertFunction('delegua_formatar', tipoFuncaoFormatar);
-
-        // size_t strlen(const char*)
-        const tipoFuncaoStrlen = llvm.FunctionType.get(
-            llvm.Type.getInt64Ty(this.contexto),
-            [this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoStrlen = this.modulo.getOrInsertFunction('strlen', tipoFuncaoStrlen);
-
-        // int strcmp(const char*, const char*)
-        const tipoFuncaoStrcmp = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoStrcmp = this.modulo.getOrInsertFunction('strcmp', tipoFuncaoStrcmp);
-
-        // void* malloc(size_t)
-        const tipoFuncaoMalloc = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [llvm.Type.getInt64Ty(this.contexto)],
-            false
-        );
-        this.funcaoMalloc = this.modulo.getOrInsertFunction('malloc', tipoFuncaoMalloc);
-
-        // int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem)
-        const tipoFuncaoVetorAdicionar = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoVetorAdicionar = this.modulo.getOrInsertFunction(
-            'delegua_vetor_adicionar',
-            tipoFuncaoVetorAdicionar
-        );
-
-        // void* delegua_vetor_definir_indice(Vetor* v, int indice, int tam_elem)
-        const tipoFuncaoVetorDefinirIndice = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoVetorDefinirIndice = this.modulo.getOrInsertFunction(
-            'delegua_vetor_definir_indice',
-            tipoFuncaoVetorDefinirIndice
-        );
-
-        // int delegua_vetor_remover_ultimo(Vetor* v)
-        const tipoFuncaoVetorRemoverUltimo = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoVetorRemoverUltimo = this.modulo.getOrInsertFunction(
-            'delegua_vetor_remover_ultimo',
-            tipoFuncaoVetorRemoverUltimo
-        );
-
-        // int delegua_vetor_tamanho(Vetor* v)
-        const tipoFuncaoVetorTamanho = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoVetorTamanho = this.modulo.getOrInsertFunction('delegua_vetor_tamanho', tipoFuncaoVetorTamanho);
-
-        // int delegua_vetor_inclui_texto(Vetor* v, const char* s)
-        const tipoFuncaoVetorIncluiTexto = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoVetorIncluiTexto = this.modulo.getOrInsertFunction(
-            'delegua_vetor_inclui_texto',
-            tipoFuncaoVetorIncluiTexto
-        );
-
-        // Dicionario* delegua_dicionario_criar(void)
-        const tipoFuncaoDicionarioCriar = llvm.FunctionType.get(this.montador.getPtrTy(), [], false);
-        this.funcaoDicionarioCriar = this.modulo.getOrInsertFunction(
-            'delegua_dicionario_criar',
-            tipoFuncaoDicionarioCriar
-        );
-
-        // void delegua_dicionario_definir(Dicionario* d, const char* chave, void* valor)
-        const tipoFuncaoDicionarioDefinir = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoDicionarioDefinir = this.modulo.getOrInsertFunction(
-            'delegua_dicionario_definir',
-            tipoFuncaoDicionarioDefinir
-        );
-
-        // void* delegua_dicionario_obter(Dicionario* d, const char* chave)
-        const tipoFuncaoDicionarioObter = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoDicionarioObter = this.modulo.getOrInsertFunction(
-            'delegua_dicionario_obter',
-            tipoFuncaoDicionarioObter
-        );
-
-        // int delegua_dicionario_contem(Dicionario* d, const char* chave)
-        const tipoFuncaoDicionarioContem = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoDicionarioContem = this.modulo.getOrInsertFunction(
-            'delegua_dicionario_contem',
-            tipoFuncaoDicionarioContem
-        );
-
-        // int delegua_dicionario_tamanho(Dicionario* d)
-        const tipoFuncaoDicionarioTamanho = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoDicionarioTamanho = this.modulo.getOrInsertFunction(
-            'delegua_dicionario_tamanho',
-            tipoFuncaoDicionarioTamanho
-        );
-
-        // double pow(double base, double expoente) — libm/ucrt, usado pelo operador **.
-        const tipoFuncaoPotencia = llvm.FunctionType.get(
-            this.montador.getDoubleTy(),
-            [this.montador.getDoubleTy(), this.montador.getDoubleTy()],
-            false
-        );
-        this.funcaoPotencia = this.modulo.getOrInsertFunction('pow', tipoFuncaoPotencia);
-
-        // int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem)
-        const tipoFuncaoVetorRemoverPrimeiro = llvm.FunctionType.get(
-            this.montador.getInt32Ty(),
-            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoVetorRemoverPrimeiro = this.modulo.getOrInsertFunction(
-            'delegua_vetor_remover_primeiro',
-            tipoFuncaoVetorRemoverPrimeiro
-        );
-
-        // void delegua_vetor_inverter(Vetor* v, int tam_elem)
-        const tipoFuncaoVetorInverter = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [this.montador.getPtrTy(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoVetorInverter = this.modulo.getOrInsertFunction('delegua_vetor_inverter', tipoFuncaoVetorInverter);
-
-        // void delegua_vetor_ordenar(Vetor* v, int tam_elem, int eh_numero)
-        const tipoFuncaoVetorOrdenar = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [this.montador.getPtrTy(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
-            false
-        );
-        this.funcaoVetorOrdenar = this.modulo.getOrInsertFunction('delegua_vetor_ordenar', tipoFuncaoVetorOrdenar);
-
-        // void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida)
-        const tipoFuncaoVetorFatiar = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [
-                this.montador.getPtrTy(),
-                this.montador.getInt32Ty(),
-                this.montador.getInt32Ty(),
-                this.montador.getInt32Ty(),
-                this.montador.getPtrTy(),
-            ],
-            false
-        );
-        this.funcaoVetorFatiar = this.modulo.getOrInsertFunction('delegua_vetor_fatiar', tipoFuncaoVetorFatiar);
-
-        // char* delegua_vetor_juntar_inteiro(Vetor* v, const char* sep)
-        // char* delegua_vetor_juntar_numero(Vetor* v, const char* sep)
-        // char* delegua_vetor_juntar_texto(Vetor* v, const char* sep)
-        const tipoFuncaoVetorJuntar = llvm.FunctionType.get(
-            this.montador.getPtrTy(),
-            [this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoVetorJuntarInteiro = this.modulo.getOrInsertFunction(
-            'delegua_vetor_juntar_inteiro',
-            tipoFuncaoVetorJuntar
-        );
-        this.funcaoVetorJuntarNumero = this.modulo.getOrInsertFunction(
-            'delegua_vetor_juntar_numero',
-            tipoFuncaoVetorJuntar
-        );
-        this.funcaoVetorJuntarTexto = this.modulo.getOrInsertFunction(
-            'delegua_vetor_juntar_texto',
-            tipoFuncaoVetorJuntar
-        );
-
-        // void delegua_vetor_filtrar_inteiro(Vetor* v, ptr fn, Vetor* saida)
-        // void delegua_vetor_filtrar_numero (Vetor* v, ptr fn, Vetor* saida)
-        // void delegua_vetor_mapear_inteiro (Vetor* v, ptr fn, Vetor* saida)
-        // void delegua_vetor_mapear_numero  (Vetor* v, ptr fn, Vetor* saida)
-        // Todos recebem (ptr, ptr, ptr) → void  — o ponteiro de função é opaco no IR.
-        const tipoFuncaoVetorCallback = llvm.FunctionType.get(
-            llvm.Type.getVoidTy(this.contexto),
-            [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
-            false
-        );
-        this.funcaoVetorFiltrarInteiro = this.modulo.getOrInsertFunction(
-            'delegua_vetor_filtrar_inteiro',
-            tipoFuncaoVetorCallback
-        );
-        this.funcaoVetorFiltrarNumero = this.modulo.getOrInsertFunction(
-            'delegua_vetor_filtrar_numero',
-            tipoFuncaoVetorCallback
-        );
-        this.funcaoVetorMapearInteiro = this.modulo.getOrInsertFunction(
-            'delegua_vetor_mapear_inteiro',
-            tipoFuncaoVetorCallback
-        );
-        this.funcaoVetorMapearNumero = this.modulo.getOrInsertFunction(
-            'delegua_vetor_mapear_numero',
-            tipoFuncaoVetorCallback
-        );
-        this.funcaoVetorMapearTexto = this.modulo.getOrInsertFunction(
-            'delegua_vetor_mapear_texto',
-            tipoFuncaoVetorCallback
-        );
-
-        // Registra apenas os módulos efetivamente importados no código.
-        const registros: Map<string, () => void> = new Map([
-            ['matematica', () => this.registrarModuloMatematica()],
-            ['fisica', () => this.registrarModuloFisica()],
-            ['estatistica', () => this.registrarModuloEstatistica()],
-            ['arquivos', () => this.registrarModuloArquivos()],
-            ['csv', () => this.registrarModuloCsv()],
-            ['json', () => this.registrarModuloJson()],
-            ['http', () => this.registrarModuloHttp()],
-            ['criptografia', () => this.registrarModuloCriptografia()],
-            ['dados', () => this.registrarModuloDados()],
-            ['argumentos', () => this.registrarModuloArgumentos()],
-            ['processo', () => this.registrarModuloProcesso()],
-            ['memoria', () => this.registrarModuloMemoria()],
-            ['rede', () => this.registrarModuloRede()],
-            ['tempo', () => this.registrarModuloTempo()],
-        ]);
-
-        if (modulosImportados) {
-            for (const modulo of modulosImportados) {
-                registros.get(modulo)?.();
-            }
-        } else {
-            // Fallback: registra todos (comportamento anterior).
-            for (const registrar of registros.values()) {
-                registrar();
-            }
         }
     }
 
@@ -6723,8 +5063,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.declararPrototipoFuncao(declaracao as FuncaoDeclaracao);
         }
 
+        // Interfaces antes das classes: métodos e funções podem receber parâmetros de interface.
+        for (const declaracao of todasDeclaracoes) {
+            if (declaracao instanceof InterfaceDeclaracao) this.registrarInterface(declaracao);
+        }
+
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = todasDeclaracoes.filter((d) => d instanceof Classe);
+        this.registrarMetodosSobrescritos(declaracoesClasses as Classe[]);
         for (const declaracao of declaracoesClasses) {
             await declaracao.aceitar(this);
         }
@@ -6741,6 +5087,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             (d) => !(d instanceof FuncaoDeclaracao) && !(d instanceof Classe)
         );
         await this.criarPontoEntrada(outrasDeclaracoes);
+
+        this.preencherDespachos();
 
         if (llvm.verifyModule(this.modulo)) {
             throw new Error('Falha ao verificar módulo LLVM.');
@@ -6823,3 +5171,53 @@ CompiladorLLVM.prototype.compilarFalhar = compilarFalhar;
 CompiladorLLVM.prototype.compilarTente = compilarTente;
 CompiladorLLVM.prototype.emitirSaidaDeTentes = emitirSaidaDeTentes;
 CompiladorLLVM.prototype.obterComparadorOrdenacao = obterComparadorOrdenacao;
+CompiladorLLVM.prototype.obterTipoDebug = obterTipoDebug;
+CompiladorLLVM.prototype.definirLocalizacaoDebug = definirLocalizacaoDebug;
+CompiladorLLVM.prototype.criarSubprogramaDebug = criarSubprogramaDebug;
+CompiladorLLVM.prototype.finalizarSubprogramaDebug = finalizarSubprogramaDebug;
+CompiladorLLVM.prototype.obterArquivoDebugParaHash = obterArquivoDebugParaHash;
+CompiladorLLVM.prototype.emitirDeclaracaoVariavelDebug = emitirDeclaracaoVariavelDebug;
+CompiladorLLVM.prototype.emitirDeclaracaoParametroDebug = emitirDeclaracaoParametroDebug;
+CompiladorLLVM.prototype.registrarInterface = registrarInterface;
+CompiladorLLVM.prototype.registrarMetodosSobrescritos = registrarMetodosSobrescritos;
+CompiladorLLVM.prototype.tipoFuncaoDe = tipoFuncaoDe;
+CompiladorLLVM.prototype.tiposLlvmIguais = tiposLlvmIguais;
+CompiladorLLVM.prototype.assinaturasCompativeis = assinaturasCompativeis;
+CompiladorLLVM.prototype.resolverImplementacaoMetodo = resolverImplementacaoMetodo;
+CompiladorLLVM.prototype.classeDescendeDe = classeDescendeDe;
+CompiladorLLVM.prototype.classeImplementaInterface = classeImplementaInterface;
+CompiladorLLVM.prototype.obterDespachoVirtual = obterDespachoVirtual;
+CompiladorLLVM.prototype.obterDespachoInterface = obterDespachoInterface;
+CompiladorLLVM.prototype.preencherDespachos = preencherDespachos;
+CompiladorLLVM.prototype.instanciarClasse = instanciarClasse;
+CompiladorLLVM.prototype.chamarMetodoInstancia = chamarMetodoInstancia;
+CompiladorLLVM.prototype.larguraInteira = larguraInteira;
+CompiladorLLVM.prototype.larguraTipoInteiro = larguraTipoInteiro;
+CompiladorLLVM.prototype.coagirEscalar = coagirEscalar;
+CompiladorLLVM.prototype.igualarLargurasInteiras = igualarLargurasInteiras;
+CompiladorLLVM.prototype.resolverMultiplicacao = resolverMultiplicacao;
+CompiladorLLVM.prototype.resolverAdicao = resolverAdicao;
+CompiladorLLVM.prototype.resolverSubtracao = resolverSubtracao;
+CompiladorLLVM.prototype.resolverDivisao = resolverDivisao;
+CompiladorLLVM.prototype.resolverModulo = resolverModulo;
+CompiladorLLVM.prototype.resolverExponenciacao = resolverExponenciacao;
+CompiladorLLVM.prototype.compararTextos = compararTextos;
+CompiladorLLVM.prototype.resolverIgualdade = resolverIgualdade;
+CompiladorLLVM.prototype.obterLiteralTextoSeguro = obterLiteralTextoSeguro;
+CompiladorLLVM.prototype.garantirPonteiroTextoNaoNulo = garantirPonteiroTextoNaoNulo;
+CompiladorLLVM.prototype.normalizarOperandoParaTextoSeguro = normalizarOperandoParaTextoSeguro;
+CompiladorLLVM.prototype.chamarMetodoTexto = chamarMetodoTexto;
+CompiladorLLVM.prototype.chamarFuncaoTexto = chamarFuncaoTexto;
+CompiladorLLVM.prototype.parsearTemplateString = parsearTemplateString;
+CompiladorLLVM.prototype.resolverTextoInterpolado = resolverTextoInterpolado;
+CompiladorLLVM.prototype.buscarFormatoLeia = buscarFormatoLeia;
+CompiladorLLVM.prototype.chamarMetodoDicionario = chamarMetodoDicionario;
+CompiladorLLVM.prototype.coletarDicionarioEmVetor = coletarDicionarioEmVetor;
+CompiladorLLVM.prototype.embalarValorParaDicionario = embalarValorParaDicionario;
+CompiladorLLVM.prototype.embalarValorEmHeap = embalarValorEmHeap;
+CompiladorLLVM.prototype.tamElementoEmBytes = tamElementoEmBytes;
+CompiladorLLVM.prototype.constTamElem = constTamElem;
+CompiladorLLVM.prototype.chamarMetodoVetor = chamarMetodoVetor;
+CompiladorLLVM.prototype.chamarMapear = chamarMapear;
+CompiladorLLVM.prototype.chamarEncontrar = chamarEncontrar;
+CompiladorLLVM.prototype.criarFuncaoNativa = criarFuncaoNativa;

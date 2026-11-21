@@ -6,7 +6,7 @@ on:
       - principal
 
 env:
-  LLVM_VERSION_MAJOR: 22
+  LLVM_VERSION_MAJOR: 23
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'yarn'
 
-      - name: Install LLVM 22 on Ubuntu 24.04
+      - name: Install LLVM 23 on Ubuntu 24.04
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
@@ -73,7 +73,7 @@ jobs:
           node-version: 24.x
           cache: 'yarn'
 
-      - name: Install LLVM 22 on Ubuntu 24.04
+      - name: Install LLVM 23 on Ubuntu 24.04
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
