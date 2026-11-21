@@ -143,6 +143,12 @@ int inteiro(void *valor) {
   return strtol(s, NULL, 10);
 }
 
+long long longo(void *valor) {
+  char *s = (char*) valor;
+
+  return strtoll(s, NULL, 10);
+}
+
 double numero(void *valor) {
   char *s = (char*) valor;
 

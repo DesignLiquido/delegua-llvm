@@ -168,6 +168,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoEscreva: llvm.FunctionCallee;
     funcaoLeia: llvm.FunctionCallee;
     funcaoInteiro: llvm.FunctionCallee;
+    funcaoLongo: llvm.FunctionCallee;
     funcaoNumero: llvm.FunctionCallee;
     funcaoTextoMaiusculo: llvm.FunctionCallee;
     funcaoTextoMinusculo: llvm.FunctionCallee;
@@ -217,6 +218,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Atribuído incrementalmente à medida que classes são declaradas.
     protected idClasse: Map<string, number> = new Map();
     protected proximoIdClasse: number = 0;
+    // Interfaces declaradas (`interface Nome { ... }`), registradas antes das classes.
+    protected interfacesDeclaradas: Map<string, InterfaceDeclaracao> = new Map();
+    // Interfaces que cada classe declara implementar diretamente (`implementa A, B`).
+    protected interfacesDaClasse: Map<string, string[]> = new Map();
+    // Funções de despacho dinâmico (chave `Tipo.metodo`), criadas sob demanda nos pontos de
+    // chamada e preenchidas em preencherDespachos(), quando todas as classes já são conhecidas.
+    protected despachos: Map<string, { funcao: llvm.Function; tipo: string; metodo: string; padrao?: llvm.Function }> =
+        new Map();
+    // `Classe.metodo` sobrescrito em alguma subclasse (direta ou indireta): só essas chamadas
+    // precisam de despacho dinâmico. Calculado das declarações antes de compilar as classes.
+    protected metodosSobrescritos: Set<string> = new Set();
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
     // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
@@ -278,7 +290,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     printfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
-        ['longo', '%ld'],
+        ['longo', '%lld'],
         ['número', '%g'],
         ['texto', '%s'],
         ['lógico', '%d'],
@@ -286,7 +298,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     scanfFormatos: Map<string, string> = new Map<string, string>([
         ['inteiro', '%d'],
-        ['longo', '%ld'],
+        ['longo', '%lld'],
         ['número', '%lf'],
         ['texto', '%s'],
     ]);
@@ -799,6 +811,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const temSuperClasseRegistrada = !!nomeSuperClasse && this.indicesPropriedades.has(nomeSuperClasse);
 
         this.idClasse.set(nomeClasse, this.proximoIdClasse++);
+        this.interfacesDaClasse.set(nomeClasse, (declaracao.implementa ?? []).map((simbolo) => simbolo.lexema));
 
         // 1. Coletar tipos LLVM das propriedades e construir o struct.
         //    Com herança plana: campos do pai vêm primeiro, depois os próprios.
@@ -1225,8 +1238,26 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     async visitarDeclaracaoInterface(_: InterfaceDeclaracao): Promise<any> {
-        // Declarações de interface são apenas metadados de tipo; sem geração de IR.
+        // Interfaces são registradas antes das classes (registrarInterface); sem geração de IR.
         return Promise.resolve();
+    }
+
+    /**
+     * Registra uma interface: os tipos de retorno e os parâmetros das assinaturas servem
+     * para inferir tipos e converter argumentos nas chamadas por meio da interface, que são
+     * despachadas em tempo de execução para a classe que implementa o método.
+     */
+    protected registrarInterface(declaracao: InterfaceDeclaracao): void {
+        const nomeInterface = declaracao.simbolo.lexema;
+        this.interfacesDeclaradas.set(nomeInterface, declaracao);
+        const tiposRetorno = new Map<string, string>();
+        const parametros = new Map<string, ParametroInterface[]>();
+        for (const assinatura of declaracao.metodos ?? []) {
+            tiposRetorno.set(assinatura.nome.lexema, assinatura.tipoRetorno ?? 'vazio');
+            parametros.set(assinatura.nome.lexema, assinatura.parametros ?? []);
+        }
+        this.metodosClasse.set(nomeInterface, tiposRetorno);
+        this.parametrosMetodosClasse.set(nomeInterface, parametros);
     }
 
     async visitarDeclaracaoInicioAlgoritmo(_: InicioAlgoritmo): Promise<any> {
@@ -1625,7 +1656,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (!(alvoResolvido instanceof VariavelEscopo) && ehValorLlvm(alvoResolvido)) {
             const tipoInferido = alvoBruto ? this.resolverTipoConstruto(alvoBruto as ConstrutoInterface) : null;
             if (tipoInferido && (tipoInferido === 'texto' || tipoEhDicionario(tipoInferido) || tipoEhVetor(tipoInferido))) {
-                alvoParaIndice = new VariavelEscopo(alvoResolvido as llvm.Value, undefined, tipoInferido);
+                // Um vetor devolvido por função ou método (`fonte.versoes()[0]`) chega como
+                // %Vetor por valor: o GEP precisa do endereço.
+                const valorAlvo = tipoEhVetor(tipoInferido)
+                    ? this.ponteiroParaVetor(alvoResolvido)
+                    : (alvoResolvido as llvm.Value);
+                alvoParaIndice = new VariavelEscopo(valorAlvo, undefined, tipoInferido);
             }
         }
 
@@ -2140,14 +2176,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         // Coerce o valor ao tipo do campo para evitar stores de tamanho errado
-        // (ex.: double 0.0 num campo inteiro escreve 8 bytes em vez de 4).
-        if (novoValorLlvm) {
-            const construtorTipoValor = novoValorLlvm.getType()?.constructor;
-            if ((tipoProp === 'inteiro' || tipoProp === 'inteiro') && construtorTipoValor === llvm.Type) {
-                novoValorLlvm = this.montador.CreateFPToSI(novoValorLlvm, this.montador.getInt32Ty(), 'coerce_int');
-            } else if ((tipoProp === 'número' || tipoProp === 'numero') && construtorTipoValor === llvm.IntegerType) {
-                novoValorLlvm = this.montador.CreateSIToFP(novoValorLlvm, this.montador.getDoubleTy(), 'coerce_double');
-            }
+        // (ex.: double 0.0 num campo inteiro escreve 8 bytes em vez de 4; i32 num campo
+        // `longo` deixa os 4 bytes altos com lixo).
+        if (novoValorLlvm && (tipoEhInteiroDelegua(tipoProp) || tipoProp === 'número' || tipoProp === 'numero')) {
+            novoValorLlvm = this.coagirEscalar(novoValorLlvm, this.obterTipoLlvm(tipoProp), 'coerce_campo');
         }
 
         this.montador.CreateStore(novoValorLlvm, gepPtr);
@@ -3238,6 +3270,32 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return Promise.resolve();
     }
 
+    /** O construto é `alvo[chave]` com `alvo` do tipo dicionário. */
+    protected ehLeituraDeDicionario(construto: ConstrutoInterface): boolean {
+        if (construto?.constructor !== AcessoIndiceVariavel) return false;
+        const acesso = construto as unknown as AcessoNomeavel;
+        const alvo = acesso.entidadeChamada ?? acesso.entidade ?? acesso.variavel ?? acesso.objeto;
+        if (!alvo) return false;
+        if (alvo.constructor === Variavel) {
+            try {
+                return tipoEhDicionario(this.pilhaVariaveisEscopo.obterValor((alvo as Variavel).simbolo.lexema)?.tipo);
+            } catch {
+                return false;
+            }
+        }
+        return tipoEhDicionario(this.resolverTipoConstruto(alvo as ConstrutoInterface));
+    }
+
+    /** Formato do printf para um valor numérico pelo tipo LLVM (i32, i64, double); undefined nos demais. */
+    protected formatoNumericoPeloTipoLlvm(tipo: llvm.Type): string | undefined {
+        if (!tipo) return undefined;
+        if (tipo.getTypeID() === llvm.Type.TypeID.DoubleTyID) return this.printfFormatos.get('número');
+        const largura = this.larguraTipoInteiro(tipo);
+        if (largura === 64) return this.printfFormatos.get('longo');
+        if (largura === 32) return this.printfFormatos.get('inteiro');
+        return undefined;
+    }
+
     async visitarDeclaracaoEscreva(declaracao: Escreva): Promise<any> {
         this.definirLocalizacaoDebug(declaracao.simboloEscreva?.linha ?? 0, 0);
         const argumentosResolvidos: llvm.Value[] = [];
@@ -3279,7 +3337,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 argumentosResolvidos.push(valorCarregado);
             } else {
                 const tipoArgumento = this.resolverTipoConstruto(argumento) || argumento.tipo;
-                const formatoArgumento = this.printfFormatos.get(tipoArgumento);
+                let formatoArgumento = this.printfFormatos.get(tipoArgumento);
+                // O tipo inferido de uma expressão pode divergir do valor gerado (ex.: campo
+                // `longo` + literal, inferido como `número`): para números, vale o tipo LLVM.
+                const formatoPeloValor = ehValorLlvm(argumentoResolvido)
+                    ? this.formatoNumericoPeloTipoLlvm((argumentoResolvido as llvm.Value).getType())
+                    : undefined;
+                if (formatoPeloValor && !(formatoArgumento || '').includes('%s')) {
+                    formatoArgumento = formatoPeloValor;
+                }
+                if (!formatoArgumento && this.ehLeituraDeDicionario(argumento)) {
+                    // Valores de dicionário são ponteiros opacos, sem o tipo em tempo de
+                    // execução: sem um tipo declarado, não há como escolher o formato.
+                    const erroTipo = new ErroCompilador(
+                        `Não é possível escrever um valor de dicionário sem tipo conhecido. ` +
+                            `Atribua-o antes a uma variável com tipo declarado (ex.: \`var valor: texto = dicionario["chave"]\`).`
+                    );
+                    erroTipo.linha = argumento.linha;
+                    throw erroTipo;
+                }
                 formatosTexto.push(formatoArgumento);
                 if ((formatoArgumento || '').includes('%s')) {
                     argumentosResolvidos.push(
@@ -3701,6 +3777,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     if (this.registroClasses.has(nomeCallee)) {
                         return nomeCallee;
                     }
+                    if (nomeCallee === 'longo' && chamada.argumentos.length === 1) {
+                        return 'longo';
+                    }
                     // Resolve o tipo de retorno a partir da declaração da função no escopo.
                     try {
                         const varEscopo = this.pilhaVariaveisEscopo.obterValor(nomeCallee);
@@ -3911,12 +3990,44 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     /** Largura em bits de um valor inteiro LLVM (0 se não for inteiro). */
     protected larguraInteira(valor: llvm.Value): number {
-        const tipo = valor?.getType?.();
+        return this.larguraTipoInteiro(valor?.getType?.());
+    }
+
+    /** Largura em bits de um tipo inteiro LLVM (0 se não for inteiro). */
+    protected larguraTipoInteiro(tipo: llvm.Type | undefined): number {
         if (!tipo || tipo.getTypeID() !== llvm.Type.TypeID.IntegerTyID) return 0;
         for (const bits of [1, 8, 16, 32, 64, 128]) {
             if (tipo.isIntegerTy(bits)) return bits;
         }
         return 0;
+    }
+
+    /**
+     * Converte um valor escalar para o tipo LLVM de destino: inteiros de larguras diferentes
+     * (`inteiro` i32 ↔ `longo` i64) são estendidos com sinal ou truncados, e inteiros ↔
+     * `número` (double) são convertidos. `lógico` (i1), ponteiros e demais tipos passam sem
+     * alteração.
+     */
+    protected coagirEscalar(valor: llvm.Value, tipoDestino: llvm.Type, nome: string): llvm.Value {
+        const tipoOrigem = valor?.getType?.();
+        if (!tipoOrigem || !tipoDestino) return valor;
+        const larguraOrigem = this.larguraTipoInteiro(tipoOrigem);
+        const larguraDestino = this.larguraTipoInteiro(tipoDestino);
+        const origemEhDouble = tipoOrigem.getTypeID() === llvm.Type.TypeID.DoubleTyID;
+        const destinoEhDouble = tipoDestino.getTypeID() === llvm.Type.TypeID.DoubleTyID;
+
+        if (larguraOrigem > 1 && larguraDestino > 1 && larguraOrigem !== larguraDestino) {
+            return larguraOrigem < larguraDestino
+                ? this.montador.CreateSExt(valor, tipoDestino, `${nome}_sext`)
+                : this.montador.CreateTrunc(valor, tipoDestino, `${nome}_trunc`);
+        }
+        if (origemEhDouble && larguraDestino > 1) {
+            return this.montador.CreateFPToSI(valor, tipoDestino, `${nome}_fptosi`);
+        }
+        if (larguraOrigem > 1 && destinoEhDouble) {
+            return this.montador.CreateSIToFP(valor, tipoDestino, `${nome}_sitofp`);
+        }
+        return valor;
     }
 
     /**
@@ -4532,6 +4643,202 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return objetoAlloc;
     }
 
+    /**
+     * Marca `Ancestral.metodo` para cada método que uma classe declara e que algum ancestral
+     * também tem: uma chamada por meio de uma variável do tipo do ancestral pode alcançar a
+     * sobrescrita, então precisa de despacho dinâmico. Usa só as declarações (antes de compilar
+     * as classes), porque um método da superclasse pode chamar `isto.metodo()` antes de a
+     * subclasse ser compilada.
+     */
+    protected registrarMetodosSobrescritos(classes: Classe[]): void {
+        const superclasses = new Map<string, string>();
+        const metodos = new Map<string, Set<string>>();
+        for (const classe of classes) {
+            if (classe.estrangeira) continue;
+            const nome = classe.simbolo.lexema;
+            const referencia = classe.superClasses?.[0] as { simbolo?: { lexema?: string }; tipo?: string };
+            const nomeSuper = referencia?.simbolo?.lexema ?? referencia?.tipo;
+            if (nomeSuper) superclasses.set(nome, nomeSuper);
+            metodos.set(
+                nome,
+                new Set(classe.metodos.map((m) => m.simbolo.lexema).filter((m) => m !== 'construtor'))
+            );
+        }
+        for (const [nome, metodosProprios] of metodos) {
+            const visitados = new Set<string>([nome]);
+            let ancestral = superclasses.get(nome);
+            while (ancestral && !visitados.has(ancestral)) {
+                visitados.add(ancestral);
+                for (const metodo of metodosProprios) this.metodosSobrescritos.add(`${ancestral}.${metodo}`);
+                ancestral = superclasses.get(ancestral);
+            }
+        }
+    }
+
+    /** Tipo LLVM de função de uma função já criada (o binding não expõe Function.getFunctionType). */
+    protected tipoFuncaoDe(funcao: llvm.Function): llvm.FunctionType {
+        const tiposParametros: llvm.Type[] = [];
+        for (let i = 0; i < funcao.arg_size(); i++) tiposParametros.push(funcao.getArg(i).getType());
+        return llvm.FunctionType.get(funcao.getReturnType(), tiposParametros, false);
+    }
+
+    /** Dois tipos LLVM são iguais (compara TypeID e, para inteiros, a largura). */
+    protected tiposLlvmIguais(a: llvm.Type, b: llvm.Type): boolean {
+        if (a.getTypeID() !== b.getTypeID()) return false;
+        return a.getTypeID() !== llvm.Type.TypeID.IntegerTyID || this.larguraTipoInteiro(a) === this.larguraTipoInteiro(b);
+    }
+
+    /** A função `candidata` pode ser chamada com os argumentos e o retorno de `despacho`. */
+    protected assinaturasCompativeis(despacho: llvm.Function, candidata: llvm.Function): boolean {
+        if (despacho.arg_size() !== candidata.arg_size()) return false;
+        if (!this.tiposLlvmIguais(despacho.getReturnType(), candidata.getReturnType())) return false;
+        for (let i = 0; i < despacho.arg_size(); i++) {
+            if (!this.tiposLlvmIguais(despacho.getArg(i).getType(), candidata.getArg(i).getType())) return false;
+        }
+        return true;
+    }
+
+    /** Implementação de `metodo` que uma instância de `nomeClasse` executa (sobe a herança). */
+    protected resolverImplementacaoMetodo(nomeClasse: string, metodo: string): llvm.Function | null {
+        let atual: string | undefined = nomeClasse;
+        while (atual) {
+            const funcao = this.modulo.getFunction(`${atual}_${metodo}`);
+            if (funcao) return funcao;
+            atual = this.superClasses.get(atual);
+        }
+        return null;
+    }
+
+    /** `nomeClasse` é `ancestral` ou descende dele. */
+    protected classeDescendeDe(nomeClasse: string, ancestral: string): boolean {
+        let atual: string | undefined = nomeClasse;
+        while (atual) {
+            if (atual === ancestral) return true;
+            atual = this.superClasses.get(atual);
+        }
+        return false;
+    }
+
+    /** `nomeClasse`, ou uma de suas superclasses, declara implementar `nomeInterface`. */
+    protected classeImplementaInterface(nomeClasse: string, nomeInterface: string): boolean {
+        let atual: string | undefined = nomeClasse;
+        while (atual) {
+            if (this.interfacesDaClasse.get(atual)?.includes(nomeInterface)) return true;
+            atual = this.superClasses.get(atual);
+        }
+        return false;
+    }
+
+    /**
+     * Função de despacho para `metodo` chamado por meio de uma variável do tipo `nomeClasse`:
+     * mesma assinatura da implementação estática; o corpo, criado em preencherDespachos(),
+     * escolhe a sobrescrita pelo `__tipoId` do objeto.
+     */
+    protected obterDespachoVirtual(nomeClasse: string, metodo: string, padrao: llvm.Function): llvm.Function {
+        const chave = `${nomeClasse}.${metodo}`;
+        const existente = this.despachos.get(chave);
+        if (existente) return existente.funcao;
+        const funcao = llvm.Function.Create(
+            this.tipoFuncaoDe(padrao),
+            llvm.Function.LinkageTypes.InternalLinkage,
+            `__despacho_${nomeClasse}_${metodo}`,
+            this.modulo
+        );
+        this.despachos.set(chave, { funcao, tipo: nomeClasse, metodo, padrao });
+        return funcao;
+    }
+
+    /** Função de despacho para `metodo` chamado por meio de uma variável do tipo de uma interface. */
+    protected obterDespachoInterface(nomeInterface: string, metodo: string): llvm.Function | null {
+        const chave = `${nomeInterface}.${metodo}`;
+        const existente = this.despachos.get(chave);
+        if (existente) return existente.funcao;
+        const assinatura = this.interfacesDeclaradas
+            .get(nomeInterface)
+            .metodos?.find((m) => m.nome.lexema === metodo);
+        if (!assinatura) return null;
+        const tiposParametros: llvm.Type[] = [this.montador.getPtrTy()];
+        for (const parametro of assinatura.parametros ?? []) {
+            tiposParametros.push(
+                tipoEhVetor(parametro.tipoDado) ? this.montador.getPtrTy() : this.obterTipoLlvm(parametro.tipoDado)
+            );
+        }
+        const tipoRetornoStr = assinatura.tipoRetorno ?? 'vazio';
+        const tipoRetorno =
+            tipoRetornoStr === 'vazio' ? llvm.Type.getVoidTy(this.contexto) : this.obterTipoLlvm(tipoRetornoStr);
+        const funcao = llvm.Function.Create(
+            llvm.FunctionType.get(tipoRetorno, tiposParametros, false),
+            llvm.Function.LinkageTypes.InternalLinkage,
+            `__despacho_${nomeInterface}_${metodo}`,
+            this.modulo
+        );
+        this.despachos.set(chave, { funcao, tipo: nomeInterface, metodo });
+        return funcao;
+    }
+
+    /**
+     * Gera o corpo das funções de despacho: lê o `__tipoId` (campo 0 de todo objeto) e
+     * chama a implementação da classe concreta. Classes cuja implementação tem assinatura
+     * diferente ficam com a implementação padrão.
+     */
+    protected preencherDespachos(): void {
+        for (const despacho of this.despachos.values()) {
+            const ehInterface = !despacho.padrao;
+            const casos: Array<[number, llvm.Function]> = [];
+            for (const [nomeCandidata, idCandidata] of this.idClasse) {
+                const pertence = ehInterface
+                    ? this.classeImplementaInterface(nomeCandidata, despacho.tipo)
+                    : nomeCandidata !== despacho.tipo && this.classeDescendeDe(nomeCandidata, despacho.tipo);
+                if (!pertence) continue;
+                const implementacao = this.resolverImplementacaoMetodo(nomeCandidata, despacho.metodo);
+                if (!implementacao || implementacao === despacho.padrao) continue;
+                if (!this.assinaturasCompativeis(despacho.funcao, implementacao)) continue;
+                casos.push([idCandidata, implementacao]);
+            }
+
+            this.montador.SetCurrentDebugLocation(new llvm.DebugLoc());
+            const funcao = despacho.funcao;
+            const argumentos: llvm.Value[] = [];
+            for (let i = 0; i < funcao.arg_size(); i++) argumentos.push(funcao.getArg(i));
+            const retornaVazio = funcao.getReturnType().isVoidTy();
+            const emitirChamada = (alvo: llvm.Function) => {
+                const resultado = this.montador.CreateCall(alvo, argumentos);
+                if (retornaVazio) this.montador.CreateRetVoid();
+                else this.montador.CreateRet(resultado);
+            };
+
+            const blocoEntrada = llvm.BasicBlock.Create(this.contexto, 'entrada', funcao);
+            const blocoPadrao = llvm.BasicBlock.Create(this.contexto, 'padrao', funcao);
+            this.montador.SetInsertPoint(blocoEntrada);
+            const idTipo = this.montador.CreateLoad(this.montador.getInt32Ty(), funcao.getArg(0), 'tipo_id');
+            const escolha = this.montador.CreateSwitch(idTipo, blocoPadrao, casos.length);
+            for (const [idCaso, implementacao] of casos) {
+                const blocoCaso = llvm.BasicBlock.Create(this.contexto, `caso_${idCaso}`, funcao);
+                escolha.addCase(ConstantInt.get(this.contexto, new APInt(32, idCaso)), blocoCaso);
+                this.montador.SetInsertPoint(blocoCaso);
+                emitirChamada(implementacao);
+            }
+
+            this.montador.SetInsertPoint(blocoPadrao);
+            if (despacho.padrao) {
+                emitirChamada(despacho.padrao);
+            } else {
+                // Nenhuma classe conhecida implementa o método para este objeto.
+                const mensagem = this.montador.CreateGlobalStringPtr(
+                    `Método '${despacho.metodo}' da interface '${despacho.tipo}' não implementado pelo objeto.`,
+                    'msg_despacho',
+                    0,
+                    this.modulo
+                );
+                const falhar = this.obterFuncaoRuntime('falhar', llvm.Type.getVoidTy(this.contexto), [
+                    this.montador.getPtrTy(),
+                ]);
+                this.montador.CreateCall(falhar, [mensagem]);
+                this.montador.CreateUnreachable();
+            }
+        }
+    }
+
     protected async chamarMetodoInstancia(
         acesso: AcessoMetodo | AcessoMetodoOuPropriedade,
         argumentos: ConstrutoInterface[]
@@ -4804,6 +5111,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
                 return this.montador.CreateCall(funcaoLlvm, argsQualquer);
             }
+        }
+
+        // Despacho dinâmico: por uma interface, sempre; por uma classe, para que a chamada
+        // alcance a sobrescrita de uma subclasse. `super.metodo()` chama a versão da
+        // superclasse diretamente.
+        if (!funcaoLlvm && this.interfacesDeclaradas.has(nomeClasse)) {
+            funcaoLlvm = this.obterDespachoInterface(nomeClasse, nomeMetodo);
+        } else if (
+            funcaoLlvm &&
+            this.metodosSobrescritos.has(`${nomeClasse}.${nomeMetodo}`) &&
+            acesso.objeto?.constructor !== Super
+        ) {
+            funcaoLlvm = this.obterDespachoVirtual(nomeClasse, nomeMetodo, funcaoLlvm);
         }
 
         if (!funcaoLlvm) {
@@ -5255,7 +5575,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected carregarPtrClasseSePreciso(objVar: VariavelEscopo): llvm.Value {
         const llvmVal = objVar.variavelLlvm;
-        if (llvmVal && llvmVal.constructor === llvm.AllocaInst && this.registroClasses.has(objVar.tipo)) {
+        if (
+            llvmVal &&
+            llvmVal.constructor === llvm.AllocaInst &&
+            (this.registroClasses.has(objVar.tipo) || this.interfacesDeclaradas.has(objVar.tipo))
+        ) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), llvmVal, 'load_obj_ptr');
         }
         return llvmVal;
@@ -5777,6 +6101,21 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     return await this.carregarArgumentoInteiro(expressao.argumentos[0]);
                 }
             }
+            // longo(x): com x numérico converte para i64; com texto, chama a função C (strtoll).
+            if (nomeEntidadeChamada === 'longo' && expressao.argumentos.length === 1) {
+                const tipoI64 = llvm.Type.getInt64Ty(this.contexto);
+                const tipoArgumento = this.resolverTipoConstruto(expressao.argumentos[0]);
+                if (tipoArgumento === 'número' || tipoArgumento === 'numero') {
+                    const valor = await this.carregarArgumentoNumero(expressao.argumentos[0]);
+                    return this.coagirEscalar(valor, tipoI64, 'para_longo');
+                }
+                if (tipoEhInteiroDelegua(tipoArgumento)) {
+                    const valor = await this.carregarArgumentoInteiro(expressao.argumentos[0]);
+                    return this.coagirEscalar(valor, tipoI64, 'para_longo');
+                }
+                const textoPtr = await this.carregarArgumentoTexto(expressao.argumentos[0]);
+                return this.montador.CreateCall(this.funcaoLongo, [textoPtr], 'texto_para_longo');
+            }
             // real(x) / decimal(x): conversão para double. O núcleo envolve em real(...) os
             // retornos e inicializadores de contexto `real` (garantirTipoReal).
             if ((nomeEntidadeChamada === 'real' || nomeEntidadeChamada === 'decimal') && expressao.argumentos.length === 1) {
@@ -6074,6 +6413,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoFuncaoInteiro = llvm.FunctionType.get(this.montador.getInt32Ty(), [this.montador.getPtrTy()], false);
 
         this.funcaoInteiro = this.modulo.getOrInsertFunction('inteiro', tipoFuncaoInteiro);
+
+        // long long longo(void *valor)
+        const tipoFuncaoLongo = llvm.FunctionType.get(llvm.Type.getInt64Ty(this.contexto), [this.montador.getPtrTy()], false);
+
+        this.funcaoLongo = this.modulo.getOrInsertFunction('longo', tipoFuncaoLongo);
 
         // double numero(void *valor)
         const tipoFuncaoNumero = llvm.FunctionType.get(this.montador.getDoubleTy(), [this.montador.getPtrTy()], false);
@@ -6723,8 +7067,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.declararPrototipoFuncao(declaracao as FuncaoDeclaracao);
         }
 
+        // Interfaces antes das classes: métodos e funções podem receber parâmetros de interface.
+        for (const declaracao of todasDeclaracoes) {
+            if (declaracao instanceof InterfaceDeclaracao) this.registrarInterface(declaracao);
+        }
+
         // Classes primeiro: os structs e métodos devem existir antes de qualquer uso.
         const declaracoesClasses = todasDeclaracoes.filter((d) => d instanceof Classe);
+        this.registrarMetodosSobrescritos(declaracoesClasses as Classe[]);
         for (const declaracao of declaracoesClasses) {
             await declaracao.aceitar(this);
         }
@@ -6741,6 +7091,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             (d) => !(d instanceof FuncaoDeclaracao) && !(d instanceof Classe)
         );
         await this.criarPontoEntrada(outrasDeclaracoes);
+
+        this.preencherDespachos();
 
         if (llvm.verifyModule(this.modulo)) {
             throw new Error('Falha ao verificar módulo LLVM.');

@@ -38,7 +38,8 @@ describe('Compilador - Dicionário', () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'var d: qualquer = {}',
-            'escreva(d["chave"])',
+            'var valor: texto = d["chave"]',
+            'escreva(valor)',
         ]);
 
         expect(resultado).toBeTruthy();
@@ -50,7 +51,8 @@ describe('Compilador - Dicionário', () => {
         const resultado = await compilador.compilar([
             'var d: qualquer = {}',
             'var nome: texto = "chave"',
-            'escreva(d[nome])',
+            'var valor: texto = d[nome]',
+            'escreva(valor)',
         ]);
 
         expect(resultado).toBeTruthy();

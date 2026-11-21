@@ -13,7 +13,7 @@ describe('Compilador - Longo', () => {
         expect(resultado).toContain('store i64');
     });
 
-    it('Literal longo em escreva usa formato %ld', async () => {
+    it('Literal longo em escreva usa formato %lld', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'var x: longo = 9999999999',
@@ -22,7 +22,7 @@ describe('Compilador - Longo', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('%x = alloca i64');
-        expect(resultado).toContain('%ld');
+        expect(resultado).toContain('%lld');
         expect(resultado).toContain('call i32 (ptr, ...) @escreva');
     });
 

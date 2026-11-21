@@ -168,10 +168,10 @@ function determinarCaminhoBinario(
     const manterNome = !extensaoExecutavel || (nomeExplicito && path.extname(nomeBinario) !== '');
     const nomeComExtensao = manterNome ? nomeBinario : `${nomeBinario}${extensaoExecutavel}`;
 
-    let caminhoBinario = path.join(diretorioSaida, nomeComExtensao);
+    let caminhoBinario = path.resolve(diretorioSaida, nomeComExtensao);
     if (fs.existsSync(caminhoBinario) && fs.statSync(caminhoBinario).isDirectory()) {
         const extensaoAlternativa = extensaoExecutavel || '.out';
-        caminhoBinario = path.join(diretorioSaida, `${nomeBinario}${extensaoAlternativa}`);
+        caminhoBinario = path.resolve(diretorioSaida, `${nomeBinario}${extensaoAlternativa}`);
     }
 
     return caminhoBinario;
