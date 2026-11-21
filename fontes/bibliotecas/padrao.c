@@ -18,9 +18,41 @@ static void _delegua_handler_parametro_invalido(
     fflush(stderr);
 }
 
+// Saída do console em UTF-8. Os textos de Delégua são UTF-8, mas o console do Windows
+// (cmd.exe, PowerShell) interpreta a saída na página de código dele (ex.: 850 ou 1252), o
+// que corrompe acentos. Se houver um console e ele não estiver em UTF-8, muda para UTF-8 e
+// restaura a página original ao terminar, para não deixar o console alterado. (Só a saída:
+// a leitura do console em UTF-8 não é confiável em todas as versões do Windows.)
+// Declaradas aqui, e não com <windows.h>, para não trazer as macros do Windows para o
+// código do runtime; ficam na kernel32, sempre ligada.
+__declspec(dllimport) unsigned int __stdcall GetConsoleOutputCP(void);
+__declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int codigo);
+#define DELEGUA_CP_UTF8 65001u
+
+static unsigned int _delegua_pagina_saida_original = 0;
+
+static void _delegua_restaurar_console(void) {
+    if (_delegua_pagina_saida_original != 0) {
+        fflush(stdout);
+        fflush(stderr);
+        SetConsoleOutputCP(_delegua_pagina_saida_original);
+    }
+}
+
+static void _delegua_console_utf8(void) {
+    // 0: o processo não tem console (saída para arquivo ou canal, sem console anexado).
+    unsigned int atual = GetConsoleOutputCP();
+    if (atual == 0 || atual == DELEGUA_CP_UTF8) return;
+    if (SetConsoleOutputCP(DELEGUA_CP_UTF8)) {
+        _delegua_pagina_saida_original = atual;
+        atexit(_delegua_restaurar_console);
+    }
+}
+
 __attribute__((constructor))
 static void _delegua_registrar_handlers(void) {
     _set_invalid_parameter_handler(_delegua_handler_parametro_invalido);
+    _delegua_console_utf8();
 }
 #endif
 
