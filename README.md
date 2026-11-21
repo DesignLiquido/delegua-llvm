@@ -31,13 +31,13 @@ sudo apt-get install -y wget gnupg lsb-release ca-certificates cmake zlib1g-dev 
 # Descarregar o script de instalação do LLVM
 wget https://apt.llvm.org/llvm.sh
 chmod +x llvm.sh
-sudo ./llvm.sh 22
+sudo ./llvm.sh 23
 
 # Verificar se o LLVM foi instalado corretamente
-sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 220
-sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 220
-sudo update-alternatives --install /usr/bin/opt opt /usr/bin/opt-22 220
-sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-22 220
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-23 230
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-23 230
+sudo update-alternatives --install /usr/bin/opt opt /usr/bin/opt-23 230
+sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-23 230
 clang --version
 opt --version
 llvm-config --version
