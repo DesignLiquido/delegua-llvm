@@ -30,7 +30,7 @@
   "dependencies": {
     "@designliquido/delegua": "^1.28.6",
     "@designliquido/delprops": "^0.1.0",
-    "@designliquido/llvm-bindings": "^10.0.0",
+    "@designliquido/llvm-bindings": "^10.0.1",
     "commander": "^12.1.0"
   },
   "devDependencies": {
