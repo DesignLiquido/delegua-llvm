@@ -37,7 +37,8 @@ const MAPA_MODULOS: Map<string, BibliotecaCompilacao> = new Map([
         },
     ],
     ['dados', { arquivosC: ['dados.c'], flagsLink: [] }],
-    ['argumentos', { arquivosC: ['argumentos.c'], flagsLink: [] }],
+    // CommandLineToArgvW (shell32) no Windows, para ler os argumentos em UTF-16.
+    ['argumentos', { arquivosC: ['argumentos.c'], flagsLink: [], flagsLinkPorSistema: { windows: ['-lshell32'] } }],
     ['processo', { arquivosC: ['processo.c'], flagsLink: [] }],
     ['memoria', { arquivosC: ['memoria.c'], flagsLink: [] }],
     // Winsock no Windows; nos demais sistemas os soquetes estão na biblioteca C.

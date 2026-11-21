@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 import { CompiladorLLVM } from '../../fontes/compilador-llvm';
+import { obterBibliotecasParaCompilacao } from '../../fontes/bibliotecas-compilacao';
 
 describe('Compilador - Biblioteca argumentos', () => {
     describe('Importação dinâmica: var arg = importar("argumentos")', () => {
@@ -71,5 +72,14 @@ describe('Compilador - Biblioteca argumentos', () => {
             expect(resultado).toContain('delegua_arg_argumento');
             expect(resultado).toContain('delegua_arq_diretorio_atual');
         });
+    });
+});
+
+describe('Biblioteca argumentos - ligação', () => {
+    it('liga shell32 (CommandLineToArgvW) apenas no Windows', () => {
+        const windows = obterBibliotecasParaCompilacao(['argumentos'], '/b', 'windows');
+        const linux = obterBibliotecasParaCompilacao(['argumentos'], '/b', 'linux');
+        expect(windows.flagsLink).toContain('-lshell32');
+        expect(linux.flagsLink).not.toContain('-lshell32');
     });
 });

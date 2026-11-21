@@ -35,8 +35,10 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev clang-${{ env.LLVM_VERSION_MAJOR }}
           echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
+          # clang para os testes que compilam e executam programas (ex.: argumentos-execucao).
+          sudo ln -sf /usr/bin/clang-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/clang
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
