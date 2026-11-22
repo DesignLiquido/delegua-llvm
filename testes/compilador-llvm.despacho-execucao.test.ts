@@ -95,6 +95,39 @@ descrever('Despacho dinâmico e longo - execução', () => {
         ]);
     }, 300000);
 
+    it('valor de interface repassado, guardado em campo e retornado', async () => {
+        const linhas = await compilarEExecutar('interface-valor', [
+            'interface F {',
+            '    nome(): texto',
+            '}',
+            'classe M implementa F {',
+            '    nome(): texto { retorna "m" }',
+            '}',
+            'classe N implementa F {',
+            '    nome(): texto { retorna "n" }',
+            '}',
+            'funcao interna(f: F): texto { retorna f.nome() }',
+            'funcao externa(f: F): texto { retorna interna(f) }',
+            'classe Dono {',
+            '    f: F',
+            '    construtor(f: F) { isto.f = f }',
+            '    direto(): texto { retorna isto.f.nome() }',
+            '    repassar(): texto { retorna interna(isto.f) }',
+            '}',
+            'funcao criar(): F { retorna N() }',
+            'funcao devolver(f: F): F { retorna f }',
+            'escreva(externa(M()))',
+            'var d = Dono(N())',
+            'escreva(d.direto())',
+            'escreva(d.repassar())',
+            'var g: F = criar()',
+            'escreva(interna(g))',
+            'escreva(devolver(M()).nome())',
+        ]);
+
+        expect(linhas).toEqual(['m', 'n', 'n', 'n', 'm']);
+    }, 300000);
+
     it('longo em campos de classe, longo(texto) e escreva', async () => {
         const linhas = await compilarEExecutar('longo', [
             'classe V {',

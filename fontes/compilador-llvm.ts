@@ -1363,7 +1363,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const escopoIteracao = new Map<string, VariavelEscopo>();
-        if (ehVetor && this.registroClasses.has(tipoElementoStr)) {
+        if (ehVetor && this.ehTipoObjeto(tipoElementoStr)) {
             // Elementos de classe são ponteiros no vetor; carrega o ptr do alloca
             // para que variavelLlvm seja o object ptr direto, igual a instanciarClasse.
             const objPtr = this.montador.CreateLoad(
@@ -1973,7 +1973,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             let valorFinal: llvm.Value;
             if (valorResolvido instanceof VariavelEscopo) {
                 const construtorInstValor = valorResolvido.variavelLlvm?.constructor;
-                const ehInstanciaClasse = this.registroClasses.has(valorResolvido.tipo);
+                const ehInstanciaClasse = this.ehTipoObjeto(valorResolvido.tipo);
                 const origemPrecisaCarregar = ehInstanciaClasse
                     ? construtorInstValor === llvm.AllocaInst || construtorInstValor === llvm.GetElementPtrInst
                     : construtorInstValor === llvm.AllocaInst ||
@@ -2435,7 +2435,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoRetorno = declaracao.valor.tipo || valorResolvido.tipo || 'número';
             // Instâncias de classe: o ptr já é o valor final (malloc result ou argumento).
             // Não deve ser carregado — carregarPtrClasseSePreciso resolve alloca(ptr) se necessário.
-            if (this.registroClasses.has(valorResolvido.tipo)) {
+            if (this.ehTipoObjeto(valorResolvido.tipo)) {
                 this.emitirSaidaDeTentes(this.tentesAtivos);
                 this.montador.CreateRet(this.carregarPtrClasseSePreciso(valorResolvido));
                 return Promise.resolve();
@@ -2898,7 +2898,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // LoadInst já SÃO o ponteiro. texto/lógico/qualquer/dicionário seguem a
             // convenção oposta (sempre ptr* de dupla indireção, sempre precisam de um load),
             // por isso usam apenas o tipo LLVM (`tipoEhPonteiro`) para decidir.
-            if (this.registroClasses.has(tipoDelegua)) {
+            if (this.ehTipoObjeto(tipoDelegua)) {
                 const construtorInst = valor.variavelLlvm?.constructor;
                 const precisaCarregar = construtorInst === llvm.AllocaInst || construtorInst === llvm.GetElementPtrInst;
                 return precisaCarregar
@@ -3474,7 +3474,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         // Instanciação de classe: var p = Ponto(...)
-        if (this.registroClasses.has(tipoVariavel)) {
+        if (this.ehTipoObjeto(tipoVariavel)) {
             const inicializadorResolvido = await declaracao.inicializador.aceitar(this);
             // O inicializador pode ser um CallInst cru (construtor/método) ou um
             // VariavelEscopo (ex.: cópia de outra variável) — em ambos os casos, resolve
@@ -3876,7 +3876,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return { valor: variavelEscopo.variavelLlvm, tipo };
             }
 
-            if (this.registroClasses.has(tipo)) {
+            if (this.ehTipoObjeto(tipo)) {
                 // Instâncias de classe: o ptr já é o valor final quando vem de uma chamada
                 // de construtor/método (CallInst) — só uma variável alocada (AllocaInst)
                 // aponta PARA o ponteiro e precisa de load. Mesmo critério de
@@ -4330,8 +4330,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     }
 
     /** Verdadeiro se a variável (ou o parâmetro que a recebe) é instância de classe Delégua. */
+    // Classe ou interface: o valor é o ponteiro do objeto (uma única indireção).
+    ehTipoObjeto(tipo: string | undefined): boolean {
+        return !!tipo && (this.registroClasses.has(tipo) || this.interfacesDeclaradas.has(tipo));
+    }
+
     protected ehInstanciaDeClasse(variavel: VariavelEscopo, tipoParametro?: string): boolean {
-        return this.registroClasses.has(variavel.tipo) || (!!tipoParametro && this.registroClasses.has(tipoParametro));
+        return this.ehTipoObjeto(variavel.tipo) || this.ehTipoObjeto(tipoParametro);
     }
 
     protected carregarPtrClasseSePreciso(objVar: VariavelEscopo): llvm.Value {
@@ -4339,7 +4344,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (
             llvmVal &&
             llvmVal.constructor === llvm.AllocaInst &&
-            (this.registroClasses.has(objVar.tipo) || this.interfacesDeclaradas.has(objVar.tipo))
+            this.ehTipoObjeto(objVar.tipo)
         ) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), llvmVal, 'load_obj_ptr');
         }
@@ -4383,7 +4388,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const construtorInst = valorLlvm?.constructor;
             // Parâmetro que é instância de classe já é o ponteiro do objeto (sem a dupla
             // indireção dos parâmetros texto/dicionário).
-            if (construtorInst === llvm.Argument && this.registroClasses.has(resolvido.tipo)) {
+            if (construtorInst === llvm.Argument && this.ehTipoObjeto(resolvido.tipo)) {
                 return valorLlvm;
             }
             const ehPtrDireto =

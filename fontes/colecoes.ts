@@ -79,7 +79,7 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
             tipo === 'texto' ||
             tipo === 'qualquer' ||
             tipoEhVetor(tipo) ||
-            this.registroClasses.has(tipo);
+            this.ehTipoObjeto(tipo);
         if (ehPonteiro) {
             return this.resolverPonteiroDireto(resolvido);
         }
@@ -147,7 +147,7 @@ export async function chamarMetodoVetor(
                 valorElem = await this.carregarArgumentoInteiro(argumentos[0]);
             } else if (tipoElem === 'número' || tipoElem === 'numero') {
                 valorElem = await this.carregarArgumentoNumero(argumentos[0]);
-            } else if (this.registroClasses.has(tipoElem)) {
+            } else if (this.ehTipoObjeto(tipoElem)) {
                 // Objeto de classe: elemento do vetor é o ponteiro direto do objeto, não o
                 // conteúdo — mesma convenção de carregarPtrClasseSePreciso. Sem isso, uma
                 // VariavelEscopo alocada (AllocaInst) guardaria o endereço do slot da
