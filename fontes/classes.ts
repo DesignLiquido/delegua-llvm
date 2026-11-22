@@ -103,7 +103,7 @@ export async function instanciarClasse(
             const construtorEsperaPtr = tipoEhPonteiro(tipoEsperado);
             if (argResolvido instanceof VariavelEscopo) {
                 const llvmValue = argResolvido.variavelLlvm;
-                if (construtorEsperaPtr && this.registroClasses.has(argResolvido.tipo)) {
+                if (construtorEsperaPtr && this.ehTipoObjeto(argResolvido.tipo)) {
                     valor = this.carregarPtrClasseSePreciso(argResolvido);
                 } else if (construtorEsperaPtr) {
                     // Parâmetro ptr: passa alloca diretamente; o construtor faz load para obter o valor.
@@ -118,7 +118,7 @@ export async function instanciarClasse(
             } else {
                 valor = argResolvido as llvm.Value;
                 const tipoArgBruto = noArgumento ? this.resolverTipoConstruto(noArgumento) : undefined;
-                if (construtorEsperaPtr && tipoArgBruto && this.registroClasses.has(tipoArgBruto)) {
+                if (construtorEsperaPtr && this.ehTipoObjeto(tipoArgBruto)) {
                     // Instância de classe crua (ex.: resultado de método/índice de vetor):
                     // sempre ponteiro direto, nunca embrulhar em alloca extra.
                 } else {
@@ -346,7 +346,7 @@ export async function chamarMetodoInstancia(
                 const argResolvido = await argumentos[i].aceitar(this);
                 args.push(
                     argResolvido instanceof VariavelEscopo
-                        ? this.registroClasses.has(tipoPar)
+                        ? this.ehTipoObjeto(tipoPar)
                             ? this.carregarPtrClasseSePreciso(argResolvido)
                             : argResolvido.variavelLlvm
                         : (argResolvido as llvm.Value)
@@ -500,10 +500,10 @@ export async function chamarMetodoInstancia(
             // tipo inferido do argumento seja uma classe conhecida, senão esse load lê os
             // primeiros 8 bytes do próprio objeto como se fossem um ponteiro (lixo).
             const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-            const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
+            const paramEsperaClasseDireta = this.ehTipoObjeto(tipoParamDeclarado);
             if (
                 paramEsperaClasseDireta ||
-                (!paramExplicitamenteQualquer && this.registroClasses.has(argResolvido.tipo))
+                (!paramExplicitamenteQualquer && this.ehTipoObjeto(argResolvido.tipo))
             ) {
                 // Instâncias de classe são sempre ponteiro direto (single indirection) —
                 // mesma convenção de carregarPtrClasseSePreciso/resolverOperando: só
@@ -607,10 +607,10 @@ export async function chamarMetodoInstancia(
             // (ex.: `criarValor("funcao", instanciaDeClasse)`) corrompe o ponteiro guardado.
             const tipoArgBruto = this.resolverTipoConstruto(argumento as ConstrutoInterface);
             const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-            const paramEsperaClasseDireta = !!(tipoParamDeclarado && this.registroClasses.has(tipoParamDeclarado));
+            const paramEsperaClasseDireta = this.ehTipoObjeto(tipoParamDeclarado);
             const podeTratarComoClasseDireta =
                 paramEsperaClasseDireta ||
-                (!paramExplicitamenteQualquer && !!tipoArgBruto && this.registroClasses.has(tipoArgBruto));
+                (!paramExplicitamenteQualquer && this.ehTipoObjeto(tipoArgBruto));
             if (podeTratarComoClasseDireta) {
                 args.push(val);
                 continue;
