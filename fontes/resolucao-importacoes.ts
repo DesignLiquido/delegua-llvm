@@ -9,6 +9,16 @@ import { InformacaoElementoSintatico } from '@designliquido/delegua/informacao-e
 
 import { ehModuloEmbutido } from './bibliotecas-compilacao';
 import { localizarPacote, PacoteLocalizado } from './pacotes';
+import {
+    coletarImportacoesLocais,
+    criarEstadoEspacosNomes,
+    EstadoEspacosNomes,
+    ImportacoesLocais,
+    marcarArquivosQualificados,
+    qualificarMembros,
+    renomearReferencias,
+    resolverArquivoRelativo,
+} from './espacos-nomes';
 
 const regexImportacaoArquivo = /importar\s+.*\s+de\s+['"](\.{1,2}[^'"]*)['"]/;
 const regexImportacaoNomeada = /importar\s+.*\s+de\s+['"]([A-Za-z0-9][A-Za-z0-9_-]*)['"]/;
@@ -41,6 +51,11 @@ export interface ContextoResolucao {
     // importações. Um arquivo importado de novo é pulado (já visitado), então quem o importa
     // depois precisa enxergar os símbolos dele por aqui, como já acontece com as classes.
     declaracoesAnalisadas: Declaracao[];
+    // Espaços de nomes (`importar tudo como m de "./m"`): arquivos qualificados e seus membros.
+    espacosNomes: EstadoEspacosNomes;
+    // Verdadeiro depois que o grafo de importações foi percorrido para marcar os arquivos
+    // importados com `tudo como`.
+    espacosNomesMarcados?: boolean;
 }
 
 export function criarContextoResolucao(): ContextoResolucao {
@@ -50,6 +65,7 @@ export function criarContextoResolucao(): ContextoResolucao {
         fontesNativas: new Set(),
         bibliotecasNativas: new Set(),
         declaracoesAnalisadas: [],
+        espacosNomes: criarEstadoEspacosNomes(),
     };
 }
 
@@ -59,22 +75,62 @@ export function criarContextoResolucao(): ContextoResolucao {
  * os símbolos dos demais, e qualquer chamada a uma função importada é rejeitada como
  * "Variável não definida". Deve ser chamada logo após inicializarPilhaEscopos().
  */
-export function registrarSimbolosImportados(avaliador: any, declaracoes: Declaracao[]): void {
+export function registrarSimbolosImportados(
+    avaliador: any,
+    declaracoes: Declaracao[],
+    simbolosLocais: { nome: string; declaracao: Declaracao }[] = []
+): void {
     const pilhaEscopos = avaliador?.pilhaEscopos;
     if (!pilhaEscopos?.definirInformacoesVariavel) return;
-    for (const declaracao of declaracoes) {
+    const registrar = (nome: string, declaracao: Declaracao) => {
+        if (!nome) return;
         if (declaracao instanceof FuncaoDeclaracao) {
-            const nome = declaracao.simbolo?.lexema;
-            if (!nome) continue;
             const tipo = (declaracao as any).tipo ?? `função<${declaracao.funcao?.tipo ?? 'qualquer'}>`;
             pilhaEscopos.definirInformacoesVariavel(nome, new InformacaoElementoSintatico(nome, tipo));
             pilhaEscopos.registrarReferenciaFuncao?.(nome, declaracao);
         } else if (declaracao instanceof Var || declaracao instanceof Const) {
-            const nome = declaracao.simbolo?.lexema;
-            if (!nome) continue;
             pilhaEscopos.definirInformacoesVariavel(nome, new InformacaoElementoSintatico(nome, declaracao.tipo ?? 'qualquer'));
+        } else if (!declaracao) {
+            pilhaEscopos.definirInformacoesVariavel(nome, new InformacaoElementoSintatico(nome, 'qualquer'));
+        }
+    };
+    for (const declaracao of declaracoes) {
+        if (declaracao instanceof FuncaoDeclaracao || declaracao instanceof Var || declaracao instanceof Const) {
+            registrar(declaracao.simbolo?.lexema, declaracao);
         }
     }
+    // Elementos de `importar { ... }` trazidos de arquivos com espaço de nomes: no programa
+    // eles têm o nome qualificado, mas o arquivo que os importa usa o nome local.
+    for (const { nome, declaracao } of simbolosLocais) {
+        registrar(nome, declaracao);
+    }
+}
+
+/**
+ * Caminho absoluto do arquivo trazido por uma importação (arquivo relativo ou ponto de
+ * entrada de pacote instalado), ou null.
+ */
+function resolvedorCaminhos(contexto: ContextoResolucao) {
+    return (especificador: string, diretorioBase: string): string | null => {
+        const relativo = resolverArquivoRelativo(especificador, diretorioBase);
+        if (relativo) return relativo;
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(especificador) || ehModuloEmbutido(especificador)) return null;
+        const pacote = contexto.pacotes.get(especificador) ?? localizarPacote(especificador, diretorioBase);
+        return pacote?.pontoDeEntrada ?? null;
+    };
+}
+
+/**
+ * Prepara os espaços de nomes de um arquivo cujas dependências já foram resolvidas: os
+ * apelidos de `importar tudo como` e os elementos importados de arquivos qualificados.
+ */
+export function prepararImportacoesLocais(
+    codigo: string[],
+    caminhoArquivo: string,
+    diretorioBase: string,
+    contexto: ContextoResolucao
+): ImportacoesLocais {
+    return coletarImportacoesLocais(codigo, caminhoArquivo, diretorioBase, resolvedorCaminhos(contexto), contexto.espacosNomes);
 }
 
 /**
@@ -183,6 +239,12 @@ export async function resolverEMesclarDeclaracoes(
 ): Promise<{ declaracoes: Declaracao[]; mapaHash: Map<number, string>; contexto: ContextoResolucao }> {
     const resultado: Declaracao[] = [];
 
+    if (!contexto.espacosNomes) contexto.espacosNomes = criarEstadoEspacosNomes();
+    if (!contexto.espacosNomesMarcados) {
+        marcarArquivosQualificados(codigo, diretorioBase, resolvedorCaminhos(contexto), contexto.espacosNomes);
+        contexto.espacosNomesMarcados = true;
+    }
+
     for (const linha of codigo) {
         registrarModuloEmbutido(linha, contexto);
 
@@ -235,6 +297,8 @@ export async function resolverEMesclarDeclaracoes(
             ehImportacaoResolvida(l, diretorioArquivo, contexto) ? '' : l
         );
 
+        const importacoesLocais = prepararImportacoesLocais(linhasArquivo, caminhoAbsoluto, diretorioArquivo, contexto);
+
         const lexador = new Lexador();
         const avaliador = new AvaliadorSintatico();
         const avaliadorAny = avaliador as any;
@@ -246,11 +310,12 @@ export async function resolverEMesclarDeclaracoes(
             avaliadorAny.inicializarPilhaEscopos = () => {
                 inicializarOriginal();
                 Object.assign(avaliadorAny.tiposDefinidosEmCodigo, capturedRegistro);
-                registrarSimbolosImportados(avaliadorAny, simbolosAnteriores);
+                registrarSimbolosImportados(avaliadorAny, simbolosAnteriores, importacoesLocais.simbolosLocais());
             };
         }
 
         const retornoLexador = lexador.mapear(linhasSemImportacoes, hashArquivo);
+        retornoLexador.simbolos = importacoesLocais.reescreverSimbolos(retornoLexador.simbolos);
         const retornoAvaliador = await avaliador.analisar(retornoLexador, hashArquivo);
 
         if (retornoAvaliador.erros.length > 0) {
@@ -261,6 +326,15 @@ export async function resolverEMesclarDeclaracoes(
             });
             throw new Error(`Erros ao analisar arquivo importado '${caminhoAbsoluto}':\n${descricoes.join('\n')}`);
         }
+
+        // Arquivo importado com `tudo como`: seus membros recebem nomes qualificados, e as
+        // referências a elementos importados de arquivos qualificados usam esses nomes.
+        const renomeacoes = importacoesLocais.renomeacoes();
+        if (contexto.espacosNomes.arquivosQualificados.has(caminhoAbsoluto)) {
+            const membros = qualificarMembros(retornoAvaliador.declaracoes, caminhoAbsoluto, contexto.espacosNomes);
+            membros.nomes.forEach((nomeQualificado, nome) => renomeacoes.set(nome, nomeQualificado));
+        }
+        renomearReferencias(retornoAvaliador.declaracoes, renomeacoes, hashArquivo);
 
         // Registra classes encontradas para arquivos seguintes.
         for (const decl of retornoAvaliador.declaracoes) {

@@ -1,0 +1,2 @@
+importar tudo como b de "./b"
+escreva(b.naoExiste())
