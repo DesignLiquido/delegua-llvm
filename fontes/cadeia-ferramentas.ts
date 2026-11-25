@@ -158,6 +158,11 @@ export function detectarVersaoLlvm(cadeia: CadeiaFerramentas): number | undefine
  */
 export function compatibilizarIrComLlvm(ir: string, versaoMaior?: number): string {
     let resultado = ir;
+    // `icmp samesign` (LLVM 20+) é só uma indicação para o otimizador: removê-la mantém a
+    // comparação correta.
+    if (versaoMaior === undefined || versaoMaior < 20) {
+        resultado = resultado.replace(/\bicmp samesign /g, 'icmp ');
+    }
     if (versaoMaior === undefined || versaoMaior < 21) {
         resultado = resultado.replace(/captures\(none\)/g, 'nocapture');
     }
