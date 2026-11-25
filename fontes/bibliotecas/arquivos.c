@@ -1,4 +1,6 @@
 #include "arquivos.h"
+#include "arc.h"
+#include "vetor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +32,21 @@ static char* duplicar_texto(const char* texto);
 
 // ── Funções de módulo (livres) ──────────────────────────────────────────────
 
+// Libera os textos internos; idempotente (usado pelo destrutor ARC e por arquivos.liberar).
+static void arquivo_liberar_conteudo(Arquivo* arq) {
+    delegua_arc_liberar(arq->caminho);
+    delegua_arc_liberar(arq->conteudo);
+    arq->caminho  = NULL;
+    arq->conteudo = NULL;
+    arq->tamanho  = 0;
+}
+
+static void arquivo_destruir(void* payload) {
+    arquivo_liberar_conteudo((Arquivo*)payload);
+}
+
+static const ArcDescritor DESCRITOR_ARQUIVO = {"Arquivo", arquivo_destruir, NULL};
+
 Arquivo* delegua_arq_abrir(char* caminho) {
     if (!caminho) return NULL;
     FILE* fp = fopen(caminho, "rb");
@@ -40,26 +57,23 @@ Arquivo* delegua_arq_abrir(char* caminho) {
     rewind(fp);
     if (tamanho < 0) { fclose(fp); return NULL; }
 
-    char* conteudo = (char*)malloc((size_t)tamanho + 1);
+    char* conteudo = delegua_arc_texto_criar((size_t)tamanho);
     if (!conteudo) { fclose(fp); return NULL; }
     size_t lidos = fread(conteudo, 1, (size_t)tamanho, fp);
     conteudo[lidos] = '\0';
     fclose(fp);
 
-    Arquivo* arq = (Arquivo*)malloc(sizeof(Arquivo));
-    if (!arq) { free(conteudo); return NULL; }
-    char* caminhoCopia = strdup(caminho);
-    if (!caminhoCopia) { free(conteudo); free(arq); return NULL; }
-    arq->caminho  = caminhoCopia;
+    Arquivo* arq = (Arquivo*)delegua_arc_alocar(sizeof(Arquivo), &DESCRITOR_ARQUIVO);
+    arq->caminho  = delegua_arc_texto_copiar(caminho);
     arq->conteudo = conteudo;
     arq->tamanho  = (long)lidos;
     return arq;
 }
 
 char* delegua_arq_diretorio_atual(void) {
-    char* buffer = (char*)malloc(4096);
+    char* buffer = delegua_arc_texto_criar(4095);
     if (!buffer) return NULL;
-    if (!delegua_getcwd(buffer, 4096)) { free(buffer); return NULL; }
+    if (!delegua_getcwd(buffer, 4096)) { delegua_arc_liberar(buffer); return NULL; }
     return buffer;
 }
 
@@ -112,22 +126,22 @@ void delegua_arq_recarregar(Arquivo* arq) {
     rewind(fp);
     if (tamanho < 0) { fclose(fp); return; }
 
-    char* novo = (char*)malloc((size_t)tamanho + 1);
+    char* novo = delegua_arc_texto_criar((size_t)tamanho);
     if (!novo) { fclose(fp); return; }
     size_t lidos = fread(novo, 1, (size_t)tamanho, fp);
     novo[lidos] = '\0';
     fclose(fp);
 
-    free(arq->conteudo);
+    delegua_arc_liberar(arq->conteudo);
     arq->conteudo = novo;
     arq->tamanho  = (long)lidos;
 }
 
+// Libera os recursos agora (idempotente). A estrutura em si é do ARC: só é desalocada
+// quando a última referência for solta, então usos posteriores veem um Arquivo vazio.
 void delegua_arq_liberar(Arquivo* arq) {
     if (!arq) return;
-    free(arq->caminho);
-    free(arq->conteudo);
-    free(arq);
+    arquivo_liberar_conteudo(arq);
 }
 
 int delegua_arq_instancia_e_arquivo(Arquivo* arq) {
@@ -142,12 +156,9 @@ int delegua_arq_instancia_e_diretorio(Arquivo* arq) {
 
 // ── Sistema de arquivos ─────────────────────────────────────────────────────
 
+// Cópia gerenciada (ARC, +1).
 static char* duplicar_texto(const char* texto) {
-    if (!texto) return NULL;
-    size_t tamanho = strlen(texto);
-    char* copia = (char*)malloc(tamanho + 1);
-    if (copia) memcpy(copia, texto, tamanho + 1);
-    return copia;
+    return delegua_arc_texto_copiar(texto);
 }
 
 static int eh_separador(char c) {
@@ -192,7 +203,7 @@ int delegua_arq_criar_diretorio(char* caminho) {
         copia[i] = original;
     }
     int resultado = criar_um_diretorio(copia);
-    free(copia);
+    delegua_arc_liberar(copia);
     return resultado;
 }
 
@@ -215,14 +226,14 @@ int delegua_arq_remover(char* caminho) {
     char* padrao = delegua_arq_juntar_caminhos(caminho, "*");
     WIN32_FIND_DATAA dados;
     HANDLE busca = FindFirstFileA(padrao, &dados);
-    free(padrao);
+    delegua_arc_liberar(padrao);
     int sucesso = 1;
     if (busca != INVALID_HANDLE_VALUE) {
         do {
             if (strcmp(dados.cFileName, ".") == 0 || strcmp(dados.cFileName, "..") == 0) continue;
             char* filho = delegua_arq_juntar_caminhos(caminho, dados.cFileName);
             if (!delegua_arq_remover(filho)) sucesso = 0;
-            free(filho);
+            delegua_arc_liberar(filho);
         } while (FindNextFileA(busca, &dados));
         FindClose(busca);
     }
@@ -242,7 +253,7 @@ int delegua_arq_remover(char* caminho) {
             if (strcmp(entrada->d_name, ".") == 0 || strcmp(entrada->d_name, "..") == 0) continue;
             char* filho = delegua_arq_juntar_caminhos(caminho, entrada->d_name);
             if (!delegua_arq_remover(filho)) sucesso = 0;
-            free(filho);
+            delegua_arc_liberar(filho);
         }
         closedir(diretorio);
     }
@@ -272,10 +283,11 @@ static void acrescentar_nome(Vetor* vetor, const char* nome) {
     char* copia = duplicar_texto(nome);
     if (!copia) return;
     delegua_vetor_adicionar(vetor, &copia, (int)sizeof(char*));
+    delegua_arc_liberar(copia);  // o vetor retém a sua referência
 }
 
 Vetor* delegua_arq_listar_diretorio(char* caminho) {
-    Vetor* vetor = delegua_vetor_criar(0, (int)sizeof(char*));
+    Vetor* vetor = delegua_vetor_criar(0, (int)sizeof(char*), 1);
     if (!vetor) return NULL;
     if (!caminho || !*caminho) return vetor;
 
@@ -283,7 +295,7 @@ Vetor* delegua_arq_listar_diretorio(char* caminho) {
     char* padrao = delegua_arq_juntar_caminhos(caminho, "*");
     WIN32_FIND_DATAA dados;
     HANDLE busca = FindFirstFileA(padrao, &dados);
-    free(padrao);
+    delegua_arc_liberar(padrao);
     if (busca != INVALID_HANDLE_VALUE) {
         do {
             if (strcmp(dados.cFileName, ".") == 0 || strcmp(dados.cFileName, "..") == 0) continue;
@@ -330,7 +342,7 @@ char* delegua_arq_criar_diretorio_temporario(char* pai, char* prefixo) {
                  (unsigned)((rand() ^ tentativa) & 0xffff));
         char* caminho = delegua_arq_juntar_caminhos((char*)base, nome);
         if (caminho && _mkdir(caminho) == 0) return caminho;
-        free(caminho);
+        delegua_arc_liberar(caminho);
     }
     return NULL;
 #else
@@ -338,7 +350,7 @@ char* delegua_arq_criar_diretorio_temporario(char* pai, char* prefixo) {
     char* modelo = delegua_arq_juntar_caminhos((char*)base, nome);
     if (!modelo) return NULL;
     if (!mkdtemp(modelo)) {
-        free(modelo);
+        delegua_arc_liberar(modelo);
         return NULL;
     }
     return modelo;
@@ -354,7 +366,7 @@ char* delegua_arq_diretorio_pessoal(void) {
     if (unidade && caminho) {
         size_t tamanhoUnidade = strlen(unidade);
         size_t tamanhoCaminho = strlen(caminho);
-        char* resultado = (char*)malloc(tamanhoUnidade + tamanhoCaminho + 1);
+        char* resultado = delegua_arc_texto_criar(tamanhoUnidade + tamanhoCaminho);
         if (resultado) {
             memcpy(resultado, unidade, tamanhoUnidade);
             memcpy(resultado + tamanhoUnidade, caminho, tamanhoCaminho + 1);
@@ -381,7 +393,7 @@ char* delegua_arq_ler_texto(char* caminho) {
         fclose(fp);
         return NULL;
     }
-    char* conteudo = (char*)malloc((size_t)tamanho + 1);
+    char* conteudo = delegua_arc_texto_criar((size_t)tamanho);
     if (!conteudo) {
         fclose(fp);
         return NULL;
@@ -429,7 +441,7 @@ char* delegua_arq_juntar_caminhos(char* base, char* parte) {
     size_t tamanhoBase = strlen(base);
     size_t tamanhoParte = strlen(parte);
     int precisaSeparador = !eh_separador(base[tamanhoBase - 1]);
-    char* resultado = (char*)malloc(tamanhoBase + (size_t)precisaSeparador + tamanhoParte + 1);
+    char* resultado = delegua_arc_texto_criar(tamanhoBase + (size_t)precisaSeparador + tamanhoParte);
     if (!resultado) return NULL;
     memcpy(resultado, base, tamanhoBase);
     size_t posicao = tamanhoBase;
@@ -446,7 +458,7 @@ char* delegua_arq_diretorio_pai(char* caminho) {
     while (tamanho > 1 && eh_separador(copia[tamanho - 1])) tamanho--;
     while (tamanho > 0 && !eh_separador(copia[tamanho - 1])) tamanho--;
     if (tamanho == 0) {
-        free(copia);
+        delegua_arc_liberar(copia);
         return duplicar_texto(".");
     }
     // Remove o separador final, mas mantém a raiz ("/" ou "C:\").
@@ -461,7 +473,7 @@ char* delegua_arq_nome_base(char* caminho) {
     while (tamanho > 1 && eh_separador(caminho[tamanho - 1])) tamanho--;
     size_t inicio = tamanho;
     while (inicio > 0 && !eh_separador(caminho[inicio - 1])) inicio--;
-    char* resultado = (char*)malloc(tamanho - inicio + 1);
+    char* resultado = delegua_arc_texto_criar(tamanho - inicio);
     if (!resultado) return NULL;
     memcpy(resultado, caminho + inicio, tamanho - inicio);
     resultado[tamanho - inicio] = '\0';
@@ -471,15 +483,19 @@ char* delegua_arq_nome_base(char* caminho) {
 char* delegua_arq_caminho_absoluto(char* caminho) {
     if (!caminho) return NULL;
 #ifdef _WIN32
-    char* resultado = _fullpath(NULL, caminho, 0);
-    return resultado ? resultado : duplicar_texto(caminho);
+    // _fullpath devolve memória do CRT (malloc): copia para um texto gerenciado.
+    char* absoluto = _fullpath(NULL, caminho, 0);
+    if (!absoluto) return duplicar_texto(caminho);
+    char* resultado = duplicar_texto(absoluto);
+    free(absoluto);
+    return resultado;
 #else
     char resolvido[PATH_MAX];
     if (realpath(caminho, resolvido)) return duplicar_texto(resolvido);
     if (caminho[0] == '/') return duplicar_texto(caminho);
     char* atual = delegua_arq_diretorio_atual();
     char* resultado = delegua_arq_juntar_caminhos(atual, caminho);
-    free(atual);
+    delegua_arc_liberar(atual);
     return resultado;
 #endif
 }

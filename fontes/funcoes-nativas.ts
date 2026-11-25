@@ -20,10 +20,12 @@ import type { CompiladorLLVM } from './compilador-llvm';
  * No entanto, elas podem servir de inspiração para funções futuras.
  */
 export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<string>): void {
-    // %Vetor = type { ptr, i32, i32, i32 }  (elementos + tamanho + capacidade + tam_elem)
+    // %Vetor = type { ptr, i32, i32, i32, i32 }
+    // (elementos + tamanho + capacidade + tam_elem + gerenciado); ver bibliotecas/vetor.h.
     this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
     this.tipoEstruturaVetor.setBody([
         llvm.PointerType.get(this.contexto, 0),
+        this.montador.getInt32Ty(),
         this.montador.getInt32Ty(),
         this.montador.getInt32Ty(),
         this.montador.getInt32Ty(),
@@ -155,10 +157,10 @@ export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<
     );
     this.funcaoMalloc = this.modulo.getOrInsertFunction('malloc', tipoFuncaoMalloc);
 
-    // Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem)
+    // Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem, int gerenciado)
     const tipoFuncaoVetorCriar = llvm.FunctionType.get(
         this.montador.getPtrTy(),
-        [this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+        [this.montador.getInt32Ty(), this.montador.getInt32Ty(), this.montador.getInt32Ty()],
         false
     );
     this.funcaoVetorCriar = this.modulo.getOrInsertFunction('delegua_vetor_criar', tipoFuncaoVetorCriar);

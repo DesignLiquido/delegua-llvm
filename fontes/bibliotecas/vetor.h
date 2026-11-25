@@ -2,15 +2,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Deve coincidir com %Vetor = type { ptr, i32, i32, i32, i32 } do IR gerado.
+// O próprio Vetor é uma alocação ARC (ver arc.h); `ptr` é um buffer interno do vetor.
 typedef struct {
     void* ptr;
     int tamanho;
     int capacidade;
     int tam_elem;
+    // 1 quando os elementos são ponteiros gerenciados (texto, objetos, vetores, dicionários):
+    // o vetor retém o que guarda e libera o que remove ou ao ser destruído.
+    int gerenciado;
 } Vetor;
 
-// Aloca um novo Vetor no heap com `tamanho_inicial` elementos zerados de tamanho `tam_elem`.
-Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem);
+// Aloca um novo Vetor (ARC, +1) com `tamanho_inicial` elementos zerados de tamanho `tam_elem`.
+Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem, int gerenciado);
 
 // Retorna o número de elementos no vetor.
 int delegua_vetor_tamanho(Vetor* v);

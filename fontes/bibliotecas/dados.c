@@ -1,6 +1,7 @@
 // G.1 — delegua-dados: estruturas tipo DataFrame (RecorteDados) e Série (Serie).
 // Compilar com: clang ... dados.c csv.c
 #include "dados.h"
+#include "arc.h"
 #include "csv.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,7 @@ static int tentar_double(const char* s, double* saida) {
 
 // Libera as colunas internas de RecorteDados sem liberar a própria estrutura.
 static void liberar_colunas(RecorteDados* rd) {
-    for (int c = 0; c < rd->num_colunas; c++) {
+    for (int c = 0; rd->colunas && c < rd->num_colunas; c++) {
         Coluna* col = rd->colunas[c];
         if (!col) continue;
         free(col->nome);
@@ -36,22 +37,32 @@ static void liberar_colunas(RecorteDados* rd) {
         free(col);
     }
     free(rd->colunas);
-    for (int c = 0; c < rd->num_colunas; c++) free(rd->nomes_colunas[c]);
+    if (rd->nomes_colunas) {
+        for (int c = 0; c < rd->num_colunas; c++) free(rd->nomes_colunas[c]);
+    }
     free(rd->nomes_colunas);
+    // Idempotente: o destrutor ARC pode rodar depois de um dados.liberar manual.
+    rd->colunas = NULL;
+    rd->nomes_colunas = NULL;
+    rd->num_colunas = 0;
+    rd->num_linhas = 0;
 }
+
+static void recorte_destruir(void* payload) {
+    liberar_colunas((RecorteDados*)payload);
+}
+
+static const ArcDescritor DESCRITOR_RECORTE = {"RecorteDados", recorte_destruir, NULL};
 
 // Aloca RecorteDados vazio (sem dados de coluna preenchidos).
 static RecorteDados* alocar_recorte(int num_colunas, int num_linhas) {
-    RecorteDados* rd = (RecorteDados*)calloc(1, sizeof(RecorteDados));
-    if (!rd) return NULL;
+    RecorteDados* rd = (RecorteDados*)delegua_arc_alocar(sizeof(RecorteDados), &DESCRITOR_RECORTE);
     rd->num_colunas = num_colunas;
     rd->num_linhas  = num_linhas;
     rd->colunas       = (Coluna**)calloc(num_colunas, sizeof(Coluna*));
     rd->nomes_colunas = (char**)  calloc(num_colunas, sizeof(char*));
     if (!rd->colunas || !rd->nomes_colunas) {
-        free(rd->colunas);
-        free(rd->nomes_colunas);
-        free(rd);
+        delegua_arc_liberar(rd);
         return NULL;
     }
     return rd;
@@ -79,7 +90,7 @@ static RecorteDados* tabela_para_recorte(TabelaCsv* tabela) {
 
     for (int c = 0; c < nc; c++) {
         Coluna* col = (Coluna*)calloc(1, sizeof(Coluna));
-        if (!col) { liberar_colunas(rd); free(rd); return NULL; }
+        if (!col) { delegua_arc_liberar(rd); return NULL; }
 
         const char* nome_cab = tabela->linhas[0].celulas[c];
         col->nome = strdup(nome_cab ? nome_cab : "");
@@ -116,23 +127,22 @@ RecorteDados* delegua_dados_ler_csv(char* caminho) {
     TabelaCsv* tabela = delegua_csv_ler(caminho, ',');
     if (!tabela) return NULL;
     RecorteDados* rd = tabela_para_recorte(tabela);
-    delegua_csv_liberar(tabela);
+    delegua_arc_liberar(tabela);  // tabela ARC: solta a única referência
     return rd;
 }
 
 // ── Liberação ─────────────────────────────────────────────────────────────────
 
+// Libera o conteúdo agora (idempotente); a estrutura é desalocada pelo ARC.
 void delegua_dados_liberar(RecorteDados* rd) {
     if (!rd) return;
     liberar_colunas(rd);
-    free(rd);
 }
 
-void delegua_dados_serie_liberar(Serie* s) {
-    if (!s) return;
+static void serie_liberar_conteudo(Serie* s) {
     if (s->tipo == TIPO_DOUBLE) {
         free(s->dados);
-    } else {
+    } else if (s->dados) {
         char** arr = (char**)s->dados;
         for (int i = 0; i < s->tamanho; i++) free(arr[i]);
         free(arr);
@@ -141,7 +151,21 @@ void delegua_dados_serie_liberar(Serie* s) {
         for (int i = 0; i < s->tamanho; i++) free(s->indices[i]);
         free(s->indices);
     }
-    free(s);
+    s->dados = NULL;
+    s->indices = NULL;
+    s->tamanho = 0;
+}
+
+static void serie_destruir(void* payload) {
+    serie_liberar_conteudo((Serie*)payload);
+}
+
+static const ArcDescritor DESCRITOR_SERIE = {"Serie", serie_destruir, NULL};
+
+// Libera o conteúdo agora (idempotente); a estrutura é desalocada pelo ARC.
+void delegua_dados_serie_liberar(Serie* s) {
+    if (!s) return;
+    serie_liberar_conteudo(s);
 }
 
 // ── Slice: cabeca / cauda ────────────────────────────────────────────────────
@@ -159,7 +183,7 @@ static RecorteDados* fatiar(RecorteDados* rd, int inicio, int n) {
     for (int c = 0; c < rd->num_colunas; c++) {
         Coluna* orig = rd->colunas[c];
         Coluna* col  = (Coluna*)calloc(1, sizeof(Coluna));
-        if (!col) { liberar_colunas(novo); free(novo); return NULL; }
+        if (!col) { delegua_arc_liberar(novo); return NULL; }
 
         col->nome = strdup(orig->nome);
         col->tipo = orig->tipo;
@@ -173,8 +197,7 @@ static RecorteDados* fatiar(RecorteDados* rd, int inicio, int n) {
                 /* Falha na alocação: limpar coluna atual e recorte parcialmente construído */
                 free(col->nome);
                 free(col);
-                liberar_colunas(novo);
-                free(novo);
+                delegua_arc_liberar(novo);
                 return NULL;
             }
             memcpy(dst, src + inicio, n * sizeof(double));
@@ -186,8 +209,7 @@ static RecorteDados* fatiar(RecorteDados* rd, int inicio, int n) {
                 /* Falha na alocação: limpar coluna atual e recorte parcialmente construído */
                 free(col->nome);
                 free(col);
-                liberar_colunas(novo);
-                free(novo);
+                delegua_arc_liberar(novo);
                 return NULL;
             }
             for (int r = 0; r < n; r++) {
@@ -200,8 +222,7 @@ static RecorteDados* fatiar(RecorteDados* rd, int inicio, int n) {
                     free(dst);
                     free(col->nome);
                     free(col);
-                    liberar_colunas(novo);
-                    free(novo);
+                    delegua_arc_liberar(novo);
                     return NULL;
                 }
             }
@@ -225,10 +246,9 @@ RecorteDados* delegua_dados_cauda(RecorteDados* rd, int n) {
 // ── Info / representação textual ──────────────────────────────────────────────
 
 char* delegua_dados_info(RecorteDados* rd) {
-    if (!rd) return strdup("(nulo)");
+    if (!rd) return delegua_arc_texto_copiar("(nulo)");
     int tam = 128 + rd->num_colunas * 64;
-    char* buf = (char*)malloc(tam);
-    if (!buf) return NULL;
+    char* buf = delegua_arc_texto_criar((size_t)tam);
     int pos = snprintf(buf, tam,
         "RecorteDados: %d linhas x %d colunas\n",
         rd->num_linhas, rd->num_colunas);
@@ -242,7 +262,7 @@ char* delegua_dados_info(RecorteDados* rd) {
 }
 
 char* delegua_dados_para_texto(RecorteDados* rd) {
-    if (!rd) return strdup("");
+    if (!rd) return delegua_arc_texto_criar(0);
 
     // Calcula largura de cada coluna
     int* larguras = (int*)calloc(rd->num_colunas, sizeof(int));
@@ -266,8 +286,7 @@ char* delegua_dados_para_texto(RecorteDados* rd) {
     int total_cols = 0;
     for (int c = 0; c < rd->num_colunas; c++) total_cols += larguras[c] + 3;
     int tam = (rd->num_linhas + 4) * (total_cols + 4);
-    char* buf = (char*)malloc(tam);
-    if (!buf) { free(larguras); return NULL; }
+    char* buf = delegua_arc_texto_criar((size_t)tam);
     int pos = 0;
 
     // Linha de cabeçalho
@@ -329,7 +348,7 @@ RecorteDados* delegua_dados_remover_nulo(RecorteDados* rd) {
     for (int c = 0; c < rd->num_colunas; c++) {
         Coluna* orig = rd->colunas[c];
         Coluna* col  = (Coluna*)calloc(1, sizeof(Coluna));
-        if (!col) { liberar_colunas(novo); free(novo); free(manter); return NULL; }
+        if (!col) { delegua_arc_liberar(novo); free(manter); return NULL; }
 
         col->nome = strdup(orig->nome);
         col->tipo = orig->tipo;
@@ -342,8 +361,7 @@ RecorteDados* delegua_dados_remover_nulo(RecorteDados* rd) {
             if (!dst) {
                 free(col->nome);
                 free(col);
-                liberar_colunas(novo);
-                free(novo);
+                delegua_arc_liberar(novo);
                 free(manter);
                 return NULL;
             }
@@ -356,8 +374,7 @@ RecorteDados* delegua_dados_remover_nulo(RecorteDados* rd) {
             if (!dst) {
                 free(col->nome);
                 free(col);
-                liberar_colunas(novo);
-                free(novo);
+                delegua_arc_liberar(novo);
                 free(manter);
                 return NULL;
             }
@@ -380,8 +397,7 @@ Serie* delegua_dados_selecionar_coluna(RecorteDados* rd, char* nome) {
         if (strcmp(rd->colunas[c]->nome, nome) != 0) continue;
 
         Coluna* orig = rd->colunas[c];
-        Serie*  s    = (Serie*)calloc(1, sizeof(Serie));
-        if (!s) return NULL;
+        Serie*  s    = (Serie*)delegua_arc_alocar(sizeof(Serie), &DESCRITOR_SERIE);
 
         s->tipo    = orig->tipo;
         s->tamanho = orig->tamanho;
@@ -389,19 +405,19 @@ Serie* delegua_dados_selecionar_coluna(RecorteDados* rd, char* nome) {
 
         if (orig->tipo == TIPO_DOUBLE) {
             double* dst = (double*)malloc(orig->tamanho * sizeof(double));
-            if (!dst) { free(s); return NULL; }
+            if (!dst) { delegua_arc_liberar(s); return NULL; }
             memcpy(dst, orig->dados, orig->tamanho * sizeof(double));
             s->dados = dst;
         } else {
             char** src = (char**)orig->dados;
             char** dst = (char**)malloc(orig->tamanho * sizeof(char*));
-            if (!dst) { free(s); return NULL; }
+            if (!dst) { delegua_arc_liberar(s); return NULL; }
             for (int i = 0; i < orig->tamanho; i++) {
                 dst[i] = strdup(src[i] ? src[i] : "");
                 if (!dst[i]) {
                     for (int k = 0; k < i; k++) free(dst[k]);
                     free(dst);
-                    free(s);
+                    delegua_arc_liberar(s);
                     return NULL;
                 }
             }

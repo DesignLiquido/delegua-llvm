@@ -1,4 +1,5 @@
 #include "http.h"
+#include "arc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,12 +56,38 @@ static char* concatenar_url(const char* base, const char* sufixo) {
     return url;
 }
 
+// Libera os textos internos; idempotente (destrutor ARC e http.liberarResposta).
+static void resposta_liberar_conteudo(RespostaHttp* resp) {
+    free(resp->dados);
+    free(resp->mensagem_status);
+    resp->dados = NULL;
+    resp->mensagem_status = NULL;
+}
+
+static void resposta_destruir(void* payload) {
+    resposta_liberar_conteudo((RespostaHttp*)payload);
+}
+
+static const ArcDescritor DESCRITOR_RESPOSTA = {"RespostaHttp", resposta_destruir, NULL};
+
+// Libera URL base e cabeçalhos; idempotente (destrutor ARC e http.liberarCliente).
+static void cliente_liberar_conteudo(ClienteHttp* cliente) {
+    free(cliente->url_base);
+    for (int i = 0; i < cliente->num_cabecalhos; i++) free(cliente->cabecalhos[i]);
+    free(cliente->cabecalhos);
+    cliente->url_base = NULL;
+    cliente->cabecalhos = NULL;
+    cliente->num_cabecalhos = 0;
+}
+
+static void cliente_destruir(void* payload) {
+    cliente_liberar_conteudo((ClienteHttp*)payload);
+}
+
+static const ArcDescritor DESCRITOR_CLIENTE = {"ClienteHttp", cliente_destruir, NULL};
+
 static RespostaHttp* alocar_resposta(int codigo, char* corpo) {
-    RespostaHttp* resp = (RespostaHttp*)malloc(sizeof(RespostaHttp));
-    if (!resp) {
-        free(corpo);
-        return NULL;
-    }
+    RespostaHttp* resp = (RespostaHttp*)delegua_arc_alocar(sizeof(RespostaHttp), &DESCRITOR_RESPOSTA);
     resp->codigo_status   = codigo;
     resp->mensagem_status = NULL;
     resp->dados           = corpo;
@@ -322,8 +349,7 @@ static RespostaHttp* requisitar(ClienteHttp* cliente, const char* metodo, char* 
 // ── Funções públicas ────────────────────────────────────────────────────────
 
 ClienteHttp* delegua_http_novo_cliente(char* url_base, int tempo_ms) {
-    ClienteHttp* cliente = (ClienteHttp*)calloc(1, sizeof(ClienteHttp));
-    if (!cliente) return NULL;
+    ClienteHttp* cliente = (ClienteHttp*)delegua_arc_alocar(sizeof(ClienteHttp), &DESCRITOR_CLIENTE);
     cliente->url_base        = url_base ? strdup(url_base) : NULL;
     cliente->tempo_maximo_ms = tempo_ms > 0 ? (long)tempo_ms : 30000L;
     cliente->cabecalhos      = NULL;
@@ -371,24 +397,20 @@ int delegua_http_codigo_status(RespostaHttp* resp) {
 }
 
 char* delegua_http_dados(RespostaHttp* resp) {
-    return (resp && resp->dados) ? strdup(resp->dados) : NULL;
+    return (resp && resp->dados) ? delegua_arc_texto_copiar(resp->dados) : NULL;
 }
 
 char* delegua_http_mensagem(RespostaHttp* resp) {
-    return (resp && resp->mensagem_status) ? strdup(resp->mensagem_status) : NULL;
+    return (resp && resp->mensagem_status) ? delegua_arc_texto_copiar(resp->mensagem_status) : NULL;
 }
 
+// Liberam o conteúdo agora (idempotente); as estruturas são desalocadas pelo ARC.
 void delegua_http_liberar_resp(RespostaHttp* resp) {
     if (!resp) return;
-    free(resp->dados);
-    free(resp->mensagem_status);
-    free(resp);
+    resposta_liberar_conteudo(resp);
 }
 
 void delegua_http_liberar_cliente(ClienteHttp* cliente) {
     if (!cliente) return;
-    free(cliente->url_base);
-    for (int i = 0; i < cliente->num_cabecalhos; i++) free(cliente->cabecalhos[i]);
-    free(cliente->cabecalhos);
-    free(cliente);
+    cliente_liberar_conteudo(cliente);
 }

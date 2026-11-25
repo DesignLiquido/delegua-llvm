@@ -1,4 +1,5 @@
 #include "rede.h"
+#include "arc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +55,7 @@ static void definir_erro_sistema(const char* contexto) {
 }
 
 char* delegua_rede_ultimo_erro(void) {
-    return strdup(ultimo_erro);
+    return delegua_arc_texto_copiar(ultimo_erro);
 }
 
 static int inicializar(void) {
@@ -72,13 +73,23 @@ static int inicializar(void) {
     return 1;
 }
 
+// Fecha o descritor e libera os bytes guardados; idempotente (destrutor ARC e rede.fechar).
+static void soquete_fechar_conteudo(SoqueteDelegua* soquete) {
+    if (soquete->descritor != SOQUETE_INVALIDO) fechar_soquete(soquete->descritor);
+    soquete->descritor = SOQUETE_INVALIDO;
+    free(soquete->restante);
+    soquete->restante = NULL;
+    soquete->tamanhoRestante = 0;
+}
+
+static void soquete_destruir(void* payload) {
+    soquete_fechar_conteudo((SoqueteDelegua*)payload);
+}
+
+static const ArcDescritor DESCRITOR_SOQUETE = {"SoqueteDelegua", soquete_destruir, NULL};
+
 static SoqueteDelegua* embrulhar(soquete_t descritor) {
-    SoqueteDelegua* soquete = (SoqueteDelegua*)malloc(sizeof(SoqueteDelegua));
-    if (!soquete) {
-        fechar_soquete(descritor);
-        definir_erro("sem memória");
-        return NULL;
-    }
+    SoqueteDelegua* soquete = (SoqueteDelegua*)delegua_arc_alocar(sizeof(SoqueteDelegua), &DESCRITOR_SOQUETE);
     soquete->descritor = descritor;
     soquete->restante = NULL;
     soquete->tamanhoRestante = 0;
@@ -312,7 +323,7 @@ char* delegua_rede_ler(SoqueteDelegua* conexao, int maxBytes, int tempoLimiteMs)
     }
     // Bytes guardados por um lerAte anterior: entregues sem esperar pela rede.
     if (conexao->tamanhoRestante > 0) {
-        char* guardados = (char*)malloc((size_t)maxBytes + 1);
+        char* guardados = delegua_arc_texto_criar((size_t)maxBytes);
         if (!guardados) {
             definir_erro("sem memória");
             return NULL;
@@ -330,7 +341,7 @@ char* delegua_rede_ler(SoqueteDelegua* conexao, int maxBytes, int tempoLimiteMs)
         definir_erro_sistema("falha ao aguardar dados");
         return NULL;
     }
-    char* buffer = (char*)malloc((size_t)maxBytes + 1);
+    char* buffer = delegua_arc_texto_criar((size_t)maxBytes);
     if (!buffer) {
         definir_erro("sem memória");
         return NULL;
@@ -338,7 +349,7 @@ char* delegua_rede_ler(SoqueteDelegua* conexao, int maxBytes, int tempoLimiteMs)
     int lidos = (int)recv(conexao->descritor, buffer, maxBytes, 0);
     if (lidos < 0) {
         definir_erro_sistema("falha ao ler");
-        free(buffer);
+        delegua_arc_liberar(buffer);
         return NULL;
     }
     buffer[lidos] = '\0';
@@ -363,7 +374,7 @@ char* delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBy
         return NULL;
     }
     const char* fim = (delimitador && *delimitador) ? delimitador : NULL;
-    char* buffer = (char*)malloc((size_t)maxBytes + 1);
+    char* buffer = delegua_arc_texto_criar((size_t)maxBytes);
     if (!buffer) {
         definir_erro("sem memória");
         return NULL;
@@ -382,7 +393,7 @@ char* delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBy
                 int entregues = posicao + (int)strlen(fim);
                 if (!devolver_restante(conexao, buffer + entregues, total - entregues)) {
                     definir_erro("sem memória");
-                    free(buffer);
+                    delegua_arc_liberar(buffer);
                     return NULL;
                 }
                 buffer[entregues] = '\0';
@@ -394,7 +405,7 @@ char* delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBy
             long long faltam = limite - agora_ms();
             if (faltam <= 0) {
                 definir_erro("tempo esgotado");
-                free(buffer);
+                delegua_arc_liberar(buffer);
                 return NULL;
             }
             restante = (int)faltam;
@@ -402,18 +413,18 @@ char* delegua_rede_ler_ate(SoqueteDelegua* conexao, char* delimitador, int maxBy
         int pronto = esperar(conexao->descritor, 0, restante);
         if (pronto == 0) {
             definir_erro("tempo esgotado");
-            free(buffer);
+            delegua_arc_liberar(buffer);
             return NULL;
         }
         if (pronto < 0) {
             definir_erro_sistema("falha ao aguardar dados");
-            free(buffer);
+            delegua_arc_liberar(buffer);
             return NULL;
         }
         int lidos = (int)recv(conexao->descritor, buffer + total, maxBytes - total, 0);
         if (lidos < 0) {
             definir_erro_sistema("falha ao ler");
-            free(buffer);
+            delegua_arc_liberar(buffer);
             return NULL;
         }
         if (lidos == 0) break;  // conexão fechada
@@ -444,11 +455,10 @@ int delegua_rede_escrever(SoqueteDelegua* conexao, char* texto) {
     return 1;
 }
 
+// Fecha agora (idempotente); a estrutura é desalocada pelo ARC.
 void delegua_rede_fechar(SoqueteDelegua* soquete) {
     if (!soquete) return;
-    fechar_soquete(soquete->descritor);
-    free(soquete->restante);
-    free(soquete);
+    soquete_fechar_conteudo(soquete);
 }
 
 // ── URL ─────────────────────────────────────────────────────────────────────
@@ -457,7 +467,7 @@ char* delegua_rede_codificar_componente_url(char* texto) {
     if (!texto) return NULL;
     static const char* hexadecimal = "0123456789ABCDEF";
     size_t tamanho = strlen(texto);
-    char* resultado = (char*)malloc(tamanho * 3 + 1);
+    char* resultado = delegua_arc_texto_criar(tamanho * 3);
     if (!resultado) return NULL;
     size_t j = 0;
     for (size_t i = 0; i < tamanho; i++) {
@@ -485,7 +495,7 @@ static int valor_hexadecimal(char c) {
 char* delegua_rede_decodificar_componente_url(char* texto) {
     if (!texto) return NULL;
     size_t tamanho = strlen(texto);
-    char* resultado = (char*)malloc(tamanho + 1);
+    char* resultado = delegua_arc_texto_criar(tamanho);
     if (!resultado) return NULL;
     size_t j = 0;
     for (size_t i = 0; i < tamanho; i++) {

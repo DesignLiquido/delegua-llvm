@@ -22,7 +22,7 @@ describe('Compilador - Dicionário', () => {
         expect(resultado).toContain('call void @delegua_dicionario_definir');
     });
 
-    it('Escrita de valor escalar embala em heap via malloc antes de definir', async () => {
+    it('Escrita de valor escalar embala em caixa ARC antes de definir', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'var d: qualquer = {}',
@@ -30,7 +30,8 @@ describe('Compilador - Dicionário', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call ptr @malloc');
+        // lógico ocupa 1 byte na caixa.
+        expect(resultado).toContain('%dict_caixa = call ptr @delegua_arc_caixa(i64 1)');
         expect(resultado).toContain('call void @delegua_dicionario_definir');
     });
 
@@ -99,7 +100,7 @@ describe('Compilador - Dicionário', () => {
         expect(resultado).toContain('load double');
     });
 
-    it('Escalar computado passado a parâmetro qualquer de método é embalado em heap', async () => {
+    it('Escalar computado passado a parâmetro qualquer de método é embalado em caixa ARC', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'classe Caixa {',
@@ -116,6 +117,6 @@ describe('Compilador - Dicionário', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('call void @Caixa_guardar');
-        expect(resultado).toContain('call ptr @malloc');
+        expect(resultado).toContain('call ptr @delegua_arc_caixa(i64 8)');
     });
 });

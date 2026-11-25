@@ -133,8 +133,9 @@ describe('Compilador - Classes', () => {
         expect(resultado).not.toContain('load %Vetor');
         // Objeto zerado e campos vetor começam como Vetor* vazio.
         expect(resultado).toContain('call ptr @calloc(i64 1, i64 24)');
-        expect(resultado).toContain('%simbolos_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8)');
-        expect(resultado).toContain('%erros_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8)');
+        // texto[]: elementos de 8 bytes gerenciados pelo ARC (gerenciado = 1).
+        expect(resultado).toContain('%simbolos_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8, i32 1)');
+        expect(resultado).toContain('%erros_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8, i32 1)');
     });
 
     it('Chamada de método de instância', async () => {

@@ -19,7 +19,8 @@ typedef struct {
 Dicionario* delegua_dicionario_criar(void);
 
 // Define (ou substitui) o valor associado à chave. `valor` é um ponteiro
-// opaco (qualquer) — o chamador decide o que ele representa.
+// opaco (qualquer) — o chamador decide o que ele representa. O dicionário retém `valor`
+// (ARC) e libera o valor substituído ou removido; ponteiros não gerenciados são ignorados.
 void delegua_dicionario_definir(Dicionario* d, const char* chave, void* valor);
 
 // Retorna o valor associado à chave, ou NULL se a chave não existir.
@@ -40,5 +41,6 @@ Vetor* delegua_dicionario_chaves(Dicionario* d);
 // Retorna um novo Vetor* com os valores (void*), em ordem de inserção.
 Vetor* delegua_dicionario_valores(Dicionario* d);
 
-// Libera toda a estrutura do dicionário e suas chaves/entradas.
+// Solta uma referência ao dicionário (ARC); ao chegar a zero, libera entradas, chaves e
+// valores retidos.
 void delegua_dicionario_liberar(Dicionario* d);

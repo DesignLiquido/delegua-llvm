@@ -1,4 +1,5 @@
 #include "argumentos.h"
+#include "arc.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -49,9 +50,9 @@ int delegua_arg_quantidade_argumentos(void) {
 
 char* delegua_arg_argumento(int indice) {
     delegua_arg_carregar_argumentos();
-    if (indice < 0 || indice >= delegua_arg_argc_cache) return strdup("");
+    if (indice < 0 || indice >= delegua_arg_argc_cache) return delegua_arc_texto_criar(0);
     const char* valor = delegua_arg_argv_cache[indice + 1];
-    return strdup(valor ? valor : "");
+    return delegua_arc_texto_copiar(valor ? valor : "");
 }
 
 #elif defined(__APPLE__)
@@ -66,9 +67,9 @@ int delegua_arg_quantidade_argumentos(void) {
 
 char* delegua_arg_argumento(int indice) {
     int total = *_NSGetArgc();
-    if (indice < 0 || indice >= total - 1) return strdup("");
+    if (indice < 0 || indice >= total - 1) return delegua_arc_texto_criar(0);
     const char* valor = (*_NSGetArgv())[indice + 1];
-    return strdup(valor ? valor : "");
+    return delegua_arc_texto_copiar(valor ? valor : "");
 }
 
 #else
@@ -141,9 +142,9 @@ int delegua_arg_quantidade_argumentos(void) {
 
 char* delegua_arg_argumento(int indice) {
     delegua_arg_carregar_argumentos();
-    if (indice < 0 || indice >= delegua_arg_argc_cache) return strdup("");
+    if (indice < 0 || indice >= delegua_arg_argc_cache) return delegua_arc_texto_criar(0);
     const char* valor = delegua_arg_argv_cache[indice + 1];
-    return strdup(valor ? valor : "");
+    return delegua_arc_texto_copiar(valor ? valor : "");
 }
 
 #endif

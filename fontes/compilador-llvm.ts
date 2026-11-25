@@ -208,6 +208,8 @@ import {
     embalarValorEmHeap,
     tamElementoEmBytes,
     constTamElem,
+    elementoVetorGerenciado,
+    argumentosVetorCriar,
     chamarMetodoVetor,
     chamarMapear,
     chamarEncontrar,
@@ -270,6 +272,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     embalarValorEmHeap: typeof embalarValorEmHeap;
     tamElementoEmBytes: typeof tamElementoEmBytes;
     constTamElem: typeof constTamElem;
+    elementoVetorGerenciado: typeof elementoVetorGerenciado;
+    argumentosVetorCriar: typeof argumentosVetorCriar;
     chamarMetodoVetor: typeof chamarMetodoVetor;
     chamarMapear: typeof chamarMapear;
     chamarEncontrar: typeof chamarEncontrar;
@@ -1334,11 +1338,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const textoPtr2 = ehArgumento
                 ? iteravelResolvido.variavelLlvm
                 : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr2');
-            const funcaoCaractere = this.obterFuncaoRuntime('delegua_texto_caractere_em', this.montador.getPtrTy(), [
-                this.montador.getPtrTy(),
-                this.montador.getInt32Ty(),
-            ]);
-            const charTexto = this.montador.CreateCall(funcaoCaractere, [textoPtr2, iCorpo], 'char_texto');
+            // O índice já está limitado pelo tamanho calculado antes do laço: lê o byte direto
+            // (sem strlen por iteração) e o copia num texto gerenciado próprio.
+            const gepCaractere = this.montador.CreateInBoundsGEP(
+                this.montador.getInt8Ty(),
+                textoPtr2,
+                [iCorpo],
+                'ptr_char'
+            );
+            const caractere = this.montador.CreateLoad(this.montador.getInt8Ty(), gepCaractere, 'char_val');
+            const charTexto = this.textoDeCaractere(caractere, 'char_texto');
             this.montador.CreateStore(charTexto, alocElemento);
         }
 
@@ -1626,19 +1635,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
             const charVal = this.montador.CreateLoad(this.montador.getInt8Ty(), gepChar, 'txt_char');
 
-            // Usa malloc para que o ponteiro ao buffer de 2 bytes sobreviva ao retorno da função.
-            // Stack alloca seria dangling pointer se o resultado fosse retornado pela função.
-            const tamanho2 = ConstantInt.get(this.contexto, new APInt(64, 2));
-            const heapBuf = this.montador.CreateCall(this.funcaoMalloc, [tamanho2], 'txt_char_buf');
-            const idx1 = ConstantInt.get(this.contexto, new APInt(32, 1));
-            const gepBuf1 = this.montador.CreateInBoundsGEP(
-                this.montador.getInt8Ty(),
-                heapBuf,
-                [idx1],
-                'txt_buf1'
-            );
-            this.montador.CreateStore(charVal, heapBuf);
-            this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(8, 0)), gepBuf1);
+            // Texto gerenciado de 1 caractere: sobrevive ao retorno da função (uma alloca
+            // seria um ponteiro pendente) e é liberado pelo ARC.
+            const heapBuf = this.textoDeCaractere(charVal, 'txt_char_buf');
 
             const alocPtr = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'txt_char_ptr_alloca');
             this.montador.CreateStore(heapBuf, alocPtr);
@@ -2644,13 +2643,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoElemento = this.obterTipoLlvm(tipoElementoStr);
 
         // Aloca Vetor no heap via delegua_vetor_criar (com capacidade e crescimento geométrico).
-        const tamBytes = this.tamElementoEmBytes(tipoElementoStr);
         const vetorHeap = this.montador.CreateCall(
             this.funcaoVetorCriar,
-            [
-                ConstantInt.get(this.contexto, new APInt(32, tamanho)),
-                ConstantInt.get(this.contexto, new APInt(32, tamBytes)),
-            ],
+            this.argumentosVetorCriar(tamanho, tipoElementoStr),
             'vetor'
         );
 
@@ -4274,6 +4269,23 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return this.resolverPonteiroEstruturaVetor(valor);
     }
 
+    /**
+     * Novo texto gerenciado (ARC, +1) contendo só o byte `caractere`:
+     * `delegua_arc_texto_criar(1)` já zera o terminador.
+     */
+    protected textoDeCaractere(caractere: llvm.Value, nome: string): llvm.Value {
+        const funcaoTextoCriar = this.obterFuncaoRuntime('delegua_arc_texto_criar', this.montador.getPtrTy(), [
+            llvm.Type.getInt64Ty(this.contexto),
+        ]);
+        const texto = this.montador.CreateCall(
+            funcaoTextoCriar,
+            [ConstantInt.get(this.contexto, new APInt(64, 1))],
+            nome
+        );
+        this.montador.CreateStore(caractere, texto);
+        return texto;
+    }
+
     /** Verdadeiro se o tipo representa um handle opaco de biblioteca C (`opaco:*`). */
     tipoEhOpaco(tipo: string | undefined): boolean {
         return !!tipo && tipo.startsWith('opaco:');
@@ -5171,6 +5183,8 @@ CompiladorLLVM.prototype.coletarDicionarioEmVetor = coletarDicionarioEmVetor;
 CompiladorLLVM.prototype.embalarValorParaDicionario = embalarValorParaDicionario;
 CompiladorLLVM.prototype.embalarValorEmHeap = embalarValorEmHeap;
 CompiladorLLVM.prototype.tamElementoEmBytes = tamElementoEmBytes;
+CompiladorLLVM.prototype.elementoVetorGerenciado = elementoVetorGerenciado;
+CompiladorLLVM.prototype.argumentosVetorCriar = argumentosVetorCriar;
 CompiladorLLVM.prototype.constTamElem = constTamElem;
 CompiladorLLVM.prototype.chamarMetodoVetor = chamarMetodoVetor;
 CompiladorLLVM.prototype.chamarMapear = chamarMapear;

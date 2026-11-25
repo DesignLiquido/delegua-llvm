@@ -10,9 +10,9 @@ describe('Compilador - Vetores', () => {
 
         expect(resultado).toBeTruthy();
         // Struct %Vetor deve ser definido no módulo (ptr, tamanho, capacidade, tam_elem).
-        expect(resultado).toContain('%Vetor = type { ptr, i32, i32, i32 }');
-        // Vetor alocado no heap pelo runtime: 3 elementos de 8 bytes.
-        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 8)');
+        expect(resultado).toContain('%Vetor = type { ptr, i32, i32, i32, i32 }');
+        // Vetor alocado no heap pelo runtime: 3 elementos de 8 bytes, escalares (não gerenciados).
+        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 8, i32 0)');
         // A variável é um slot que guarda o Vetor* (nunca o struct por valor na pilha).
         expect(resultado).not.toContain('alloca %Vetor');
         // Valores inicializados como double.
@@ -121,7 +121,7 @@ describe('Compilador - Vetores', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 4)');
+        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 4, i32 0)');
         expect(resultado).toContain('store i32');
         expect(resultado).toContain('%d');
     });

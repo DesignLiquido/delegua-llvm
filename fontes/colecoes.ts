@@ -94,7 +94,7 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
     return this.embalarValorEmHeap(valorLlvm, valorLlvm.getType());
 }
 
-// Aloca uma célula no heap (malloc) do tamanho do tipo dado e armazena o valor nela.
+// Aloca uma caixa ARC (delegua_arc_caixa) do tamanho do tipo dado e armazena o valor nela.
 export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo: llvm.Type): llvm.Value {
     const construtorTipo = tipo?.constructor;
     const tamanhoBytes =
@@ -104,7 +104,10 @@ export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo
               ? 1
               : 8;
     const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
-    const caixa = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'dict_caixa');
+    const funcaoCaixa = this.obterFuncaoRuntime('delegua_arc_caixa', this.montador.getPtrTy(), [
+        llvm.Type.getInt64Ty(this.contexto),
+    ]);
+    const caixa = this.montador.CreateCall(funcaoCaixa, [tamanho], 'dict_caixa');
     this.montador.CreateStore(valor, caixa);
     return caixa;
 }
@@ -113,6 +116,26 @@ export function tamElementoEmBytes(this: CompiladorLLVM, tipoElem: string): numb
     if (tipoElem === 'inteiro') return 4;
     // número, longo, texto (ponteiro 64-bit) → 8 bytes
     return 8;
+}
+
+// Verdadeiro se os elementos de um vetor deste tipo são ponteiros gerenciados por ARC
+// (texto, instâncias, vetores, dicionários, `qualquer`, handles opacos): o runtime retém o
+// que o vetor guarda e libera o que ele remove. Escalares (inteiro, número, lógico, longo) não.
+export function elementoVetorGerenciado(this: CompiladorLLVM, tipoElem: string): boolean {
+    if (!tipoElem) return false;
+    // Escalares, ponteiros de função e ponteiros brutos de FFI não têm cabeçalho ARC.
+    const naoGerenciados = ['inteiro', 'número', 'numero', 'longo', 'lógico', 'logico', 'real', 'ponteiro'];
+    if (naoGerenciados.includes(tipoElem)) return false;
+    return !tipoElem.startsWith('função') && !tipoElem.startsWith('funcao');
+}
+
+// Argumentos (tamanho_inicial, tam_elem, gerenciado) de delegua_vetor_criar.
+export function argumentosVetorCriar(this: CompiladorLLVM, tamanhoInicial: number, tipoElem: string): llvm.Value[] {
+    return [
+        ConstantInt.get(this.contexto, new APInt(32, tamanhoInicial)),
+        ConstantInt.get(this.contexto, new APInt(32, this.tamElementoEmBytes(tipoElem))),
+        ConstantInt.get(this.contexto, new APInt(32, this.elementoVetorGerenciado(tipoElem) ? 1 : 0)),
+    ];
 }
 
 // Constante i32 para tamanho de elemento.

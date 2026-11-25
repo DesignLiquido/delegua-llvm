@@ -65,13 +65,9 @@ export async function instanciarClasse(
         for (const [nomeCampo, indiceCampo] of indicesCampos) {
             const tipoCampo = tiposCampos.get(nomeCampo);
             if (!tipoEhVetor(tipoCampo)) continue;
-            const tamElemCampo = this.tamElementoEmBytes(tipoElementoVetor(tipoCampo));
             const vetorVazio = this.montador.CreateCall(
                 this.funcaoVetorCriar,
-                [
-                    ConstantInt.get(this.contexto, new APInt(32, 0)),
-                    ConstantInt.get(this.contexto, new APInt(32, tamElemCampo)),
-                ],
+                this.argumentosVetorCriar(0, tipoElementoVetor(tipoCampo)),
                 `${nomeCampo}_vazio`
             );
             const gepCampo = this.montador.CreateInBoundsGEP(

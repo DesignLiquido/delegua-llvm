@@ -66,20 +66,34 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
     - `arquivos.c` não compilava (`duplicar_texto` usado antes de declarado).
 
 ### Fase 1 — Runtime ARC (`arc.h` / `arc.c`) e Migração das Coleções
-- [ ] **1.1 Criar `fontes/bibliotecas/arc.h` e `fontes/bibliotecas/arc.c`** e incluí-los em `BIBLIOTECAS_NUCLEO`:
-  - `ArcCabecalho { int64_t rc; const ArcDescritor* tipo; }` (16 bytes antes do payload).
-  - `ArcDescritor { const char* nome; void (*destrutor)(void*); void (*visitar_filhos)(void*, ArcVisitante); }`.
+- [x] **1.1 Criar `fontes/bibliotecas/arc.h` e `fontes/bibliotecas/arc.c`** e incluí-los em `BIBLIOTECAS_NUCLEO`:
+  - `ArcCabecalho { int32_t rc; uint32_t magia; const ArcDescritor* tipo; }` (16 bytes antes do payload). A `magia` (`DELEGUA_ARC_MAGIA`) identifica ponteiros gerenciados: `reter`/`liberar` ignoram ponteiros sem ela, o que permite migrar runtime e compilador aos poucos.
+  - `ArcDescritor { const char* nome; void (*destrutor)(void*); void (*visitar_filhos)(void*, visitante, contexto); }`.
   - Primitivas: `delegua_arc_alocar`, `delegua_arc_reter`, `delegua_arc_liberar`, `delegua_arc_atribuir(void** slot, void* novo)`, `delegua_arc_texto_criar`, `delegua_arc_texto_copiar`, `DELEGUA_TEXTO_ESTATICO("...")`.
   - Contadores de depuração (`DELEGUA_ARC_DEPURACAO`) para validar 0 vazamentos em testes.
-- [ ] **1.2 Migrar todas as alocações do runtime C** (`padrao.c`, `texto.c`, `vetor.c`, `dicionario.c`, `arquivos.c`, `csv.c`, `dados.c`, `http.c`, `json.c`, `rede.c`, `processo.c`, `criptografia*.c`, `memoria.c`) para o alocador ARC.
-- [ ] **1.3 Destrutores completos de coleções, caixas `qualquer` e handles opacos (`ARC_OPACO`):**
+- [x] **1.2 Migrar todas as alocações do runtime C** (`padrao.c`, `texto.c`, `vetor.c`, `dicionario.c`, `arquivos.c`, `csv.c`, `dados.c`, `http.c`, `json.c`, `rede.c`, `processo.c`, `criptografia*.c`, `memoria.c`) para o alocador ARC.
+- [x] **1.3 Destrutores completos de coleções, caixas `qualquer` e handles opacos (`ARC_OPACO`):**
   - `Vetor`: libera elementos gerenciados em `remover*`, sobrescrita e destruição, e libera o buffer de elementos.
   - `Dicionario`: `definir` e `remover` liberam valores antigos/removidos; destrutor libera todas as entradas, chaves, valores e `baldes`.
   - `ArcCaixa`: substitui `embalarValorEmHeap` para valores escalares em dicionários e parâmetros `qualquer`.
   - `ARC_OPACO`: caixas ARC para `cJSON*`, `Arquivo*`, `TabelaCsv*`, `RecorteDados*`, `Serie*`, `ClienteHttp*`, `RespostaHttp*`, `SoqueteDelegua*` com limpeza automática (e `.liberar()`/`.fechar()` idempotentes).
 
+  - **Estado (2026-11-25):** Fase 1 concluída. `arc.h`/`arc.c` no núcleo; todo texto devolvido pelo runtime C é ARC (+1); `Vetor`, `Dicionario`, `JsonRef`, `TabelaCsv`, `RecorteDados`, `Serie`, `Arquivo`, `SoqueteDelegua`, `ClienteHttp` e `RespostaHttp` são objetos ARC com destrutor, e os `liberar`/`fechar` manuais liberam o conteúdo de forma idempotente (a estrutura em si fica para o ARC). Verificado por `testes/bibliotecas/arc-teste.c` (0 alocações vivas, limpo sob AddressSanitizer), pela suíte de execução e compilando o `delegua-delegua`.
+    - **Convenção do runtime:** funções devolvem +1; coleções retêm o que guardam e liberam o que removem, sobrescrevem ou destroem; parâmetros são emprestados (+0).
+    - **`Vetor`** ganhou o campo `gerenciado` (`%Vetor = { ptr, i32, i32, i32, i32 }`) e `delegua_vetor_criar(tamanho, tam_elem, gerenciado)`; o compilador marca como gerenciados os elementos que não são escalares, ponteiros de função ou `ponteiro`.
+    - **JSON:** `cJSON*` não pode ter cabeçalho, então o handle virou `JsonRef { no, raiz, removidos }`. Filhos (`obterCampo`/`obterItem`) retêm a raiz; nós substituídos ou removidos vão para `removidos` (nunca ficam pendentes); `json.liberar` apaga a árvore e os filhos passam a ver JSON inválido.
+    - **Caixas `qualquer`:** `embalarValorEmHeap` usa `delegua_arc_caixa`. `texto[i]` e `para cada c em texto` leem o byte direto e criam um texto ARC de 1 caractere (sem `strlen` por iteração).
+    - **Literais devolvidos pelo C** (`json.tipo`, `processo.sistemaOperacional`, ...) usam `DELEGUA_TEXTO_ESTATICO` (imortais).
+
 ### Fase 2 — Instrumentação ARC no `CompiladorLLVM`
-- [ ] **2.1 Literais imortais no IR:** Emitir literais globais de texto com `ArcCabecalho { -1, null }` em `.rodata` (deduplicados por conteúdo) e copiar retornos `texto` de FFI `@definicao` na fronteira C → Delégua.
+
+> **Pendências herdadas da Fase 1:**
+> - Objetos de classe e de exceção ainda usam `calloc`/`malloc` (precisam dos descritores gerados em 2.2).
+> - A inicialização de literais de vetor (`[a, b]`) e a escrita por índice (`v[i] = x`, via `delegua_vetor_definir_indice`) gravam direto no buffer: com elementos gerenciados, o compilador precisa reter o valor gravado e liberar o sobrescrito.
+> - Caixas `qualquer` e textos temporários entram nas coleções com +1 e são retidos de novo pela coleção: são temporários que 2.3 deve liberar.
+> - Campos `vetor` iniciados vazios e depois sobrescritos pelo construtor (`isto.itens = itens`) precisam de `delegua_arc_atribuir`.
+> - Enquanto houver `texto` sem cabeçalho (literais do IR, retornos de FFI), `reter`/`liberar` fazem uma leitura especulativa da `magia` antes do ponteiro (isenta do ASan só nessa função). Some com 2.1 e com a cópia na fronteira FFI.
+- [ ] **2.1 Literais imortais no IR:** Emitir literais globais de texto com `ArcCabecalho { rc = -1, magia = DELEGUA_ARC_MAGIA, null }` (`{ i32 -1, i32 0xA4C0DE1A, ptr null, [N x i8] }`) em `.rodata` (deduplicados por conteúdo) e copiar retornos `texto` de FFI `@definicao` na fronteira C → Delégua.
 - [ ] **2.2 Destrutores gerados para classes:** Emitir `__destrutor_<Classe>` e descriptor global `__arc_desc_<Classe>` em `visitarDeclaracaoClasse`, liberando todos os campos gerenciados (inclusive herdados).
 - [ ] **2.3 Convenção de chamadas (+0 emprestado / +1 retornado):**
   - Parâmetros recebidos em +0; retidos se armazenados ou retornados.
