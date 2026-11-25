@@ -4,7 +4,7 @@ import * as caminho from 'path';
 import { Lexador } from '@designliquido/delegua/lexador';
 import { AvaliadorSintatico } from '@designliquido/delegua/avaliador-sintatico';
 import { cyrb53 } from '@designliquido/delegua/geracao-identificadores';
-import { Declaracao, Classe, FuncaoDeclaracao, Var, Const } from '@designliquido/delegua';
+import { Declaracao, Classe, FuncaoDeclaracao, InterfaceDeclaracao, Var, Const } from '@designliquido/delegua';
 import { InformacaoElementoSintatico } from '@designliquido/delegua/informacao-elemento-sintatico';
 
 import { ehModuloEmbutido } from './bibliotecas-compilacao';
@@ -56,6 +56,9 @@ export interface ContextoResolucao {
     // Verdadeiro depois que o grafo de importações foi percorrido para marcar os arquivos
     // importados com `tudo como`.
     espacosNomesMarcados?: boolean;
+    // Interfaces declaradas nos arquivos já analisados, para que classes de outros arquivos
+    // possam implementá-las e funções possam recebê-las como parâmetro.
+    interfaces: { [nome: string]: Declaracao };
 }
 
 export function criarContextoResolucao(): ContextoResolucao {
@@ -66,6 +69,7 @@ export function criarContextoResolucao(): ContextoResolucao {
         bibliotecasNativas: new Set(),
         declaracoesAnalisadas: [],
         espacosNomes: criarEstadoEspacosNomes(),
+        interfaces: {},
     };
 }
 
@@ -240,6 +244,7 @@ export async function resolverEMesclarDeclaracoes(
     const resultado: Declaracao[] = [];
 
     if (!contexto.espacosNomes) contexto.espacosNomes = criarEstadoEspacosNomes();
+    if (!contexto.interfaces) contexto.interfaces = {};
     if (!contexto.espacosNomesMarcados) {
         marcarArquivosQualificados(codigo, diretorioBase, resolvedorCaminhos(contexto), contexto.espacosNomes);
         contexto.espacosNomesMarcados = true;
@@ -306,10 +311,12 @@ export async function resolverEMesclarDeclaracoes(
         const inicializarOriginal = avaliadorAny.inicializarPilhaEscopos?.bind(avaliadorAny);
         if (inicializarOriginal) {
             const capturedRegistro = { ...registroClasses };
+            const interfacesAnteriores = { ...contexto.interfaces };
             const simbolosAnteriores = [...contexto.declaracoesAnalisadas];
             avaliadorAny.inicializarPilhaEscopos = () => {
                 inicializarOriginal();
                 Object.assign(avaliadorAny.tiposDefinidosEmCodigo, capturedRegistro);
+                Object.assign(avaliadorAny.interfacesDeclaradas, interfacesAnteriores);
                 registrarSimbolosImportados(avaliadorAny, simbolosAnteriores, importacoesLocais.simbolosLocais());
             };
         }
@@ -340,6 +347,8 @@ export async function resolverEMesclarDeclaracoes(
         for (const decl of retornoAvaliador.declaracoes) {
             if (decl instanceof Classe) {
                 registroClasses[(decl as Classe).simbolo.lexema] = decl;
+            } else if (decl instanceof InterfaceDeclaracao) {
+                contexto.interfaces[(decl as InterfaceDeclaracao).simbolo.lexema] = decl;
             }
         }
 

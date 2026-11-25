@@ -169,6 +169,12 @@ describe('compatibilidade do IR com o LLVM do compilador C', () => {
         expect(compatibilizarIrComLlvm(ir, 22)).toBe(ir);
         expect(compatibilizarIrComLlvm(ir, undefined)).toBe(compatibilizarIrComLlvm(ir, 19));
     });
+
+    it('LLVM anterior ao 20: remove a indicação samesign de icmp', () => {
+        const comparacao = '  %c = icmp samesign ugt i32 %a, %b';
+        expect(compatibilizarIrComLlvm(comparacao, 19)).toBe('  %c = icmp ugt i32 %a, %b');
+        expect(compatibilizarIrComLlvm(comparacao, 20)).toBe(comparacao);
+    });
 });
 
 describe('correções encontradas na compilação cruzada', () => {

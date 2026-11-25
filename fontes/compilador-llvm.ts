@@ -4999,6 +4999,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 avaliadorComTipagem.inicializarPilhaEscopos = () => {
                     inicializarOriginal();
                     Object.assign(avaliadorComTipagem.tiposDefinidosEmCodigo, registroClasses);
+                    Object.assign((avaliadorComTipagem as any).interfacesDeclaradas, contextoResolucao.interfaces);
                     registrarSimbolosImportados(avaliadorComTipagem, declaracoesImportadas, simbolosLocais);
                 };
             }

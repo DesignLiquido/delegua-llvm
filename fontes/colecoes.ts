@@ -80,6 +80,13 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
             tipo === 'qualquer' ||
             tipoEhVetor(tipo) ||
             this.ehTipoObjeto(tipo);
+        // Vetor: o dicionário guarda um cabeçalho %Vetor próprio no heap. Carregar o ponteiro
+        // direto da variável traria só o primeiro campo (o buffer de elementos), e o endereço
+        // da variável aponta para a pilha, que não sobrevive à função que a declarou.
+        if (tipoEhVetor(tipo) && this.tipoEstruturaVetor) {
+            const estrutura = this.montador.CreateLoad(this.tipoEstruturaVetor, resolvido.variavelLlvm, 'dict_vetor');
+            return this.embalarValorEmHeap(estrutura, this.tipoEstruturaVetor);
+        }
         if (ehPonteiro) {
             return this.resolverPonteiroDireto(resolvido);
         }
@@ -99,12 +106,14 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
 // Aloca uma célula no heap (malloc) do tamanho do tipo dado e armazena o valor nela.
 export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo: llvm.Type): llvm.Value {
     const construtorTipo = tipo?.constructor;
-    const tamanhoBytes =
-        construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
-            ? 4
-            : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
-              ? 1
-              : 8;
+    // Estruturas (ex.: %Vetor devolvido por valor por uma função) ocupam mais de 8 bytes.
+    const tamanhoBytes = tipo?.isStructTy?.()
+        ? this.layoutDados.getTypeAllocSize(tipo)
+        : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
+          ? 4
+          : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
+            ? 1
+            : 8;
     const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
     const caixa = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'dict_caixa');
     this.montador.CreateStore(valor, caixa);
@@ -244,7 +253,14 @@ export async function chamarMetodoVetor(
         case 'inclui': {
             if (tipoElem === 'texto') {
                 const valorBusca = await this.carregarArgumentoTexto(argumentos[0]);
-                return this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
+                const encontrado = this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
+                // O runtime devolve int; `inclui` é lógico (i1) para poder ser retornado e
+                // atribuído como tal.
+                return this.montador.CreateICmpNE(
+                    encontrado,
+                    ConstantInt.get(this.contexto, new APInt(32, 0)),
+                    'vetor_inclui'
+                );
             }
             const erroInclui = new ErroCompilador(`Método 'inclui' só suportado para vetor<texto>.`);
             erroInclui.linha = linha;
