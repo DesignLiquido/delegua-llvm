@@ -13,8 +13,51 @@ import type { CompiladorLLVM } from './compilador-llvm';
  * de CompiladorLLVM.
  */
 
-export function obterLiteralTextoSeguro(this: CompiladorLLVM, valor: string, sufixoNome: string): llvm.Value {
-    return this.montador.CreateGlobalStringPtr(valor, `${sufixoNome}_${++this._contadorNomesAnonimos}`, 0, this.modulo);
+// Magia do cabeçalho ARC (ver bibliotecas/arc.h: DELEGUA_ARC_MAGIA).
+const ARC_MAGIA = 0xa4c0de1a;
+
+/**
+ * Literal de texto imortal: global constante `{ i32 -1, i32 magia, ptr null, [N x i8] }` com o
+ * mesmo layout de `ArcCabecalho` + bytes, devolvendo o endereço dos bytes. Assim todo `texto`
+ * literal tem cabeçalho ARC válido (rc < 0: reter/liberar não fazem nada) e continua sendo um
+ * `char*` comum para printf e FFI. Deduplicado por conteúdo no módulo.
+ */
+export function literalTextoArc(this: CompiladorLLVM, valor: string): llvm.Value {
+    const existente = this.cacheLiteraisTextoArc.get(valor);
+    if (existente) return existente;
+
+    const i32 = llvm.Type.getInt32Ty(this.contexto);
+    const ptr = llvm.PointerType.get(this.contexto, 0);
+    const bytes = llvm.ConstantDataArray.getString(this.contexto, valor, true);
+    const tipo = llvm.StructType.get(this.contexto, [i32, i32, ptr, bytes.getType()]);
+    const inicial = llvm.ConstantStruct.get(tipo, [
+        ConstantInt.get(this.contexto, new APInt(32, -1, true)),
+        ConstantInt.get(this.contexto, new APInt(32, ARC_MAGIA)),
+        llvm.ConstantPointerNull.get(ptr),
+        bytes,
+    ]);
+    const global = new llvm.GlobalVariable(
+        this.modulo,
+        tipo,
+        true,
+        llvm.GlobalValue.LinkageTypes.PrivateLinkage,
+        inicial,
+        `texto_arc_${this.cacheLiteraisTextoArc.size}`
+    );
+    const zero = ConstantInt.get(this.contexto, new APInt(32, 0));
+    // GEP de constantes: o IRBuilder dobra em expressão constante, sem emitir instrução.
+    const endereco = this.montador.CreateInBoundsGEP(
+        tipo,
+        global,
+        [zero, ConstantInt.get(this.contexto, new APInt(32, 3)), zero],
+        'texto_arc'
+    );
+    this.cacheLiteraisTextoArc.set(valor, endereco);
+    return endereco;
+}
+
+export function obterLiteralTextoSeguro(this: CompiladorLLVM, valor: string, _sufixoNome: string): llvm.Value {
+    return this.literalTextoArc(valor);
 }
 
 export function garantirPonteiroTextoNaoNulo(
@@ -116,7 +159,7 @@ export async function chamarMetodoTexto(
             // dividir(delimitador = "", limite = 0) → texto[]
             const delimitador = argumentos[0]
                 ? await this.carregarArgumentoTexto(argumentos[0])
-                : this.montador.CreateGlobalStringPtr('', 'str_vazio', 0, this.modulo);
+                : this.literalTextoArc('');
             const limite = argumentos[1]
                 ? await this.carregarArgumentoInteiro(argumentos[1])
                 : ConstantInt.get(this.contexto, new APInt(32, 0));
@@ -199,8 +242,8 @@ export async function chamarFuncaoTexto(this: CompiladorLLVM, argumentos: Constr
         return this.montador.CreateCall(funcao, [valor]);
     }
     if (tipoLlvmValor.isIntegerTy(1)) {
-        const verdadeiro = this.montador.CreateGlobalStringPtr('verdadeiro', 'texto_verdadeiro', 0, this.modulo);
-        const falso = this.montador.CreateGlobalStringPtr('falso', 'texto_falso', 0, this.modulo);
+        const verdadeiro = this.literalTextoArc('verdadeiro');
+        const falso = this.literalTextoArc('falso');
         return this.montador.CreateSelect(valor, verdadeiro, falso, 'texto_logico');
     }
     if (tipoLlvmValor.isIntegerTy(8)) {

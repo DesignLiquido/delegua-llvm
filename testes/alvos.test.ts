@@ -207,7 +207,7 @@ describe('correções encontradas na compilação cruzada', () => {
 
     it('método chamado em texto literal recebe o char* numa caixa', async () => {
         const ir = await compilar(['escreva("ab".maiusculo())']);
-        expect(ir).toMatch(/store ptr @str[.\d]*, ptr %texto_slot/);
+        expect(ir).toMatch(/store ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr %texto_slot/);
         expect(ir).toMatch(/%load_texto = load ptr, ptr %texto_slot/);
     });
 });

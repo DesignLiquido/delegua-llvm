@@ -193,6 +193,7 @@ import {
 } from './operacoes';
 import {
     obterLiteralTextoSeguro,
+    literalTextoArc,
     garantirPonteiroTextoNaoNulo,
     normalizarOperandoParaTextoSeguro,
     chamarMetodoTexto,
@@ -258,6 +259,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     resolverIgualdade: typeof resolverIgualdade;
     // texto.ts
     obterLiteralTextoSeguro: typeof obterLiteralTextoSeguro;
+    literalTextoArc: typeof literalTextoArc;
     garantirPonteiroTextoNaoNulo: typeof garantirPonteiroTextoNaoNulo;
     normalizarOperandoParaTextoSeguro: typeof normalizarOperandoParaTextoSeguro;
     chamarMetodoTexto: typeof chamarMetodoTexto;
@@ -397,6 +399,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Bloco básico onde o cache é válido.
     protected cacheBlocoAtual: llvm.BasicBlock | null = null;
     protected _contadorNomesAnonimos: number = 0;
+    // Literais de texto imortais (com cabeçalho ARC) já emitidos no módulo, por conteúdo.
+    cacheLiteraisTextoArc: Map<string, llvm.Value> = new Map();
 
     // Bibliotecas estrangeiras referenciadas por classes @definicao.
     // Campo público para que ilc.ts possa adicionar flags -l ao linker.
@@ -2532,7 +2536,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         return Promise.resolve(
-            this.montador.CreateGlobalStringPtr(tipoInferido, `tipo_de_${tipoInferido}`, 0, this.modulo)
+            this.literalTextoArc(tipoInferido)
         );
     }
 
@@ -4703,7 +4707,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 if (valor.includes('${')) {
                     return this.resolverTextoInterpolado(valor);
                 }
-                return Promise.resolve(this.montador.CreateGlobalStringPtr(valor, 'str', 0, this.modulo));
+                return Promise.resolve(this.literalTextoArc(valor));
             }
             case 'nulo':
             case null:
@@ -4869,6 +4873,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.modulo.setDataLayout(this.layoutDados);
 
         this.tipoEstruturaVetor = null;
+        this.cacheLiteraisTextoArc = new Map();
         this.contemExcecoes = false;
         this.contadorLambda = 0;
         this.cachePointerVetor = new Map();
@@ -5171,6 +5176,7 @@ CompiladorLLVM.prototype.resolverExponenciacao = resolverExponenciacao;
 CompiladorLLVM.prototype.compararTextos = compararTextos;
 CompiladorLLVM.prototype.resolverIgualdade = resolverIgualdade;
 CompiladorLLVM.prototype.obterLiteralTextoSeguro = obterLiteralTextoSeguro;
+CompiladorLLVM.prototype.literalTextoArc = literalTextoArc;
 CompiladorLLVM.prototype.garantirPonteiroTextoNaoNulo = garantirPonteiroTextoNaoNulo;
 CompiladorLLVM.prototype.normalizarOperandoParaTextoSeguro = normalizarOperandoParaTextoSeguro;
 CompiladorLLVM.prototype.chamarMetodoTexto = chamarMetodoTexto;

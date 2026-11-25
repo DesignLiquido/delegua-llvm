@@ -19,10 +19,10 @@ describe('Compilador - módulo rede', () => {
             'escreva(porta)',
             'escreva(requisicao)',
         ]);
-        expect(ir).toMatch(/call ptr @delegua_rede_escutar\(ptr @str[.\d]*, i32 0\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_escutar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 0\)/);
         expect(ir).toMatch(/call i32 @delegua_rede_porta_local\(ptr %ponteiro_val\d*\)/);
         expect(ir).toMatch(/call ptr @delegua_rede_aceitar\(ptr %ponteiro_val\d*, i32 120000\)/);
-        expect(ir).toMatch(/call ptr @delegua_rede_ler_ate\(ptr %ponteiro_val\d*, ptr @str[.\d]*, i32 65536, i32 5000\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_ler_ate\(ptr %ponteiro_val\d*, ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 65536, i32 5000\)/);
         expect(ir).toContain('call i32 @delegua_rede_escrever(');
         expect(ir).toContain('call void @delegua_rede_fechar(');
         // porta é inteiro e requisicao é texto.
@@ -39,7 +39,7 @@ describe('Compilador - módulo rede', () => {
             '}',
             'escreva(rede.ler(cliente, 1024, 1000))',
         ]);
-        expect(ir).toMatch(/call ptr @delegua_rede_conectar\(ptr @str[.\d]*, i32 80, i32 3000\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_conectar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 80, i32 3000\)/);
         expect(ir).toContain('call ptr @delegua_rede_ultimo_erro()');
         expect(ir).toMatch(/call ptr @delegua_rede_ler\(ptr %ponteiro_val\d*, i32 1024, i32 1000\)/);
     });

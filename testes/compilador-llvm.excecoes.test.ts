@@ -59,7 +59,7 @@ describe('Compilador - Exceções (setjmp/longjmp)', () => {
         const ir = await compilar(['falhar "erro proposital"']);
         expect(ir).toContain('%Excecao = type { i32, ptr }');
         expect(ir).toMatch(/store i32 1000000, ptr %excecao_tipo_ptr/);
-        expect(ir).toMatch(/call void @delegua_excecao_lancar\(ptr %excecao, ptr @str[.\d]*\)/);
+        expect(ir).toMatch(/call void @delegua_excecao_lancar\(ptr %excecao, ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\)\)/);
         expect(ir).toMatch(/declare void @delegua_excecao_lancar\(ptr, ptr\) #\d+/);
     });
 

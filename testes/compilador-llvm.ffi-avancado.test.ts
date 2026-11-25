@@ -117,7 +117,7 @@ describe('FFI - estruturas', () => {
         expect(ir).toMatch(/store i8 44, ptr %marca_ptr/);
         expect(ir).toMatch(/store i64 7, ptr %area_ptr/);
         expect(ir).toMatch(/store i32 2, ptr %y_ptr/);
-        expect(ir).toMatch(/store ptr @str[.\d]*, ptr %nome_ptr/);
+        expect(ir).toMatch(/store ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr %nome_ptr/);
     });
 
     it('estrutura é passada a C como ponteiro do objeto', async () => {
@@ -282,7 +282,7 @@ describe('texto() conforme o tipo LLVM do valor', () => {
             'escreva(texto(FFI.byte()))',
         ]);
         expect(ir).toMatch(/call ptr @texto_de_longo\(i64 %\d+\)/);
-        expect(ir).toMatch(/select i1 %\d+, ptr @texto_verdadeiro[.\d]*, ptr @texto_falso/);
+        expect(ir).toMatch(/select i1 %\d+, ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\)/);
         expect(ir).toMatch(/call ptr @texto_de_inteiro\(i32 %byte_byte\)/);
     });
 });

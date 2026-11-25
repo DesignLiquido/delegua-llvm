@@ -138,7 +138,7 @@ describe('Compilador - correções de vetores e funções', () => {
             '}',
             'escreva(f("ab"))',
         ]);
-        expect(ir).toMatch(/store ptr @str[.\d]*, ptr %arg_ptr_caixa/);
+        expect(ir).toMatch(/store ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr %arg_ptr_caixa/);
         expect(ir).toContain('call ptr @f(ptr %arg_ptr_caixa)');
     });
 

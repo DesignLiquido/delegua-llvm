@@ -48,7 +48,7 @@ describe('Compilador - módulo processo', () => {
             'var codigo = processo.executar("git", ["status"])',
             'escreva(codigo)',
         ]);
-        expect(ir).toMatch(/call i32 @delegua_processo_executar\(ptr @str[.\d]*, ptr %vetor, ptr null\)/);
+        expect(ir).toMatch(/call i32 @delegua_processo_executar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr %vetor, ptr null\)/);
     });
 
     it('executarCapturando e ultimoCodigoSaida', async () => {

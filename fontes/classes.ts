@@ -450,6 +450,14 @@ export async function chamarMetodoInstancia(
         if (entrada.tipoRetorno === 'byte') {
             return this.montador.CreateZExt(resultadoEstrangeira, this.montador.getInt32Ty(), `${nomeMetodo}_byte`);
         }
+        if (entrada.tipoRetorno === 'texto') {
+            // O `char*` devolvido por código C externo não tem cabeçalho ARC e seu tempo de
+            // vida é da biblioteca: copia na fronteira para um texto gerenciado (+1).
+            const funcaoCopiar = this.obterFuncaoRuntime('delegua_arc_texto_copiar', this.montador.getPtrTy(), [
+                this.montador.getPtrTy(),
+            ]);
+            return this.montador.CreateCall(funcaoCopiar, [resultadoEstrangeira], `${nomeMetodo}_texto`);
+        }
         return resultadoEstrangeira;
     }
 

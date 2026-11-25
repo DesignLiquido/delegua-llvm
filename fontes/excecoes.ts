@@ -161,7 +161,7 @@ export async function compilarFalhar(this: CompiladorLLVM, expressao: Falhar): P
         objeto = resolvido instanceof VariavelEscopo ? this.carregarPtrClasseSePreciso(resolvido) : (resolvido as llvm.Value);
         mensagem = this.herdaDeExcecao(tipo)
             ? this.mensagemDeExcecao(objeto, tipo)
-            : this.montador.CreateGlobalStringPtr(`<objeto ${tipo}>`, 'mensagem_objeto', 0, this.modulo);
+            : this.literalTextoArc(`<objeto ${tipo}>`);
     } else {
         // Qualquer outro valor vira a mensagem de uma Excecao (como no núcleo de Delégua).
         mensagem = await this.chamarFuncaoTexto([valor]);
