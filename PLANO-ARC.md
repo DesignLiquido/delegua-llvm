@@ -101,7 +101,7 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
   - Literais de vetor gravados em destinos tipados (variável, campo, retorno, argumento) assumem o tipo de elemento do destino; sem isso `isto.simbolos = []` num campo `Simbolo[]` criava um vetor não gerenciado e os objetos adicionados eram liberados.
 - **Estado (2026-11-25):** Fase 2 concluída. Os programas de teste e o interpretador `delegua-delegua` compilado terminam com 0 alocações vivas (`DELEGUA_ARC_DEPURACAO`) e sem erros sob AddressSanitizer (inclusive sem a isenção da leitura da magia). Testes: `testes/compilador-llvm.arc-execucao.test.ts` (modo estrito).
   - **Vetores sem verificação de limites:** o código compilado não verifica índices. O runtime mantém uma posição sentinela zerada após o último elemento e zera posições removidas, então `v[v.tamanho()]` devolve nulo (o `delegua-delegua` lê o símbolo atual após o fim); leituras mais distantes continuam indefinidas e, com ARC, podem travar ao reter lixo.
-  - **Pendente para a Fase 3:** temporários e variáveis de funções abandonadas por `longjmp` não são liberados; o objeto e a mensagem da exceção vivem até o fim do programa.
+  - ~~Pendente para a Fase 3: temporários e variáveis de funções abandonadas por `longjmp` não são liberados; o objeto e a mensagem da exceção vivem até o fim do programa.~~ Resolvido na Fase 3.
   - **Pendente para a Fase 4.3:** pares `reter`/`liberar` redundantes (temporário consumido por variável), temporários da condição de `se`/`enquanto` liberados só na instrução seguinte ou no retorno.
 
 ### Fase 3 — Exceções (`setjmp`/`longjmp`) + Desenrolamento ARC
