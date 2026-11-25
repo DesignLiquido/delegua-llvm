@@ -173,6 +173,72 @@ descrever('ARC - execução sem vazamentos', () => {
         );
     }, 300000);
 
+    it('ciclos são coletados e campos @fraco não retêm e viram nulo', async () => {
+        // Árvores com pai forte (ciclos pai ↔ filhos), árvores com pai @fraco, uma cadeia
+        // circular de 100 mil nós (coletas automáticas no meio do programa) e um dicionário
+        // que contém a si mesmo.
+        const linhas = await compilarEExecutar('ciclos', [
+            'classe No {',
+            '    nome: texto',
+            '    pai: No',
+            '    filhos: No[]',
+            '    construtor(nome: texto) { isto.nome = nome }',
+            '}',
+            'classe NoFraco {',
+            '    nome: texto',
+            '    @fraco',
+            '    pai: NoFraco',
+            '    filhos: NoFraco[]',
+            '    construtor(nome: texto) { isto.nome = nome }',
+            '}',
+            'funcao arvoreForte(n: inteiro): inteiro {',
+            '    var raiz = No(\"raiz\")',
+            '    para (var i = 0; i < n; i = i + 1) {',
+            '        var filho = No(\"f\")',
+            '        filho.pai = raiz',
+            '        raiz.filhos.adicionar(filho)',
+            '    }',
+            '    retorna raiz.filhos.tamanho()',
+            '}',
+            'funcao arvoreFraca(n: inteiro): inteiro {',
+            '    var raiz = NoFraco(\"raiz\")',
+            '    para (var i = 0; i < n; i = i + 1) {',
+            '        var filho = NoFraco(\"f\")',
+            '        filho.pai = raiz',
+            '        raiz.filhos.adicionar(filho)',
+            '    }',
+            '    retorna raiz.filhos.tamanho()',
+            '}',
+            'var total = 0',
+            'para (var k = 0; k < 50; k = k + 1) { total = total + arvoreForte(400) }',
+            'escreva(total)',
+            'total = 0',
+            'para (var k = 0; k < 50; k = k + 1) { total = total + arvoreFraca(400) }',
+            'escreva(total)',
+            'var p = NoFraco(\"p\")',
+            'var f = NoFraco(\"f\")',
+            'f.pai = p',
+            'se f.pai == nulo { escreva(\"pai nulo\") } senao { escreva(f.pai.nome) }',
+            'p = nulo',
+            'se f.pai == nulo { escreva(\"pai nulo\") } senao { escreva(f.pai.nome) }',
+            'var primeiro = No(\"0\")',
+            'var atual = primeiro',
+            'para (var j = 0; j < 100000; j = j + 1) {',
+            '    var proximo = No(\"n\")',
+            '    atual.pai = proximo',
+            '    atual = proximo',
+            '}',
+            'atual.pai = primeiro',
+            'primeiro = nulo',
+            'atual = nulo',
+            'var d = {}',
+            'd[\"eu\"] = d',
+            'd = nulo',
+            'escreva(\"fim\")',
+        ]);
+        expect(linhas).toEqual(['20000', '20000', 'p', 'pai nulo', 'fim']);
+    }, 300000);
+
     it('iterável temporário, módulos e vetores devolvidos', async () => {
         const linhas = await compilarEExecutar('modulos', [
             'var json = importar("json")',

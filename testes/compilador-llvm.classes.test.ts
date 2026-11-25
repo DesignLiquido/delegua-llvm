@@ -237,4 +237,39 @@ describe('Compilador - Classes', () => {
         expect(resultado).toContain('define double @Calculadora_quadruplicar');
         expect(resultado).toContain('call double @Calculadora_dobrar');
     });
+    it('campo @fraco usa delegua_arc_fraco_atribuir e fica fora do visitante de ciclos', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'classe No {',
+            '    @fraco',
+            '    pai: No',
+            '    filhos: No[]',
+            '}',
+            'var raiz = No()',
+            'var filho = No()',
+            'filho.pai = raiz',
+        ]);
+        expect(resultado).toMatch(/call void @delegua_arc_fraco_atribuir\(ptr %pai_\w+, ptr %\w+\)/);
+        // O destrutor só cancela o registro do campo fraco e libera o forte.
+        expect(resultado).toMatch(/@__destrutor_No[\s\S]*call void @delegua_arc_fraco_atribuir\(ptr %pai_ptr, ptr null\)/);
+        // O visitante de ciclos segue `filhos`, não `pai`.
+        const visitante = resultado.slice(resultado.indexOf('define internal void @__visitar_No'));
+        const corpoVisitante = visitante.slice(0, visitante.indexOf('}'));
+        expect(corpoVisitante).toContain('%filhos = load ptr');
+        expect(corpoVisitante).not.toContain('%pai = load ptr');
+        expect(resultado).toContain('ptr @__destrutor_No, ptr @__visitar_No }');
+    });
+
+    it('classe só com campos texto não tem visitante de ciclos', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar(['classe P {', '    nome: texto', '}', 'var p = P()']);
+        expect(resultado).toContain('ptr @__destrutor_P, ptr null }');
+    });
+
+    it('@fraco em campo que não é referência é erro de compilação', async () => {
+        const compilador = new CompiladorLLVM();
+        await expect(compilador.compilar(['classe A {', '    @fraco', '    n: inteiro', '}', 'var a = A()'])).rejects.toThrow(
+            "@fraco só se aplica a campos que referenciam objetos, vetores ou dicionários; 'n' é 'inteiro'."
+        );
+    });
 });

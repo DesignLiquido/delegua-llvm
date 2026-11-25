@@ -38,6 +38,8 @@ typedef struct ArcDescritor {
 
 typedef struct {
     int32_t rc;
+    // 24 bits altos: identificação (DELEGUA_ARC_MAGIA >> 8); byte baixo: estado do coletor de
+    // ciclos (cor e marcadores, ver arc.c).
     uint32_t magia;
     const ArcDescritor* tipo;
 } ArcCabecalho;
@@ -99,6 +101,15 @@ void delegua_arc_quadro_desempilhar(ArcQuadroLimpeza* quadro);
 void* delegua_arc_quadro_topo(void);
 // Libera os slots de todos os quadros acima de `marca` e a torna o topo.
 void delegua_arc_desenrolar_ate(void* marca);
+
+// Referência fraca (campo @fraco, Fase 4.2): *slot = novo sem reter; quando `novo` morrer,
+// *slot vira NULL. Gravar outro valor (ou NULL) cancela o registro anterior.
+void delegua_arc_fraco_atribuir(void** slot, void* novo);
+
+// Coletor de ciclos (Fase 4.1, Bacon-Rajan síncrono): libera grafos de objetos que só se
+// referenciam entre si. Roda sozinho quando o buffer de raízes candidatas enche e ao fim do
+// programa no modo de depuração; pode ser chamado a qualquer momento fora de um destrutor.
+void delegua_arc_coletar_ciclos(void);
 
 // O programa terminou normalmente (fim de `main`): só então o modo estrito de
 // DELEGUA_ARC_DEPURACAO acusa vazamentos (exit por erro ou processo.sair não contam).

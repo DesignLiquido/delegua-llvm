@@ -446,6 +446,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     cacheLiteraisTextoArc: Map<string, llvm.Value> = new Map();
     // Descritores ARC (`__arc_desc_<Classe>`) já emitidos, por classe.
     descritoresArcClasse: Map<string, llvm.Value> = new Map();
+    // Campos @fraco (referências fracas) de cada classe, inclusive os herdados.
+    camposFracosArc: Map<string, Set<string>> = new Map();
     // Quadros ARC (slots donos, temporários e retornos): pilha das funções em emissão e
     // quadros já encerrados, finalizados ao fim da compilação.
     pilhaQuadrosArc: QuadroArc[] = [];
@@ -883,12 +885,30 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             mapaTipos.set('__tipoId', 'inteiro');
         }
 
+        // Campos @fraco (referência fraca, Fase 4.2): herdados da superclasse + próprios.
+        const camposFracos = new Set<string>(
+            temSuperClasseRegistrada ? this.camposFracosArc.get(nomeSuperClasse) ?? [] : []
+        );
         for (const propriedade of declaracao.propriedades) {
             const tipoProp = propriedade.tipo || 'número';
             tiposPropsLlvm.push(this.obterTipoLlvm(tipoProp));
             mapaIndices.set(propriedade.nome.lexema, tiposPropsLlvm.length - 1);
             mapaTipos.set(propriedade.nome.lexema, tipoProp);
+            const decoradorFraco = (propriedade.decoradores ?? []).find(
+                (decorador) => decorador?.nome === '@fraco' || decorador?.nome === 'fraco'
+            );
+            if (decoradorFraco) {
+                if (!this.tipoGerenciadoArc(tipoProp) || tipoProp === 'texto') {
+                    const erroFraco = new ErroCompilador(
+                        `@fraco só se aplica a campos que referenciam objetos, vetores ou dicionários; '${propriedade.nome.lexema}' é '${tipoProp}'.`
+                    );
+                    erroFraco.linha = decoradorFraco.linha ?? propriedade.nome.linha;
+                    throw erroFraco;
+                }
+                camposFracos.add(propriedade.nome.lexema);
+            }
         }
+        this.camposFracosArc.set(nomeClasse, camposFracos);
 
         const tipoStruct = llvm.StructType.create(this.contexto, nomeClasse);
         tipoStruct.setBody(tiposPropsLlvm);
@@ -1596,9 +1616,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (infoPropriedade) {
             this.tiparLiteralVetor(expressao.valor, infoPropriedade.tipoProp);
             const valorResolvido = await expressao.valor.aceitar(this);
-            const { gepPtr, tipoProp, nomeClasse } = infoPropriedade;
+            const { gepPtr, tipoProp, nomeClasse, nomePropriedade } = infoPropriedade;
             const valorCarregado = this.carregarValorSeNecessario(valorResolvido, tipoProp, 'load_prop_atrib');
-            this.armazenarCampoArc(gepPtr, valorCarregado, tipoProp, nomeClasse);
+            this.armazenarCampoArc(gepPtr, valorCarregado, tipoProp, nomeClasse, nomePropriedade);
             return Promise.resolve(valorResolvido);
         }
 
@@ -1608,7 +1628,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected async resolverGepPropriedadeAlvo(
         expressao: ConstrutoInterface
-    ): Promise<{ gepPtr: llvm.Value; tipoProp: string; nomeClasse: string } | null> {
+    ): Promise<{ gepPtr: llvm.Value; tipoProp: string; nomeClasse: string; nomePropriedade: string } | null> {
         const construtorExp = expressao.constructor;
         if (construtorExp !== AcessoPropriedade && construtorExp !== AcessoMetodoOuPropriedade) {
             return null;
@@ -1648,7 +1668,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indice))],
             `${nomePropriedade}_alvo`
         );
-        return { gepPtr, tipoProp, nomeClasse };
+        return { gepPtr, tipoProp, nomeClasse, nomePropriedade };
     }
 
     async visitarExpressaoAcessoIndiceVariavel(expressao: AcessoIndiceVariavel): Promise<any> {
@@ -2178,7 +2198,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             novoValorLlvm = this.coagirEscalar(novoValorLlvm, this.obterTipoLlvm(tipoProp), 'coerce_campo');
         }
 
-        this.armazenarCampoArc(gepPtr, novoValorLlvm, tipoProp, nomeClasse);
+        this.armazenarCampoArc(gepPtr, novoValorLlvm, tipoProp, nomeClasse, nomePropriedade);
         return Promise.resolve();
     }
 
@@ -4995,6 +5015,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.tipoEstruturaVetor = null;
         this.cacheLiteraisTextoArc = new Map();
         this.descritoresArcClasse = new Map();
+        this.camposFracosArc = new Map();
         this.pilhaQuadrosArc = [];
         this.quadrosArcConcluidos = [];
         this.nomesFuncoesArc = new WeakMap();

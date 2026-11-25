@@ -59,19 +59,61 @@ export function obterDescritorArcClasse(this: CompiladorLLVM, nomeClasse: string
     );
     const montadorDestrutor = new llvm.IRBuilder(llvm.BasicBlock.Create(this.contexto, 'entrada', destrutor));
     const liberar = this.modulo.getOrInsertFunction('delegua_arc_liberar', llvm.FunctionType.get(vazio, [ptr], false));
-    const objeto = destrutor.getArg(0);
-    for (const [nomeCampo, indice] of [...indices.entries()].sort((a, b) => a[1] - b[1])) {
-        if (nomeCampo === '__tipoId' || !this.tipoGerenciadoArc(tipos.get(nomeCampo))) continue;
-        const campo = montadorDestrutor.CreateInBoundsGEP(
+    const fracoAtribuir = this.modulo.getOrInsertFunction(
+        'delegua_arc_fraco_atribuir',
+        llvm.FunctionType.get(vazio, [ptr, ptr], false)
+    );
+    const fracos = this.camposFracosArc.get(nomeClasse) ?? new Set<string>();
+    const nulo = llvm.ConstantPointerNull.get(ptr) as unknown as llvm.Value;
+    const camposGerenciados = [...indices.entries()]
+        .sort((a, b) => a[1] - b[1])
+        .filter(([nomeCampo]) => nomeCampo !== '__tipoId' && this.tipoGerenciadoArc(tipos.get(nomeCampo)));
+    const gepCampo = (montador: llvm.IRBuilder, objeto: llvm.Value, nomeCampo: string, indice: number) =>
+        montador.CreateInBoundsGEP(
             tipoStruct,
             objeto,
             [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indice))],
             `${nomeCampo}_ptr`
         );
-        const valor = montadorDestrutor.CreateLoad(ptr, campo, nomeCampo);
-        montadorDestrutor.CreateCall(liberar, [valor]);
+
+    const objeto = destrutor.getArg(0);
+    for (const [nomeCampo, indice] of camposGerenciados) {
+        const campo = gepCampo(montadorDestrutor, objeto, nomeCampo, indice);
+        if (fracos.has(nomeCampo)) {
+            // Referência fraca: só cancela o registro (o alvo não era retido por este objeto).
+            montadorDestrutor.CreateCall(fracoAtribuir, [campo, nulo]);
+        } else {
+            montadorDestrutor.CreateCall(liberar, [montadorDestrutor.CreateLoad(ptr, campo, nomeCampo)]);
+        }
     }
     montadorDestrutor.CreateRetVoid();
+
+    // Visitante de filhos para o coletor de ciclos (Fase 4.1): só para classes com campos que
+    // podem fechar um ciclo (texto e handles opacos nunca referenciam objetos Delégua). Campos
+    // @fraco não são arestas: não mantêm o alvo vivo.
+    const camposCiclicos = camposGerenciados.filter(
+        ([nomeCampo]) =>
+            !fracos.has(nomeCampo) && tipos.get(nomeCampo) !== 'texto' && !tipos.get(nomeCampo)?.startsWith('opaco:')
+    );
+    let visitante: llvm.Constant = llvm.ConstantPointerNull.get(ptr);
+    if (camposCiclicos.length > 0) {
+        const tipoVisitanteFilho = llvm.FunctionType.get(vazio, [ptr, ptr], false);
+        const funcaoVisitar = llvm.Function.Create(
+            llvm.FunctionType.get(vazio, [ptr, ptr, ptr], false),
+            llvm.GlobalValue.LinkageTypes.InternalLinkage,
+            `__visitar_${nomeClasse}`,
+            this.modulo
+        );
+        const funcao = funcaoVisitar;
+        const montadorVisitar = new llvm.IRBuilder(llvm.BasicBlock.Create(this.contexto, 'entrada', funcao));
+        for (const [nomeCampo, indice] of camposCiclicos) {
+            const valor = montadorVisitar.CreateLoad(ptr, gepCampo(montadorVisitar, funcao.getArg(0), nomeCampo, indice), nomeCampo);
+            // O runtime ignora filhos nulos, imortais ou sem cabeçalho ARC.
+            montadorVisitar.CreateCall(tipoVisitanteFilho, funcao.getArg(1), [valor, funcao.getArg(2)]);
+        }
+        montadorVisitar.CreateRetVoid();
+        visitante = funcaoVisitar;
+    }
 
     const tipoDescritor = llvm.StructType.get(this.contexto, [ptr, ptr, ptr]);
     const descritor = new llvm.GlobalVariable(
@@ -82,7 +124,7 @@ export function obterDescritorArcClasse(this: CompiladorLLVM, nomeClasse: string
         llvm.ConstantStruct.get(tipoDescritor, [
             this.literalTextoArc(nomeClasse) as unknown as llvm.Constant,
             destrutor,
-            llvm.ConstantPointerNull.get(ptr),
+            visitante,
         ]),
         `__arc_desc_${nomeClasse}`
     );
@@ -192,11 +234,18 @@ export function armazenarCampoArc(
     campo: llvm.Value,
     valor: llvm.Value,
     tipoCampo: string,
-    nomeClasse: string | undefined
+    nomeClasse: string | undefined,
+    nomeCampo?: string
 ): void {
     const ehEstrangeira = !!nomeClasse && this.estruturasEstrangeiras.has(nomeClasse);
     if (ehEstrangeira || !this.tipoGerenciadoArc(tipoCampo) || !valor || !tipoEhPonteiro(valor.getType())) {
         this.montador.CreateStore(valor, campo);
+        return;
+    }
+    if (nomeClasse && nomeCampo && this.camposFracosArc.get(nomeClasse)?.has(nomeCampo)) {
+        // @fraco: não retém; o runtime zera o campo quando o alvo morrer.
+        const ptr = this.montador.getPtrTy();
+        this.montador.CreateCall(funcaoArc(this, 'delegua_arc_fraco_atribuir', [ptr, ptr]), [campo, valor]);
         return;
     }
     this.emitirArcAtribuir(campo, valor);

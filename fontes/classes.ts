@@ -58,7 +58,8 @@ export async function instanciarClasse(
     if (indicesCampos && tiposCampos) {
         for (const [nomeCampo, indiceCampo] of indicesCampos) {
             const tipoCampo = tiposCampos.get(nomeCampo);
-            if (!tipoEhVetor(tipoCampo)) continue;
+            // Campo @fraco não é dono: um vetor vazio criado aqui seria liberado em seguida.
+            if (!tipoEhVetor(tipoCampo) || this.camposFracosArc.get(nomeClasse)?.has(nomeCampo)) continue;
             const vetorVazio = this.montador.CreateCall(
                 this.funcaoVetorCriar,
                 this.argumentosVetorCriar(0, tipoElementoVetor(tipoCampo)),

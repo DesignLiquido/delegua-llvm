@@ -177,6 +177,62 @@ static void testar_csv(void) {
     SEM_VAZAMENTO(antes);
 }
 
+static void testar_ciclos_e_fracos(void) {
+    int64_t antes = delegua_arc_alocacoes_vivas();
+
+    // Vetor que contém a si mesmo: o ARC sozinho nunca o liberaria.
+    Vetor* v = delegua_vetor_criar(0, (int)sizeof(void*), 1);
+    delegua_vetor_adicionar(v, &v, (int)sizeof(void*));
+    delegua_arc_liberar(v);
+    VERIFICAR(delegua_arc_alocacoes_vivas() == antes + 1);
+    delegua_arc_coletar_ciclos();
+    SEM_VAZAMENTO(antes);
+
+    // Dois dicionários que se referenciam, com um texto pendurado (filho vivo fora do ciclo).
+    Dicionario* a = delegua_dicionario_criar();
+    Dicionario* b = delegua_dicionario_criar();
+    char* externo = delegua_arc_texto_copiar("externo");
+    delegua_dicionario_definir(a, "b", b);
+    delegua_dicionario_definir(b, "a", a);
+    delegua_dicionario_definir(a, "t", externo);
+    delegua_arc_liberar(a);
+    delegua_arc_liberar(b);
+    delegua_arc_coletar_ciclos();
+    // O texto continua vivo pela referência do chamador, com a contagem correta.
+    VERIFICAR(delegua_arc_contagem(externo) == 1);
+    delegua_arc_liberar(externo);
+    SEM_VAZAMENTO(antes);
+
+    // Ciclo ainda alcançável de fora não é coletado.
+    Vetor* vivo = delegua_vetor_criar(0, (int)sizeof(void*), 1);
+    delegua_vetor_adicionar(vivo, &vivo, (int)sizeof(void*));
+    delegua_arc_reter(vivo);
+    delegua_arc_liberar(vivo);
+    delegua_arc_coletar_ciclos();
+    VERIFICAR(delegua_arc_contagem(vivo) == 2);
+    delegua_arc_liberar(vivo);
+    delegua_arc_coletar_ciclos();
+    SEM_VAZAMENTO(antes);
+
+    // Referência fraca: não retém e vira NULL quando o alvo morre.
+    void* fraco = NULL;
+    char* alvo = delegua_arc_texto_copiar("alvo");
+    delegua_arc_fraco_atribuir(&fraco, alvo);
+    VERIFICAR(fraco == alvo && delegua_arc_contagem(alvo) == 1);
+    delegua_arc_liberar(alvo);
+    VERIFICAR(fraco == NULL);
+    // Regravar cancela o registro anterior (o alvo antigo morre sem tocar no slot).
+    char* x = delegua_arc_texto_copiar("x");
+    char* y = delegua_arc_texto_copiar("y");
+    delegua_arc_fraco_atribuir(&fraco, x);
+    delegua_arc_fraco_atribuir(&fraco, y);
+    delegua_arc_liberar(x);
+    VERIFICAR(fraco == y);
+    delegua_arc_fraco_atribuir(&fraco, NULL);
+    delegua_arc_liberar(y);
+    SEM_VAZAMENTO(antes);
+}
+
 int main(void) {
     testar_primitivas();
     testar_vetor();
@@ -184,6 +240,7 @@ int main(void) {
     testar_dicionario();
     testar_json();
     testar_csv();
+    testar_ciclos_e_fracos();
     printf("vivas=%lld falhas=%d\n", (long long)delegua_arc_alocacoes_vivas(), falhas);
     return falhas == 0 ? 0 : 1;
 }
