@@ -2,25 +2,23 @@
 import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
 describe('Compilador - Vetores', () => {
-    it('Literal de vetor gera struct %Vetor com malloc no heap', async () => {
+    it('Literal de vetor gera Vetor* no heap via delegua_vetor_criar', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'var numeros = [10, 20, 30];',
         ]);
 
         expect(resultado).toBeTruthy();
-        // Struct %Vetor deve ser definido no módulo.
-        expect(resultado).toContain('%Vetor = type');
-        // Array de elementos alocado no heap via malloc.
-        expect(resultado).toContain('call ptr @malloc(i64 24)');
-        // Struct alocado na pilha.
-        expect(resultado).toContain('alloca %Vetor');
+        // Struct %Vetor deve ser definido no módulo (ptr, tamanho, capacidade, tam_elem).
+        expect(resultado).toContain('%Vetor = type { ptr, i32, i32, i32 }');
+        // Vetor alocado no heap pelo runtime: 3 elementos de 8 bytes.
+        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 8)');
+        // A variável é um slot que guarda o Vetor* (nunca o struct por valor na pilha).
+        expect(resultado).not.toContain('alloca %Vetor');
         // Valores inicializados como double.
         expect(resultado).toContain('store double 1.000000e+01');
         expect(resultado).toContain('store double 2.000000e+01');
         expect(resultado).toContain('store double 3.000000e+01');
-        // Tamanho armazenado no campo 1.
-        expect(resultado).toContain('store i32 3');
     });
 
     it('Acesso a elemento por índice constante gera GEP + load', async () => {
@@ -115,7 +113,7 @@ describe('Compilador - Vetores', () => {
         expect(resultado).toContain('add nsw i32');
     });
 
-    it('Vetor inteiro[] armazena elementos como i32 via malloc (não double)', async () => {
+    it('Vetor inteiro[] armazena elementos como i32 (não double)', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'var lista: inteiro[] = [5, 3, 8]',
@@ -123,7 +121,7 @@ describe('Compilador - Vetores', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call ptr @malloc(i64 12)');
+        expect(resultado).toContain('call ptr @delegua_vetor_criar(i32 3, i32 4)');
         expect(resultado).toContain('store i32');
         expect(resultado).toContain('%d');
     });

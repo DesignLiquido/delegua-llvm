@@ -199,17 +199,19 @@ char* delegua_csv_tabela_para_texto(TabelaCsv* tabela, char sep) {
 }
 
 TabelaCsv* delegua_csv_ler(char* caminho, char sep) {
+    if (!caminho) return NULL;
     FILE* fp = fopen(caminho, "rb");
     if (!fp) return NULL;
 
     fseek(fp, 0, SEEK_END);
     long tam = ftell(fp);
     rewind(fp);
+    if (tam < 0) { fclose(fp); return NULL; }
 
-    char* conteudo = (char*)malloc(tam + 1);
+    char* conteudo = (char*)malloc((size_t)tam + 1);
     if (!conteudo) { fclose(fp); return NULL; }
-    fread(conteudo, 1, tam, fp);
-    conteudo[tam] = '\0';
+    size_t lidos = fread(conteudo, 1, (size_t)tam, fp);
+    conteudo[lidos] = '\0';
     fclose(fp);
 
     TabelaCsv* tabela = delegua_csv_texto_para_tabela(conteudo, sep);
@@ -238,7 +240,7 @@ char* delegua_csv_obter_celula(TabelaCsv* tabela, int linha, int coluna) {
     if (!tabela || linha < 0 || linha >= tabela->total_linhas) return NULL;
     LinhaCsv* l = &tabela->linhas[linha];
     if (coluna < 0 || coluna >= l->colunas) return NULL;
-    return l->celulas[coluna];
+    return l->celulas[coluna] ? strdup(l->celulas[coluna]) : NULL;
 }
 
 void delegua_csv_liberar(TabelaCsv* tabela) {

@@ -12,7 +12,7 @@ describe('Compilador - vetor.ordenar', () => {
         ['texto', '["b", "a"]', 2],
     ])('ordenar() de %s informa o tipo do elemento ao runtime', async (tipo, literal, codigo) => {
         const ir = await compilar([`var v: ${tipo}[] = ${literal}`, 'v.ordenar()']);
-        expect(ir).toMatch(new RegExp(`call void @delegua_vetor_ordenar\\(ptr %vetor, i32 \\d, i32 ${codigo}\\)`));
+        expect(ir).toMatch(new RegExp(`call void @delegua_vetor_ordenar\\(ptr %vetor_ptr\\d*, i32 \\d, i32 ${codigo}\\)`));
     });
 
     it('ordenar(funcao anônima) gera um comparador que chama a função', async () => {
@@ -20,7 +20,7 @@ describe('Compilador - vetor.ordenar', () => {
         expect(ir).toMatch(/define internal i32 @__comparador_anonima_0\(ptr %0, ptr %1\)/);
         expect(ir).toMatch(/call i32 @__lambda_\d+\(i32 %elemento0, i32 %elemento1\)/);
         expect(ir).toMatch(/icmp sgt i32 %comparacao, 0/);
-        expect(ir).toContain('call void @delegua_vetor_ordenar_com_funcao(ptr %vetor, i32 4, ptr @__comparador_anonima_0)');
+        expect(ir).toMatch(/call void @delegua_vetor_ordenar_com_funcao\(ptr %vetor_ptr\d*, i32 4, ptr @__comparador_anonima_0\)/);
     });
 
     it('comparador de função nomeada com texto passa os elementos em caixas', async () => {
@@ -33,7 +33,7 @@ describe('Compilador - vetor.ordenar', () => {
         ]);
         expect(ir).toMatch(/define internal i32 @__comparador_porTamanho_0\(ptr %0, ptr %1\)/);
         expect(ir).toContain('call i32 @porTamanho(ptr %caixa0, ptr %caixa1)');
-        expect(ir).toContain('call void @delegua_vetor_ordenar_com_funcao(ptr %vetor, i32 8, ptr @__comparador_porTamanho_0)');
+        expect(ir).toMatch(/call void @delegua_vetor_ordenar_com_funcao\(ptr %vetor_ptr\d*, i32 8, ptr @__comparador_porTamanho_0\)/);
     });
 
     it('comparador com resultado número compara com 0.0', async () => {

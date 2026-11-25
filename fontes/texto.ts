@@ -120,15 +120,8 @@ export async function chamarMetodoTexto(
             const limite = argumentos[1]
                 ? await this.carregarArgumentoInteiro(argumentos[1])
                 : ConstantInt.get(this.contexto, new APInt(32, 0));
-            const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'texto_dividido');
-            const funcao = this.obterFuncaoRuntime('delegua_texto_dividir', llvm.Type.getVoidTy(this.contexto), [
-                ptr,
-                ptr,
-                i32,
-                ptr,
-            ]);
-            this.montador.CreateCall(funcao, [strPtr, delimitador, limite, saida]);
-            return saida;
+            const funcao = this.obterFuncaoRuntime('delegua_texto_dividir', ptr, [ptr, ptr, i32]);
+            return this.montador.CreateCall(funcao, [strPtr, delimitador, limite], 'texto_dividido');
         }
 
         case 'encontrar': {

@@ -333,10 +333,15 @@ ClienteHttp* delegua_http_novo_cliente(char* url_base, int tempo_ms) {
 
 void delegua_http_add_cabecalho(ClienteHttp* cliente, char* cabecalho) {
     if (!cliente || !cabecalho) return;
+    char* copia = strdup(cabecalho);
+    if (!copia) return;
     int n = cliente->num_cabecalhos;
     char** tmp = (char**)realloc(cliente->cabecalhos, (n + 1) * sizeof(char*));
-    if (!tmp) return;
-    tmp[n] = strdup(cabecalho);
+    if (!tmp) {
+        free(copia);
+        return;
+    }
+    tmp[n] = copia;
     cliente->cabecalhos     = tmp;
     cliente->num_cabecalhos = n + 1;
 }
@@ -366,11 +371,11 @@ int delegua_http_codigo_status(RespostaHttp* resp) {
 }
 
 char* delegua_http_dados(RespostaHttp* resp) {
-    return resp ? resp->dados : NULL;
+    return (resp && resp->dados) ? strdup(resp->dados) : NULL;
 }
 
 char* delegua_http_mensagem(RespostaHttp* resp) {
-    return resp ? resp->mensagem_status : NULL;
+    return (resp && resp->mensagem_status) ? strdup(resp->mensagem_status) : NULL;
 }
 
 void delegua_http_liberar_resp(RespostaHttp* resp) {

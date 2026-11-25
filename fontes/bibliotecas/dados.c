@@ -389,12 +389,22 @@ Serie* delegua_dados_selecionar_coluna(RecorteDados* rd, char* nome) {
 
         if (orig->tipo == TIPO_DOUBLE) {
             double* dst = (double*)malloc(orig->tamanho * sizeof(double));
+            if (!dst) { free(s); return NULL; }
             memcpy(dst, orig->dados, orig->tamanho * sizeof(double));
             s->dados = dst;
         } else {
             char** src = (char**)orig->dados;
             char** dst = (char**)malloc(orig->tamanho * sizeof(char*));
-            for (int i = 0; i < orig->tamanho; i++) dst[i] = strdup(src[i]);
+            if (!dst) { free(s); return NULL; }
+            for (int i = 0; i < orig->tamanho; i++) {
+                dst[i] = strdup(src[i] ? src[i] : "");
+                if (!dst[i]) {
+                    for (int k = 0; k < i; k++) free(dst[k]);
+                    free(dst);
+                    free(s);
+                    return NULL;
+                }
+            }
             s->dados = dst;
         }
         return s;

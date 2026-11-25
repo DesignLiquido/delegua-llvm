@@ -110,46 +110,44 @@ char* delegua_texto_aparar(const char* s) { return aparar(s, 1, 1); }
 char* delegua_texto_aparar_inicio(const char* s) { return aparar(s, 1, 0); }
 char* delegua_texto_aparar_fim(const char* s) { return aparar(s, 0, 1); }
 
-// Acrescenta `parte` a `saida`, crescendo o buffer por duplicação.
-static void acrescentar_parte(Vetor* saida, int* capacidade, char* parte) {
-    if (saida->tamanho >= *capacidade) {
-        int nova = *capacidade > 0 ? *capacidade * 2 : 4;
-        void* novoPtr = realloc(saida->ptr, (size_t)nova * sizeof(char*));
-        if (!novoPtr) return;
-        saida->ptr = novoPtr;
-        *capacidade = nova;
-    }
-    ((char**)saida->ptr)[saida->tamanho++] = parte;
+// Acrescenta `parte` a `saida`, delegando para delegua_vetor_adicionar.
+static void acrescentar_parte(Vetor* saida, char* parte) {
+    delegua_vetor_adicionar(saida, &parte, (int)sizeof(char*));
 }
 
-void delegua_texto_dividir(const char* s, const char* delimitador, int limite, Vetor* saida) {
-    if (!saida) return;
-    saida->ptr = NULL;
-    saida->tamanho = 0;
-    if (!s) return;
+Vetor* delegua_texto_dividir(const char* s, const char* delimitador, int limite) {
+    Vetor* saida = delegua_vetor_criar(0, (int)sizeof(char*));
+    if (!saida || !s) return saida;
     if (!delimitador) delimitador = "";
 
-    int capacidade = 0;
     size_t tamDelimitador = strlen(delimitador);
 
     if (tamDelimitador == 0) {
         for (const char* c = s; *c; c++) {
             if (limite > 0 && saida->tamanho == limite - 1) {
-                acrescentar_parte(saida, &capacidade, copiar_trecho(c, strlen(c)));
-                return;
+                acrescentar_parte(saida, copiar_trecho(c, strlen(c)));
+                return saida;
             }
-            acrescentar_parte(saida, &capacidade, copiar_trecho(c, 1));
+            acrescentar_parte(saida, copiar_trecho(c, 1));
         }
-        return;
+        return saida;
     }
 
     const char* inicio = s;
     const char* encontrado;
     while ((limite <= 0 || saida->tamanho < limite - 1) && (encontrado = strstr(inicio, delimitador)) != NULL) {
-        acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, (size_t)(encontrado - inicio)));
+        acrescentar_parte(saida, copiar_trecho(inicio, (size_t)(encontrado - inicio)));
         inicio = encontrado + tamDelimitador;
     }
-    acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, strlen(inicio)));
+    acrescentar_parte(saida, copiar_trecho(inicio, strlen(inicio)));
+    return saida;
+}
+
+char* delegua_texto_caractere_em(const char* s, int indice) {
+    if (!s || indice < 0) return copiar_trecho("", 0);
+    size_t tam = strlen(s);
+    if ((size_t)indice >= tam) return copiar_trecho("", 0);
+    return copiar_trecho(s + indice, 1);
 }
 
 int delegua_texto_encontrar(const char* s, const char* sub, int inicio) {

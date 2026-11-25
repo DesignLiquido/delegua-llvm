@@ -304,6 +304,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     funcaoTextoDeInteiro: llvm.FunctionCallee;
     funcaoTextoDeNumero: llvm.FunctionCallee;
     funcaoFormatar: llvm.FunctionCallee;
+    funcaoVetorCriar: llvm.FunctionCallee;
     funcaoVetorAdicionar: llvm.FunctionCallee;
     funcaoVetorDefinirIndice: llvm.FunctionCallee;
     funcaoVetorRemoverUltimo: llvm.FunctionCallee;
@@ -969,7 +970,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
         const linhaConst = (declaracao.simbolo as any).linha ?? 0;
         this.definirLocalizacaoDebug(linhaConst, 0);
-        const aloc = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
+        const aloc = this.criarAllocaNoBlocoEntrada(tipoLlvm, declaracao.simbolo.lexema, true);
         let valor = await declaracao.inicializador.aceitar(this);
 
         const tipoInicializador = this.resolverTipoConstruto(declaracao.inicializador);
@@ -1019,7 +1020,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     : tipoDeclarado;
 
             const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
-            const alocacao = this.montador.CreateAlloca(tipoLlvm, null, nomeSimbolo);
+            const alocacao = this.criarAllocaNoBlocoEntrada(tipoLlvm, nomeSimbolo, true);
             const valorResolvido = await declaracao.inicializador.aceitar(this);
             this.montador.CreateStore(valorResolvido, alocacao);
 
@@ -1230,6 +1231,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoInferido = declaracao.vetorOuDicionario ? this.resolverTipoConstruto(declaracao.vetorOuDicionario as ConstrutoInterface) : null;
             if (tipoInferido && tipoEhVetor(tipoInferido)) {
                 iteravelResolvido = new VariavelEscopo(iteravelResolvido as llvm.Value, undefined, tipoInferido);
+            } else if (tipoInferido === 'texto' && tipoEhPonteiro((iteravelResolvido as llvm.Value).getType())) {
+                // Texto bruto (literal ou retorno de chamada) é o próprio char*: guarda-o num
+                // slot para seguir a mesma convenção de dupla indireção das variáveis de texto.
+                const slotTexto = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'para_cada_texto', true);
+                this.montador.CreateStore(iteravelResolvido as llvm.Value, slotTexto);
+                iteravelResolvido = new VariavelEscopo(slotTexto, undefined, 'texto');
             }
         }
 
@@ -1272,11 +1279,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         let tamanho: llvm.Value;
         let vetorPtr: llvm.Value;
         if (ehVetor) {
-            // Para vetor: argumento/GEP já é o struct-ptr; uma alloca %Vetor também
-            // (vetor local); só um slot ptr precisa de load.
-            vetorPtr = ehArgumento
-                ? iteravelResolvido.variavelLlvm
-                : this.resolverPonteiroEstruturaVetor(iteravelResolvido.variavelLlvm);
+            vetorPtr = this.ponteiroParaVetor(iteravelResolvido);
             tamanho = this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr], 'para_cada_tam');
         } else {
             // texto: strlen retorna i64; trunca para i32.
@@ -1323,43 +1326,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const valorElementos = this.montador.CreateLoad(tipoElemLlvm, gepElem, nomeElemento + '_carregado');
             this.montador.CreateStore(valorElementos, alocElemento);
         } else {
-            // texto: cada elemento é um char, exposto como ptr para buffer [2 x i8] (char + '\0').
+            // texto: cada elemento é uma string alocada via runtime (segura caso escape do laço).
             tipoElementoStr = 'texto';
-            const tipoBuf = llvm.ArrayType.get(this.montador.getInt8Ty(), 2);
-            // alocBuf: dados do char na pilha (reutilizado a cada iteração).
-            const alocBuf = this.criarAllocaNoBlocoEntrada(tipoBuf as unknown as llvm.Type, nomeElemento + '_buf');
-            // alocElemento: ptr para alocBuf (é o que o corpo carrega como "texto").
-            alocElemento = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), nomeElemento + '_ptr');
+            alocElemento = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), nomeElemento + '_ptr', true);
 
             const iCorpo = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_corpo');
             const textoPtr2 = ehArgumento
                 ? iteravelResolvido.variavelLlvm
                 : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr2');
-            const gepChar = this.montador.CreateInBoundsGEP(
-                this.montador.getInt8Ty(),
-                textoPtr2,
-                [iCorpo],
-                'ptr_char',
-                true
-            );
-            const charVal = this.montador.CreateLoad(this.montador.getInt8Ty(), gepChar, 'char_val');
-            const idx0 = ConstantInt.get(this.contexto, new APInt(32, 0));
-            const gepBuf0 = this.montador.CreateInBoundsGEP(
-                tipoBuf as unknown as llvm.Type,
-                alocBuf,
-                [idx0, idx0],
-                'buf0'
-            );
-            this.montador.CreateStore(charVal, gepBuf0);
-            const gepBuf1 = this.montador.CreateInBoundsGEP(
-                tipoBuf as unknown as llvm.Type,
-                alocBuf,
-                [idx0, ConstantInt.get(this.contexto, new APInt(32, 1))],
-                'buf1'
-            );
-            this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(8, 0)), gepBuf1);
-            // Armazena endereço do buffer no ptr-alloca exposto ao escopo.
-            this.montador.CreateStore(gepBuf0, alocElemento);
+            const funcaoCaractere = this.obterFuncaoRuntime('delegua_texto_caractere_em', this.montador.getPtrTy(), [
+                this.montador.getPtrTy(),
+                this.montador.getInt32Ty(),
+            ]);
+            const charTexto = this.montador.CreateCall(funcaoCaractere, [textoPtr2, iCorpo], 'char_texto');
+            this.montador.CreateStore(charTexto, alocElemento);
         }
 
         const escopoIteracao = new Map<string, VariavelEscopo>();
@@ -1445,7 +1425,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     : tipoDeclarado;
 
             const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
-            const alocacao = this.montador.CreateAlloca(tipoLlvm, null, nomeSimbolo);
+            const alocacao = this.criarAllocaNoBlocoEntrada(tipoLlvm, nomeSimbolo, true);
             const valorResolvido = await declaracao.inicializador.aceitar(this);
             this.montador.CreateStore(valorResolvido, alocacao);
 
@@ -1526,17 +1506,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (infoPropriedade) {
             const valorResolvido = await expressao.valor.aceitar(this);
             const { gepPtr, tipoProp } = infoPropriedade;
-            if (tipoEhVetor(tipoProp)) {
-                // Copia o struct %Vetor inteiro do alloca de origem para o campo.
-                const vetorPtr = valorResolvido instanceof VariavelEscopo
-                    ? valorResolvido.variavelLlvm
-                    : (valorResolvido as llvm.Value);
-                const vetorValue = this.montador.CreateLoad(this.tipoEstruturaVetor, vetorPtr, 'vetor_copia');
-                this.montador.CreateStore(vetorValue, gepPtr);
-            } else {
-                const valorCarregado = this.carregarValorSeNecessario(valorResolvido, tipoProp, 'load_prop_atrib');
-                this.montador.CreateStore(valorCarregado, gepPtr);
-            }
+            const valorCarregado = this.carregarValorSeNecessario(valorResolvido, tipoProp, 'load_prop_atrib');
+            this.montador.CreateStore(valorCarregado, gepPtr);
             return Promise.resolve(valorResolvido);
         }
 
@@ -1706,7 +1677,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 nomeVetorBase && nomeVetorBase.length > 0
                     ? nomeVetorBase
                     : this.extrairNomeValorLlvm(alvoResolvido.variavelLlvm);
-            const ptrElementos = this.carregarPonteiroElementosVetor(nomeVetor, alvoResolvido.variavelLlvm);
+            const vetorPtr = this.ponteiroParaVetor(alvoResolvido);
+            const ptrElementos = this.carregarPonteiroElementosVetor(nomeVetor, vetorPtr);
 
             // GEP para o elemento, com flag nuw quando o índice é garantidamente não-negativo.
             const gepElemento = this.montador.CreateInBoundsGEP(
@@ -1827,11 +1799,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const campoEstrangeiro = this.lerCampoEstruturaEstrangeira(nomeClasse, nomeMembro, gepPtr);
         if (campoEstrangeiro) return campoEstrangeiro;
 
-        // Campos do tipo vetor: gepPtr já é o %Vetor* esperado pelas funções de vetor.
-        // Carregar produziria %Vetor by-value, incompatível com a assinatura (ptr).
-        if (tipoEhVetor(tipoProp)) {
-            return gepPtr;
-        }
         return this.montador.CreateLoad(tipoLlvm, gepPtr, nomeMembro);
     }
 
@@ -1884,9 +1851,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const campoEstrangeiro = this.lerCampoEstruturaEstrangeira(nomeClasse, expressao.nomePropriedade, gepPtr);
         if (campoEstrangeiro) return campoEstrangeiro;
 
-        if (tipoEhVetor(tipoProp)) {
-            return gepPtr;
-        }
         return this.montador.CreateLoad(tipoLlvm, gepPtr, expressao.nomePropriedade);
     }
 
@@ -1954,27 +1918,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // MVP autointerpretador de `delegua-delegua`) escreve fora dos limites do
             // buffer alocado — corrompendo o heap silenciosamente em vez de crescer.
             const tamElemento = this.constTamElem(tipoElementoStr);
+            const vetorPtr = this.ponteiroParaVetor(alvoResolvidoVetor);
             const gepElemento = this.montador.CreateCall(
                 this.funcaoVetorDefinirIndice,
-                [alvoResolvidoVetor.variavelLlvm, indiceValor, tamElemento],
+                [vetorPtr, indiceValor, tamElemento],
                 'ptr_elem_store'
             );
             // Invalida o cache de ponteiro de elementos (mesma convenção de `.adicionar()`
             // em chamarMetodoVetor): uma realocação pode ter movido o buffer.
             this.cachePointerVetor.clear();
 
-            // Resolve o valor a armazenar. Para elementos de instância de classe, só carrega
-            // se a origem for AllocaInst/GEP (ptr* que aponta PARA o valor); Argument/CallInst/
-            // LoadInst já SÃO o ponteiro do objeto direto (mesma convenção de
-            // carregarPtrClasseSePreciso). Já texto/qualquer/dicionário seguem a convenção
-            // oposta de dupla indireção: Argument também precisa de load (mesma convenção de
-            // resolverPonteiroDireto). Elementos escalares (inteiro/número/lógico) sempre vêm
-            // de uma alloca local e continuam exigindo o load incondicional.
+            // Resolve o valor a armazenar. Para elementos de instância de classe e vetores,
+            // só carrega se a origem for AllocaInst/GEP (ptr* que aponta PARA o valor);
+            // Argument/CallInst/LoadInst já SÃO o ponteiro direto.
             let valorFinal: llvm.Value;
             if (valorResolvido instanceof VariavelEscopo) {
                 const construtorInstValor = valorResolvido.variavelLlvm?.constructor;
-                const ehInstanciaClasse = this.ehTipoObjeto(valorResolvido.tipo);
-                const origemPrecisaCarregar = ehInstanciaClasse
+                const ehPonteiroDiretoUnico =
+                    this.ehTipoObjeto(valorResolvido.tipo) || tipoEhVetor(valorResolvido.tipo);
+                const origemPrecisaCarregar = ehPonteiroDiretoUnico
                     ? construtorInstValor === llvm.AllocaInst || construtorInstValor === llvm.GetElementPtrInst
                     : construtorInstValor === llvm.AllocaInst ||
                       construtorInstValor === llvm.GetElementPtrInst ||
@@ -2118,13 +2080,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // Dicionários, objetos JS e outros não-LLVM: ponteiro nulo como sentinela.
             novoValorLlvm = llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value;
         } else {
-            const brutoLlvm = novoValor as llvm.Value;
-            if (tipoEhVetor(tipoProp) && tipoEhPonteiro(brutoLlvm.getType())) {
-                // Para vetores: brutoLlvm é ptr para %Vetor (ex.: resultado de []); carrega o struct.
-                novoValorLlvm = this.montador.CreateLoad(this.tipoEstruturaVetor, brutoLlvm, 'load_vetor_val');
-            } else {
-                novoValorLlvm = brutoLlvm;
-            }
+            novoValorLlvm = novoValor as llvm.Value;
         }
 
         // Coerce o valor ao tipo do campo para evitar stores de tamanho errado
@@ -2429,15 +2385,24 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve();
         }
 
+        // `retorna [1, 2]` numa função `: inteiro[]`: o literal assume o tipo de elemento
+        // declarado (mesma regra de `var v: inteiro[] = [...]`), senão os elementos seriam
+        // gravados como double e lidos como i32.
+        if (declaracao.valor instanceof Vetor && tipoEhVetor(this.tipoRetornoFuncaoAtual ?? undefined)) {
+            (declaracao.valor as Vetor).tipo = `${tipoElementoVetor(this.tipoRetornoFuncaoAtual)}[]`;
+        }
+
         const valorResolvido = await declaracao.valor.aceitar(this);
 
         if (valorResolvido instanceof VariavelEscopo) {
             const tipoRetorno = declaracao.valor.tipo || valorResolvido.tipo || 'número';
-            // Instâncias de classe: o ptr já é o valor final (malloc result ou argumento).
-            // Não deve ser carregado — carregarPtrClasseSePreciso resolve alloca(ptr) se necessário.
-            if (this.ehTipoObjeto(valorResolvido.tipo)) {
+            // Instâncias de classe e vetores: o ptr já é o valor final (ponteiro direto no heap).
+            if (this.ehTipoObjeto(valorResolvido.tipo) || tipoEhVetor(valorResolvido.tipo)) {
                 this.emitirSaidaDeTentes(this.tentesAtivos);
-                this.montador.CreateRet(this.carregarPtrClasseSePreciso(valorResolvido));
+                const ptrRetorno = this.ehTipoObjeto(valorResolvido.tipo)
+                    ? this.carregarPtrClasseSePreciso(valorResolvido)
+                    : this.ponteiroParaVetor(valorResolvido);
+                this.montador.CreateRet(ptrRetorno);
                 return Promise.resolve();
             }
             if (tipoEhPonteiro(valorResolvido.variavelLlvm.getType())) {
@@ -2470,17 +2435,6 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 // Literal/expressão número (double) → FPToSI para i32
                 valorFinal = this.montador.CreateFPToSI(valorFinal, this.montador.getInt32Ty(), 'double_para_int_ret');
             }
-        }
-
-        // Função que devolve vetor (%Vetor por valor) e expressão que produz o ptr de um
-        // %Vetor (ex.: `retorna v.ordenar()`): carrega o struct.
-        const tipoRetornoFuncao = this.montador.GetInsertBlock()?.getParent()?.getReturnType();
-        if (
-            tipoRetornoFuncao &&
-            tipoRetornoFuncao.getTypeID() === llvm.Type.TypeID.StructTyID &&
-            tipoEhPonteiro(valorFinal.getType())
-        ) {
-            valorFinal = this.montador.CreateLoad(tipoRetornoFuncao, valorFinal, 'load_vetor_retorno');
         }
 
         this.emitirSaidaDeTentes(this.tentesAtivos);
@@ -2689,71 +2643,66 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
         const tipoElemento = this.obterTipoLlvm(tipoElementoStr);
 
-        // Aloca array de elementos no heap via malloc para que realloc (em adicionar) funcione.
+        // Aloca Vetor no heap via delegua_vetor_criar (com capacidade e crescimento geométrico).
         const tamBytes = this.tamElementoEmBytes(tipoElementoStr);
-        const totalBytes = ConstantInt.get(this.contexto, new APInt(64, tamanho * tamBytes));
-        const ptrHeap = this.montador.CreateCall(this.funcaoMalloc, [totalBytes], 'arr_heap');
+        const vetorHeap = this.montador.CreateCall(
+            this.funcaoVetorCriar,
+            [
+                ConstantInt.get(this.contexto, new APInt(32, tamanho)),
+                ConstantInt.get(this.contexto, new APInt(32, tamBytes)),
+            ],
+            'vetor'
+        );
 
         // Inicializa cada posição com seu valor.
-        const idx0 = ConstantInt.get(this.contexto, new APInt(32, 0));
-        for (let i = 0; i < tamanho; i++) {
-            const bruto: any = i === 0 ? primeiroPreResolvido : await valores[i].aceitar(this);
-            let valorElem: llvm.Value;
-
-            if (bruto instanceof VariavelEscopo) {
-                valorElem = this.montador.CreateLoad(tipoElemento, bruto.variavelLlvm, 'load_elem');
-            } else if (ehValorLlvm(bruto)) {
-                valorElem = bruto as llvm.Value;
-                // Converte double → i32 quando o tipo do vetor é inteiro.
-                const construtorTipoBruto = valorElem.getType()?.constructor;
-                if (tipoEhInteiroDelegua(tipoElementoStr) && construtorTipoBruto === llvm.Type) {
-                    valorElem = this.montador.CreateFPToSI(valorElem, tipoElemento, 'elem_to_int');
-                } else if (tipoElementoStr === 'número' && construtorTipoBruto === llvm.IntegerType) {
-                    valorElem = this.montador.CreateSIToFP(valorElem, tipoElemento, 'elem_to_double');
-                }
-            } else {
-                // Primitivo JS (número sem tipo): cria constante LLVM diretamente.
-                const n = Number(bruto) || 0;
-                if (tipoElementoStr === 'inteiro') {
-                    valorElem = ConstantInt.get(this.contexto, new APInt(32, n));
-                } else if (tipoElementoStr === 'longo') {
-                    valorElem = ConstantInt.get(this.contexto, new APInt(64, n));
-                } else {
-                    valorElem = ConstantFP.get(tipoElemento, new APFloat(n));
-                }
-            }
-
-            const gepElem = this.montador.CreateInBoundsGEP(
-                tipoElemento,
-                ptrHeap,
-                [ConstantInt.get(this.contexto, new APInt(32, i))],
-                `ptr_arr_${i}`
+        if (tamanho > 0) {
+            const idx0 = ConstantInt.get(this.contexto, new APInt(32, 0));
+            const gepCampoPtr = this.montador.CreateInBoundsGEP(
+                this.tipoEstruturaVetor,
+                vetorHeap,
+                [idx0, idx0],
+                'ptr_campo_ptr'
             );
-            this.montador.CreateStore(valorElem, gepElem);
+            const ptrHeap = this.montador.CreateLoad(this.montador.getPtrTy(), gepCampoPtr, 'arr_heap');
+
+            for (let i = 0; i < tamanho; i++) {
+                const bruto: any = i === 0 ? primeiroPreResolvido : await valores[i].aceitar(this);
+                let valorElem: llvm.Value;
+
+                if (bruto instanceof VariavelEscopo) {
+                    valorElem = this.carregarValorSeNecessario(bruto, tipoElementoStr, 'load_elem');
+                } else if (ehValorLlvm(bruto)) {
+                    valorElem = bruto as llvm.Value;
+                    // Converte double → i32 quando o tipo do vetor é inteiro.
+                    const construtorTipoBruto = valorElem.getType()?.constructor;
+                    if (tipoEhInteiroDelegua(tipoElementoStr) && construtorTipoBruto === llvm.Type) {
+                        valorElem = this.montador.CreateFPToSI(valorElem, tipoElemento, 'elem_to_int');
+                    } else if (tipoElementoStr === 'número' && construtorTipoBruto === llvm.IntegerType) {
+                        valorElem = this.montador.CreateSIToFP(valorElem, tipoElemento, 'elem_to_double');
+                    }
+                } else {
+                    // Primitivo JS (número sem tipo): cria constante LLVM diretamente.
+                    const n = Number(bruto) || 0;
+                    if (tipoElementoStr === 'inteiro') {
+                        valorElem = ConstantInt.get(this.contexto, new APInt(32, n));
+                    } else if (tipoElementoStr === 'longo') {
+                        valorElem = ConstantInt.get(this.contexto, new APInt(64, n));
+                    } else {
+                        valorElem = ConstantFP.get(tipoElemento, new APFloat(n));
+                    }
+                }
+
+                const gepElem = this.montador.CreateInBoundsGEP(
+                    tipoElemento,
+                    ptrHeap,
+                    [ConstantInt.get(this.contexto, new APInt(32, i))],
+                    `ptr_arr_${i}`
+                );
+                this.montador.CreateStore(valorElem, gepElem);
+            }
         }
 
-        // Aloca struct %Vetor e preenche seus dois campos.
-        const alocVetor = this.montador.CreateAlloca(this.tipoEstruturaVetor, null, 'vetor');
-
-        // Campo 0: ponteiro para o array de elementos (heap).
-        const gepCampoPtr = this.montador.CreateInBoundsGEP(
-            this.tipoEstruturaVetor,
-            alocVetor,
-            [idx0, ConstantInt.get(this.contexto, new APInt(32, 0))],
-            'ptr_campo_ptr'
-        );
-        this.montador.CreateStore(ptrHeap, gepCampoPtr);
-
-        // Campo 1: tamanho do vetor.
-        const gepCampoTam = this.montador.CreateInBoundsGEP(
-            this.tipoEstruturaVetor,
-            alocVetor,
-            [idx0, ConstantInt.get(this.contexto, new APInt(32, 1))],
-            'ptr_campo_tam'
-        );
-        this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(32, tamanho)), gepCampoTam);
-
-        return Promise.resolve(alocVetor);
+        return Promise.resolve(vetorHeap);
     }
 
     protected async visitarCorpoFuncao(
@@ -2818,8 +2767,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             case 'logico':
                 return llvm.Type.getInt1Ty(this.contexto);
             default:
-                if (tipoEhVetor(tipoDelegua)) {
-                    return this.tipoEstruturaVetor ?? llvm.PointerType.get(this.contexto, 0);
+                if (tipoEhVetor(tipoDelegua) || this.tipoEhOpaco(tipoDelegua)) {
+                    return this.montador.getPtrTy();
                 }
                 // Tipos de classe conhecidos ou desconhecidos: ponteiro opaco.
                 return llvm.PointerType.get(this.contexto, 0);
@@ -2898,7 +2847,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // LoadInst já SÃO o ponteiro. texto/lógico/qualquer/dicionário seguem a
             // convenção oposta (sempre ptr* de dupla indireção, sempre precisam de um load),
             // por isso usam apenas o tipo LLVM (`tipoEhPonteiro`) para decidir.
-            if (this.ehTipoObjeto(tipoDelegua)) {
+            if (this.ehTipoObjeto(tipoDelegua) || tipoEhVetor(tipoDelegua)) {
                 const construtorInst = valor.variavelLlvm?.constructor;
                 const precisaCarregar = construtorInst === llvm.AllocaInst || construtorInst === llvm.GetElementPtrInst;
                 return precisaCarregar
@@ -3270,15 +3219,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
             if (argumentoResolvido instanceof VariavelEscopo) {
                 const tipoArgumento = argumentoResolvido.tipo || argumento.tipo;
-                formatosTexto.push(this.printfFormatos.get(tipoArgumento));
+                const formatoArgumento =
+                    this.printfFormatos.get(tipoArgumento) ||
+                    (this.tipoEhOpaco(tipoArgumento) ? '%s' : undefined);
+                formatosTexto.push(formatoArgumento);
                 const tipoLlvm = this.obterTipoLlvm(tipoArgumento);
                 let valorCarregado: llvm.Value = this.montador.CreateLoad(
                     tipoLlvm,
                     argumentoResolvido.variavelLlvm,
                     'load_var'
                 );
-                const formatoArgumento = this.printfFormatos.get(tipoArgumento) || '';
-                if (formatoArgumento.includes('%s')) {
+                if ((formatoArgumento || '').includes('%s')) {
                     valorCarregado = this.normalizarOperandoParaTextoSeguro(
                         { valor: valorCarregado, tipo: tipoArgumento || 'texto' },
                         'escreva_var'
@@ -3289,7 +3240,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 argumentosResolvidos.push(valorCarregado);
             } else {
                 const tipoArgumento = this.resolverTipoConstruto(argumento) || argumento.tipo;
-                let formatoArgumento = this.printfFormatos.get(tipoArgumento);
+                let formatoArgumento =
+                    this.printfFormatos.get(tipoArgumento) ||
+                    (this.tipoEhOpaco(tipoArgumento) ? '%s' : undefined);
                 // O tipo inferido de uma expressão pode divergir do valor gerado (ex.: campo
                 // `longo` + literal, inferido como `número`): para números, vale o tipo LLVM.
                 const formatoPeloValor = ehValorLlvm(argumentoResolvido)
@@ -3458,6 +3411,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             if (tipoInferidoInicializador && tipoInferidoInicializador !== 'nulo') {
                 tipoVariavel = tipoInferidoInicializador;
             }
+        } else if (tipoEhVetor(tipoVariavel) && /^qualquer\b/.test(tipoElementoVetor(tipoVariavel) ?? '')) {
+            // O analisador semântico tipa `var f = v.fatiar(...)` como `qualquer[]`; o tipo do
+            // inicializador (ex.: `inteiro[]`) determina o layout real dos elementos.
+            const tipoInferidoVetor = this.resolverTipoConstruto(declaracao.inicializador);
+            const elementoInferido = tipoEhVetor(tipoInferidoVetor) ? tipoElementoVetor(tipoInferidoVetor) : undefined;
+            if (elementoInferido && !/^qualquer\b/.test(elementoInferido)) {
+                tipoVariavel = tipoInferidoVetor;
+            }
         }
         this.definirLocalizacaoDebug(declaracao.simbolo.linha ?? 0, 0);
 
@@ -3501,7 +3462,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // alloca não há memória para um `store` de reatribuição escrever. Usa o bloco de
             // entrada (não o ponto de inserção atual) para evitar crescimento de pilha sem
             // limite quando a declaração está dentro de um laço.
-            const allocaVariavel = this.montador.CreateAlloca(this.montador.getPtrTy(), null, declaracao.simbolo.lexema);
+            const allocaVariavel = this.criarAllocaNoBlocoEntrada(
+                this.montador.getPtrTy(),
+                declaracao.simbolo.lexema,
+                true
+            );
             this.montador.CreateStore(objetoPtr, allocaVariavel);
             const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
             topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(allocaVariavel, undefined, tipoVariavel));
@@ -3517,22 +3482,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 (declaracao.inicializador as Vetor).tipo = `${tipoElementoDeclarado}[]`;
             }
             const inicializadorVetor = await declaracao.inicializador.aceitar(this);
-            // `var b = a`: vetores são referências — b passa a apontar para o mesmo struct.
-            let estruturaVetor = (
-                inicializadorVetor instanceof VariavelEscopo ? inicializadorVetor.variavelLlvm : inicializadorVetor
-            ) as llvm.Value;
-            // Retorno de função vem como %Vetor por valor: precisa de memória para ser
-            // indexado/modificado como as demais variáveis de vetor.
-            if (estruturaVetor && ehValorLlvm(estruturaVetor) && estruturaVetor.getType().isStructTy()) {
-                estruturaVetor = this.resolverPonteiroEstruturaVetor(estruturaVetor);
-            }
+            const vetorPtr = this.ponteiroParaVetor(inicializadorVetor);
+            const allocaVetor = this.criarAllocaNoBlocoEntrada(
+                this.montador.getPtrTy(),
+                declaracao.simbolo.lexema,
+                true
+            );
+            this.montador.CreateStore(vetorPtr, allocaVetor);
             const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
-            topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(estruturaVetor, undefined, tipoVariavel));
+            topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(allocaVetor, undefined, tipoVariavel));
             return Promise.resolve();
         }
 
         const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
-        const inicializacaoVariavel = this.montador.CreateAlloca(tipoLlvm, null, declaracao.simbolo.lexema);
+        const inicializacaoVariavel = this.criarAllocaNoBlocoEntrada(tipoLlvm, declaracao.simbolo.lexema, true);
         let valorOuReferenciaVariavel = await declaracao.inicializador.aceitar(this);
 
         if (valorOuReferenciaVariavel instanceof VariavelEscopo) {
@@ -3869,20 +3832,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const variavelEscopo = operando as VariavelEscopo;
             const tipoVariavel = variavelEscopo.variavelLlvm.getType();
 
-            if (tipoEhVetor(tipo)) {
-                // Vetores são sempre mantidos/passados por ponteiro — nunca carrega o
-                // struct %Vetor por valor. Usado aqui só para comparações de identidade
-                // (ex.: `declaracoes == nulo`), não para aritmética.
-                return { valor: variavelEscopo.variavelLlvm, tipo };
-            }
-
-            if (this.ehTipoObjeto(tipo)) {
-                // Instâncias de classe: o ptr já é o valor final quando vem de uma chamada
-                // de construtor/método (CallInst) — só uma variável alocada (AllocaInst)
-                // aponta PARA o ponteiro e precisa de load. Mesmo critério de
-                // carregarPtrClasseSePreciso, usado aqui para operandos (ex.: `== nulo`).
-                const construtorInstClasse = variavelEscopo.variavelLlvm?.constructor;
-                if (construtorInstClasse === llvm.AllocaInst) {
+            if (tipoEhVetor(tipo) || this.ehTipoObjeto(tipo)) {
+                // Vetores e instâncias de classe são ponteiros diretos (single indirection):
+                // AllocaInst/GEP apontam PARA o ponteiro e precisam de load.
+                const construtorInst = variavelEscopo.variavelLlvm?.constructor;
+                if (construtorInst === llvm.AllocaInst || construtorInst === llvm.GetElementPtrInst) {
                     const valorCarregado = this.montador.CreateLoad(
                         this.montador.getPtrTy(),
                         variavelEscopo.variavelLlvm,
@@ -4271,30 +4225,25 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return this.montador.CreateICmpNE(valor, ConstantInt.get(this.contexto, new APInt(32, 0)), nome);
     }
 
-    // Resolve um vetor para um ponteiro ao struct %Vetor, que é o que o runtime C
-    // (Vetor*) e os GEPs de elementos esperam:
-    //   - alloca %Vetor (vetor local): já é o ponteiro do struct;
-    //   - alloca ptr (slot que guarda um Vetor*): carrega o ponteiro;
-    //   - valor %Vetor por valor (ex.: retorno de função): guarda numa alloca temporária;
-    //   - Argument, GEP, CallInst que devolve Vetor*: já é o ponteiro do struct.
+    // Resolve um vetor para um ponteiro Vetor* no heap:
+    //   - alloca ptr / GEP ptr (variável local ou campo): carrega o ponteiro Vetor*;
+    //   - Argument, CallInst, LoadInst: já é o ponteiro Vetor*.
     protected resolverPonteiroEstruturaVetor(valor: llvm.Value): llvm.Value {
         if (!valor) return valor;
-        if (valor.constructor === llvm.AllocaInst) {
-            const tipoAlocado = (valor as llvm.AllocaInst).getAllocatedType();
-            if (tipoAlocado.isStructTy()) return valor;
+        const construtor = valor.constructor;
+        if (construtor === llvm.AllocaInst || construtor === llvm.GetElementPtrInst) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), valor, 'vetor_ptr');
-        }
-        if (valor.getType().isStructTy()) {
-            const temporario = this.criarAllocaNoBlocoEntrada(valor.getType(), 'vetor_tmp');
-            this.montador.CreateStore(valor, temporario);
-            return temporario;
         }
         return valor;
     }
 
     // Insere um alloca no bloco de entrada da função corrente, evitando
     // que allocas emitidos dentro de loops consumam stack a cada iteração.
-    protected criarAllocaNoBlocoEntrada(tipo: llvm.Type, nome: string): llvm.AllocaInst {
+    protected criarAllocaNoBlocoEntrada(
+        tipo: llvm.Type,
+        nome: string,
+        inicializarNulo: boolean = false
+    ): llvm.AllocaInst {
         const funcaoAtual = this.montador.GetInsertBlock().getParent();
         const blocoEntrada = funcaoAtual.getEntryBlock();
 
@@ -4310,23 +4259,24 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             montadorEntrada.SetInsertPoint(blocoEntrada);
         }
 
-        return montadorEntrada.CreateAlloca(tipo, null, nome);
+        const aloc = montadorEntrada.CreateAlloca(tipo, null, nome);
+        if (inicializarNulo && tipoEhPonteiro(tipo)) {
+            montadorEntrada.CreateStore(llvm.Constant.getNullValue(tipo) as unknown as llvm.Value, aloc);
+        }
+        return aloc;
     }
 
-    // Variáveis locais de classe: alloca(ptr) contendo o ptr real do objeto malloc'd.
-    // self dentro de métodos chega como Argument (ptr direto) — não precisa de load.
     /**
-     * Ponteiro para o struct %Vetor de um argumento: a variável local (alloca %Vetor) ou o
-     * parâmetro (ptr) já são ponteiros; um %Vetor por valor vai para uma alloca temporária.
+     * Ponteiro Vetor* de um argumento ou variável: carrega de alloca/GEP se necessário.
      */
     protected ponteiroParaVetor(argumento: unknown): llvm.Value {
         const valor = argumento instanceof VariavelEscopo ? argumento.variavelLlvm : (argumento as llvm.Value);
-        if (tipoEhPonteiro(valor.getType())) {
-            return valor;
-        }
-        const caixa = this.criarAllocaNoBlocoEntrada(valor.getType(), 'arg_vetor');
-        this.montador.CreateStore(valor, caixa);
-        return caixa;
+        return this.resolverPonteiroEstruturaVetor(valor);
+    }
+
+    /** Verdadeiro se o tipo representa um handle opaco de biblioteca C (`opaco:*`). */
+    tipoEhOpaco(tipo: string | undefined): boolean {
+        return !!tipo && tipo.startsWith('opaco:');
     }
 
     /** Verdadeiro se a variável (ou o parâmetro que a recebe) é instância de classe Delégua. */

@@ -47,7 +47,45 @@ export async function instanciarClasse(
         );
     }
 
-    const objetoAlloc = this.montador.CreateCall(this.funcaoMalloc, [tamanhoConst], `obj_${nomeClasse}`);
+    // Memória zerada: campos de ponteiro (texto, objetos, dicionários) começam como nulo,
+    // requisito para que destrutores e atribuições ARC nunca leiam lixo.
+    const i64Obj = llvm.Type.getInt64Ty(this.contexto);
+    const callocObj = this.obterFuncaoRuntime('calloc', this.montador.getPtrTy(), [i64Obj, i64Obj]);
+    const objetoAlloc = this.montador.CreateCall(
+        callocObj,
+        [ConstantInt.get(this.contexto, new APInt(64, 1)), tamanhoConst],
+        `obj_${nomeClasse}`
+    );
+
+    // Campos de vetor (próprios e herdados) começam como um Vetor* vazio no heap, para que
+    // `isto.itens.adicionar(x)` funcione sem inicialização explícita.
+    const indicesCampos = this.indicesPropriedades.get(nomeClasse);
+    const tiposCampos = this.tiposPropriedades.get(nomeClasse);
+    if (indicesCampos && tiposCampos) {
+        for (const [nomeCampo, indiceCampo] of indicesCampos) {
+            const tipoCampo = tiposCampos.get(nomeCampo);
+            if (!tipoEhVetor(tipoCampo)) continue;
+            const tamElemCampo = this.tamElementoEmBytes(tipoElementoVetor(tipoCampo));
+            const vetorVazio = this.montador.CreateCall(
+                this.funcaoVetorCriar,
+                [
+                    ConstantInt.get(this.contexto, new APInt(32, 0)),
+                    ConstantInt.get(this.contexto, new APInt(32, tamElemCampo)),
+                ],
+                `${nomeCampo}_vazio`
+            );
+            const gepCampo = this.montador.CreateInBoundsGEP(
+                tipoStruct,
+                objetoAlloc,
+                [
+                    ConstantInt.get(this.contexto, new APInt(32, 0)),
+                    ConstantInt.get(this.contexto, new APInt(32, indiceCampo)),
+                ],
+                `${nomeCampo}_ptr_inicial`
+            );
+            this.montador.CreateStore(vetorVazio, gepCampo);
+        }
+    }
 
     // Estampa o id de identidade em tempo de execução (campo oculto __tipoId, sempre no
     // índice 0) usado por eInstanciaDe.
@@ -105,6 +143,8 @@ export async function instanciarClasse(
                 const llvmValue = argResolvido.variavelLlvm;
                 if (construtorEsperaPtr && this.ehTipoObjeto(argResolvido.tipo)) {
                     valor = this.carregarPtrClasseSePreciso(argResolvido);
+                } else if (construtorEsperaPtr && tipoEhVetor(argResolvido.tipo)) {
+                    valor = this.ponteiroParaVetor(argResolvido);
                 } else if (construtorEsperaPtr) {
                     // Parâmetro ptr: passa alloca diretamente; o construtor faz load para obter o valor.
                     valor = llvmValue;
@@ -118,9 +158,8 @@ export async function instanciarClasse(
             } else {
                 valor = argResolvido as llvm.Value;
                 const tipoArgBruto = noArgumento ? this.resolverTipoConstruto(noArgumento) : undefined;
-                if (construtorEsperaPtr && this.ehTipoObjeto(tipoArgBruto)) {
-                    // Instância de classe crua (ex.: resultado de método/índice de vetor):
-                    // sempre ponteiro direto, nunca embrulhar em alloca extra.
+                if (construtorEsperaPtr && (this.ehTipoObjeto(tipoArgBruto) || tipoEhVetor(tipoArgBruto))) {
+                    // Instância de classe ou vetor cru: sempre ponteiro direto, nunca embrulhar em alloca extra.
                 } else {
                     const construtorInstanciaValor = valor?.constructor;
                     // GEP e Alloca já apontam para onde o valor está (ptr indireto): passa diretamente.
@@ -334,14 +373,12 @@ export async function chamarMetodoInstancia(
             } else if (tipoPar === 'lógico' || tipoPar === 'logico') {
                 // Na ABI dos módulos, lógico é um int C (0/1).
                 args.push(await this.carregarArgumentoLogicoComoInteiro(argumentos[i]));
-            } else if (tipoPar === 'longo' || tipoPar === 'ponteiro') {
+            } else if (tipoPar === 'longo' || tipoPar === 'ponteiro' || this.tipoEhOpaco(tipoPar)) {
                 args.push(await this.carregarArgumentoFFI(argumentos[i], tipoPar));
             } else if (tipoEhVetor(tipoPar)) {
-                // Vetor*: ponteiro para o struct %Vetor.
+                // Vetor*: ponteiro para o struct %Vetor no heap.
                 const argResolvido = await argumentos[i].aceitar(this);
-                const valorVetor =
-                    argResolvido instanceof VariavelEscopo ? argResolvido.variavelLlvm : (argResolvido as llvm.Value);
-                args.push(this.resolverPonteiroEstruturaVetor(valorVetor));
+                args.push(this.ponteiroParaVetor(argResolvido));
             } else {
                 const argResolvido = await argumentos[i].aceitar(this);
                 args.push(
@@ -500,19 +537,18 @@ export async function chamarMetodoInstancia(
             // tipo inferido do argumento seja uma classe conhecida, senão esse load lê os
             // primeiros 8 bytes do próprio objeto como se fossem um ponteiro (lixo).
             const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-            const paramEsperaClasseDireta = this.ehTipoObjeto(tipoParamDeclarado);
+            const paramEsperaClasseOuVetorDireto =
+                this.ehTipoObjeto(tipoParamDeclarado) || tipoEhVetor(tipoParamDeclarado);
             if (
-                paramEsperaClasseDireta ||
-                (!paramExplicitamenteQualquer && this.ehTipoObjeto(argResolvido.tipo))
+                paramEsperaClasseOuVetorDireto ||
+                (!paramExplicitamenteQualquer &&
+                    (this.ehTipoObjeto(argResolvido.tipo) || tipoEhVetor(argResolvido.tipo)))
             ) {
-                // Instâncias de classe são sempre ponteiro direto (single indirection) —
-                // mesma convenção de carregarPtrClasseSePreciso/resolverOperando: só
-                // AllocaInst aponta PARA o ponteiro do objeto (precisa de load antes de
-                // passar); Argument/CallInst/LoadInst/GEP já SÃO o ponteiro do objeto e
-                // nunca devem ser reembrulhados numa alloca extra (isso criaria um
-                // ponteiro-para-ponteiro que o corpo do método, ao fazer acesso a campo,
-                // interpretaria incorretamente como o próprio objeto).
-                const precisaCarregar = construtorInstVE === llvm.AllocaInst;
+                // Instâncias de classe e vetores são sempre ponteiro direto (single indirection):
+                // AllocaInst e GEP apontam PARA o ponteiro (precisam de load);
+                // Argument/CallInst/LoadInst já SÃO o ponteiro.
+                const precisaCarregar =
+                    construtorInstVE === llvm.AllocaInst || construtorInstVE === llvm.GetElementPtrInst;
                 args.push(
                     precisaCarregar ? this.montador.CreateLoad(this.montador.getPtrTy(), valVE, 'load_obj_arg') : valVE
                 );
@@ -607,11 +643,12 @@ export async function chamarMetodoInstancia(
             // (ex.: `criarValor("funcao", instanciaDeClasse)`) corrompe o ponteiro guardado.
             const tipoArgBruto = this.resolverTipoConstruto(argumento as ConstrutoInterface);
             const paramExplicitamenteQualquer = tipoParamDeclarado === 'qualquer';
-            const paramEsperaClasseDireta = this.ehTipoObjeto(tipoParamDeclarado);
-            const podeTratarComoClasseDireta =
-                paramEsperaClasseDireta ||
-                (!paramExplicitamenteQualquer && this.ehTipoObjeto(tipoArgBruto));
-            if (podeTratarComoClasseDireta) {
+            const paramEsperaClasseOuVetorDireto =
+                this.ehTipoObjeto(tipoParamDeclarado) || tipoEhVetor(tipoParamDeclarado);
+            const podeTratarComoClasseOuVetorDireto =
+                paramEsperaClasseOuVetorDireto ||
+                (!paramExplicitamenteQualquer && (this.ehTipoObjeto(tipoArgBruto) || tipoEhVetor(tipoArgBruto)));
+            if (podeTratarComoClasseOuVetorDireto) {
                 args.push(val);
                 continue;
             }

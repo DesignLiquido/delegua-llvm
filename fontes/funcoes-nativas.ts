@@ -20,9 +20,14 @@ import type { CompiladorLLVM } from './compilador-llvm';
  * No entanto, elas podem servir de inspiração para funções futuras.
  */
 export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<string>): void {
-    // %Vetor = type { ptr, i32 }  (ponteiro para elementos + tamanho)
+    // %Vetor = type { ptr, i32, i32, i32 }  (elementos + tamanho + capacidade + tam_elem)
     this.tipoEstruturaVetor = llvm.StructType.create(this.contexto, 'Vetor');
-    this.tipoEstruturaVetor.setBody([llvm.PointerType.get(this.contexto, 0), this.montador.getInt32Ty()]);
+    this.tipoEstruturaVetor.setBody([
+        llvm.PointerType.get(this.contexto, 0),
+        this.montador.getInt32Ty(),
+        this.montador.getInt32Ty(),
+        this.montador.getInt32Ty(),
+    ]);
 
     // int escreva(const char *fmt, ...)
     const tipoRetornoPrinter = this.montador.getInt32Ty();
@@ -150,6 +155,14 @@ export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<
     );
     this.funcaoMalloc = this.modulo.getOrInsertFunction('malloc', tipoFuncaoMalloc);
 
+    // Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem)
+    const tipoFuncaoVetorCriar = llvm.FunctionType.get(
+        this.montador.getPtrTy(),
+        [this.montador.getInt32Ty(), this.montador.getInt32Ty()],
+        false
+    );
+    this.funcaoVetorCriar = this.modulo.getOrInsertFunction('delegua_vetor_criar', tipoFuncaoVetorCriar);
+
     // int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem)
     const tipoFuncaoVetorAdicionar = llvm.FunctionType.get(
         this.montador.getInt32Ty(),
@@ -275,15 +288,14 @@ export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<
     );
     this.funcaoVetorOrdenar = this.modulo.getOrInsertFunction('delegua_vetor_ordenar', tipoFuncaoVetorOrdenar);
 
-    // void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida)
+    // Vetor* delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem)
     const tipoFuncaoVetorFatiar = llvm.FunctionType.get(
-        llvm.Type.getVoidTy(this.contexto),
+        this.montador.getPtrTy(),
         [
             this.montador.getPtrTy(),
             this.montador.getInt32Ty(),
             this.montador.getInt32Ty(),
             this.montador.getInt32Ty(),
-            this.montador.getPtrTy(),
         ],
         false
     );
@@ -307,14 +319,14 @@ export function criarFuncaoNativa(this: CompiladorLLVM, modulosImportados?: Set<
     );
     this.funcaoVetorJuntarTexto = this.modulo.getOrInsertFunction('delegua_vetor_juntar_texto', tipoFuncaoVetorJuntar);
 
-    // void delegua_vetor_filtrar_inteiro(Vetor* v, ptr fn, Vetor* saida)
-    // void delegua_vetor_filtrar_numero (Vetor* v, ptr fn, Vetor* saida)
-    // void delegua_vetor_mapear_inteiro (Vetor* v, ptr fn, Vetor* saida)
-    // void delegua_vetor_mapear_numero  (Vetor* v, ptr fn, Vetor* saida)
-    // Todos recebem (ptr, ptr, ptr) → void  — o ponteiro de função é opaco no IR.
+    // Vetor* delegua_vetor_filtrar_inteiro(Vetor* v, ptr fn)
+    // Vetor* delegua_vetor_filtrar_numero (Vetor* v, ptr fn)
+    // Vetor* delegua_vetor_mapear_inteiro (Vetor* v, ptr fn)
+    // Vetor* delegua_vetor_mapear_numero  (Vetor* v, ptr fn)
+    // Vetor* delegua_vetor_mapear_texto   (Vetor* v, ptr fn)
     const tipoFuncaoVetorCallback = llvm.FunctionType.get(
-        llvm.Type.getVoidTy(this.contexto),
-        [this.montador.getPtrTy(), this.montador.getPtrTy(), this.montador.getPtrTy()],
+        this.montador.getPtrTy(),
+        [this.montador.getPtrTy(), this.montador.getPtrTy()],
         false
     );
     this.funcaoVetorFiltrarInteiro = this.modulo.getOrInsertFunction(

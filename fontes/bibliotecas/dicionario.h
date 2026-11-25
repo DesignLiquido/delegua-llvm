@@ -34,8 +34,11 @@ int delegua_dicionario_tamanho(Dicionario* d);
 // Remove a chave do dicionário. Retorna 1 se a chave existia, 0 caso contrário.
 int delegua_dicionario_remover(Dicionario* d, const char* chave);
 
-// Preenche `saida` com as chaves (char*), em ordem de inserção.
-void delegua_dicionario_chaves(Dicionario* d, Vetor* saida);
+// Retorna um novo Vetor* com as chaves (char*), em ordem de inserção.
+Vetor* delegua_dicionario_chaves(Dicionario* d);
 
-// Preenche `saida` com os valores (void*), em ordem de inserção.
-void delegua_dicionario_valores(Dicionario* d, Vetor* saida);
+// Retorna um novo Vetor* com os valores (void*), em ordem de inserção.
+Vetor* delegua_dicionario_valores(Dicionario* d);
+
+// Libera toda a estrutura do dicionário e suas chaves/entradas.
+void delegua_dicionario_liberar(Dicionario* d);

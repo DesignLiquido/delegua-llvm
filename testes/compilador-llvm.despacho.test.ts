@@ -94,8 +94,8 @@ describe('Compilador - Despacho dinâmico de métodos', () => {
         ]);
 
         expect(resultado).toContain('@__despacho_Fonte_versoes(ptr %0, ptr %1)');
-        expect(resultado).toContain('call %Vetor @FonteMemoria_versoes(ptr %0, ptr %1)');
-        expect(resultado).toContain('call %Vetor @FonteRegistro_versoes(ptr %0, ptr %1)');
+        expect(resultado).toContain('call ptr @FonteMemoria_versoes(ptr %0, ptr %1)');
+        expect(resultado).toContain('call ptr @FonteRegistro_versoes(ptr %0, ptr %1)');
         expect(resultado).toContain('@msg_despacho');
     });
 
@@ -109,7 +109,8 @@ describe('Compilador - Despacho dinâmico de métodos', () => {
             'usar(Fonte())',
         ]);
 
-        expect(resultado).toContain('call %Vetor @Fonte_versoes(');
+        expect(resultado).toContain('call ptr @Fonte_versoes(');
+        expect(resultado).not.toContain('%Vetor @');
     });
 });
 

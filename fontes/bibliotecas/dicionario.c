@@ -108,6 +108,10 @@ void delegua_dicionario_definir(Dicionario* d, const char* chave, void* valor) {
         return;
     }
     nova->chave = strdup(chave);
+    if (!nova->chave) {
+        free(nova);
+        return;
+    }
     nova->valor = valor;
     nova->proximo = d->baldes[indice];
     d->baldes[indice] = nova;
@@ -192,28 +196,35 @@ int delegua_dicionario_remover(Dicionario* d, const char* chave) {
     return 0;
 }
 
-// Copia, em ordem de inserção, a chave ou o valor de cada entrada para `saida`.
-static void coletar(Dicionario* d, Vetor* saida, int coletarChaves) {
-    if (!saida) return;
-    saida->ptr = NULL;
-    saida->tamanho = 0;
-    if (!d || d->tamanho <= 0) return;
+// Copia, em ordem de inserção, a chave (duplicada) ou o valor de cada entrada para um novo Vetor*.
+static Vetor* coletar(Dicionario* d, int coletarChaves) {
+    Vetor* saida = delegua_vetor_criar(0, (int)sizeof(void*));
+    if (!saida || !d || d->tamanho <= 0) return saida;
 
-    void** elementos = (void**)malloc((size_t)d->tamanho * sizeof(void*));
-    if (!elementos) return;
-
-    int i = 0;
-    for (DicionarioEntrada* e = d->primeiro; e && i < d->tamanho; e = e->proximoInsercao) {
-        elementos[i++] = coletarChaves ? (void*)e->chave : e->valor;
+    for (DicionarioEntrada* e = d->primeiro; e; e = e->proximoInsercao) {
+        void* item = coletarChaves ? (void*)strdup(e->chave ? e->chave : "") : e->valor;
+        delegua_vetor_adicionar(saida, &item, (int)sizeof(void*));
     }
-    saida->ptr = elementos;
-    saida->tamanho = i;
+    return saida;
 }
 
-void delegua_dicionario_chaves(Dicionario* d, Vetor* saida) {
-    coletar(d, saida, 1);
+Vetor* delegua_dicionario_chaves(Dicionario* d) {
+    return coletar(d, 1);
 }
 
-void delegua_dicionario_valores(Dicionario* d, Vetor* saida) {
-    coletar(d, saida, 0);
+Vetor* delegua_dicionario_valores(Dicionario* d) {
+    return coletar(d, 0);
+}
+
+void delegua_dicionario_liberar(Dicionario* d) {
+    if (!d) return;
+    DicionarioEntrada* atual = d->primeiro;
+    while (atual) {
+        DicionarioEntrada* proximo = atual->proximoInsercao;
+        free(atual->chave);
+        free(atual);
+        atual = proximo;
+    }
+    free(d->baldes);
+    free(d);
 }

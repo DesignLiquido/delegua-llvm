@@ -31,13 +31,15 @@ describe('Compilador - métodos de texto adicionais', () => {
             '  escreva(p)',
             '}',
         ]);
-        expect(ir).toMatch(/call void @delegua_texto_dividir\(ptr .*, ptr .*, i32 0, ptr %texto_dividido\)/);
-        expect(ir).toContain('call i32 @delegua_vetor_tamanho(ptr %texto_dividido)');
+        // O runtime devolve um novo Vetor* no heap (sem parâmetro de saída).
+        expect(ir).toMatch(/%texto_dividido = call ptr @delegua_texto_dividir\(ptr .*, ptr .*, i32 0\)/);
+        expect(ir).toContain('store ptr %texto_dividido, ptr %partes');
+        expect(ir).toMatch(/call i32 @delegua_vetor_tamanho\(ptr %vetor_ptr\d*\)/);
     });
 
     it('dividir aceita limite', async () => {
         const ir = await compilar(['var t: texto = "a,b,c"', 'var partes = t.dividir(",", 2)', 'escreva(partes[1])']);
-        expect(ir).toMatch(/call void @delegua_texto_dividir\(ptr .*, ptr .*, i32 2, ptr/);
+        expect(ir).toMatch(/call ptr @delegua_texto_dividir\(ptr .*, ptr .*, i32 2\)/);
     });
 
     it('encontrar, encontrarUltimo e concatenar', async () => {
@@ -85,13 +87,13 @@ describe('Compilador - métodos de dicionário', () => {
         expect(ir).toContain('call i32 @delegua_dicionario_tamanho(');
         expect(ir).toContain('call i32 @delegua_dicionario_contem(');
         expect(ir).toContain('call i32 @delegua_dicionario_remover(');
-        expect(ir).toContain('call void @delegua_dicionario_chaves(ptr %');
+        expect(ir).toMatch(/%dict_chaves = call ptr @delegua_dicionario_chaves\(ptr %/);
         expect(ir).toContain('call ptr @delegua_vetor_juntar_texto(');
     });
 
     it('para cada sobre dicionário itera as chaves', async () => {
         const ir = await compilar(['var d = {"a": 1}', 'para cada k em d {', '  escreva(k)', '}']);
-        expect(ir).toContain('call void @delegua_dicionario_chaves(');
+        expect(ir).toContain('%dict_chaves = call ptr @delegua_dicionario_chaves(');
         expect(ir).toContain('call i32 @delegua_vetor_tamanho(ptr %dict_chaves)');
     });
 
@@ -103,7 +105,7 @@ describe('Compilador - métodos de dicionário', () => {
 });
 
 describe('Compilador - correções de vetores e funções', () => {
-    it('para cada sobre vetor local passa o struct %Vetor, não o ponteiro de elementos', async () => {
+    it('para cada sobre vetor local passa o Vetor* carregado do slot, não o ponteiro de elementos', async () => {
         const ir = await compilar([
             'var v: texto[] = ["a", "b"]',
             'var f: texto[] = v.fatiar(1)',
@@ -111,11 +113,11 @@ describe('Compilador - correções de vetores e funções', () => {
             '  escreva(x)',
             '}',
         ]);
-        expect(ir).toContain('call i32 @delegua_vetor_tamanho(ptr %fatia)');
-        expect(ir).not.toMatch(/load ptr, ptr %fatia/);
+        expect(ir).toContain('store ptr %fatia, ptr %f');
+        expect(ir).toMatch(/(%vetor_ptr\d*) = load ptr, ptr %f[\s\S]*call i32 @delegua_vetor_tamanho\(ptr \1\)/);
     });
 
-    it('vetor devolvido por função (%Vetor por valor) é guardado em memória', async () => {
+    it('vetor devolvido por função é um Vetor* guardado no slot da variável', async () => {
         const ir = await compilar([
             'funcao g(): texto[] {',
             '  var r: texto[] = ["q"]',
@@ -124,7 +126,9 @@ describe('Compilador - correções de vetores e funções', () => {
             'var z: texto[] = g()',
             'escreva(z[0])',
         ]);
-        expect(ir).toMatch(/store %Vetor %\d+, ptr %vetor_tmp/);
+        expect(ir).toContain('define ptr @g()');
+        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)\s+store ptr \1, ptr %z/);
+        expect(ir).not.toContain('%Vetor %');
     });
 
     it('argumento texto de função livre vai em caixa ptr*, como em métodos', async () => {

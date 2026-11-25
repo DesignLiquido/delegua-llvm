@@ -20,6 +20,7 @@ void     delegua_arq_sobrescrever        (Arquivo* arq, char* texto);
 void     delegua_arq_recarregar          (Arquivo* arq);
 int      delegua_arq_instancia_e_arquivo (Arquivo* arq);
 int      delegua_arq_instancia_e_diretorio(Arquivo* arq);
+void     delegua_arq_liberar             (Arquivo* arq);
 
 // ── Sistema de arquivos ──────────────────────────────────────────────────────
 // Funções que retornam int retornam 1 em caso de sucesso e 0 em caso de falha.

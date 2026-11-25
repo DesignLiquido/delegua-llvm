@@ -54,7 +54,7 @@ static void definir_erro_sistema(const char* contexto) {
 }
 
 char* delegua_rede_ultimo_erro(void) {
-    return ultimo_erro;
+    return strdup(ultimo_erro);
 }
 
 static int inicializar(void) {

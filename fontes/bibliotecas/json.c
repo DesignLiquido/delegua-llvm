@@ -22,11 +22,12 @@ cJSON* delegua_json_importar_arquivo(char* caminho) {
     fseek(fp, 0, SEEK_END);
     long tam = ftell(fp);
     rewind(fp);
+    if (tam < 0) { fclose(fp); return NULL; }
 
-    char* buf = (char*)malloc(tam + 1);
+    char* buf = (char*)malloc((size_t)tam + 1);
     if (!buf) { fclose(fp); return NULL; }
-    fread(buf, 1, tam, fp);
-    buf[tam] = '\0';
+    size_t lidos = fread(buf, 1, (size_t)tam, fp);
+    buf[lidos] = '\0';
     fclose(fp);
 
     cJSON* obj = cJSON_Parse(buf);
@@ -60,7 +61,8 @@ int delegua_json_tamanho(cJSON* arr) {
 
 char* delegua_json_valor_texto(cJSON* item) {
     if (!item) return NULL;
-    return cJSON_GetStringValue(item);
+    const char* s = cJSON_GetStringValue(item);
+    return s ? strdup(s) : NULL;
 }
 
 double delegua_json_valor_numero(cJSON* item) {
@@ -95,23 +97,14 @@ int delegua_json_contem_campo(cJSON* obj, char* chave) {
 }
 
 Vetor* delegua_json_chaves(cJSON* obj) {
-    Vetor* vetor = (Vetor*)malloc(sizeof(Vetor));
-    if (!vetor) return NULL;
-    vetor->ptr = NULL;
-    vetor->tamanho = 0;
-    if (!obj || !cJSON_IsObject(obj)) return vetor;
+    Vetor* vetor = delegua_vetor_criar(0, (int)sizeof(char*));
+    if (!vetor || !obj || !cJSON_IsObject(obj)) return vetor;
 
-    int quantidade = cJSON_GetArraySize(obj);
-    if (quantidade <= 0) return vetor;
-    char** chaves = (char**)malloc((size_t)quantidade * sizeof(char*));
-    if (!chaves) return vetor;
-
-    int i = 0;
-    for (cJSON* filho = obj->child; filho && i < quantidade; filho = filho->next) {
-        chaves[i++] = filho->string;
+    for (cJSON* filho = obj->child; filho; filho = filho->next) {
+        char* chave = strdup(filho->string ? filho->string : "");
+        if (!chave) continue;
+        delegua_vetor_adicionar(vetor, &chave, (int)sizeof(char*));
     }
-    vetor->ptr = chaves;
-    vetor->tamanho = i;
     return vetor;
 }
 

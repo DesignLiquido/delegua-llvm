@@ -107,11 +107,12 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call ptr @malloc(i64');
+        // Objeto no heap com memória zerada (campos de ponteiro começam nulos).
+        expect(resultado).toContain('call ptr @calloc(i64 1, i64');
         expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 
-    it('Instanciação passa vetores para construtor com load do struct', async () => {
+    it('Instanciação passa vetores para construtor como Vetor* e inicializa campos vetor', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar([
             'classe RetornoLexador {',
@@ -126,8 +127,14 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call void @RetornoLexador_construtor(ptr');
-        expect(resultado).toContain('load %Vetor');
+        // Vetores são referências no heap: o construtor recebe Vetor* (nunca %Vetor por valor).
+        expect(resultado).toContain('define void @RetornoLexador_construtor(ptr %0, ptr %1, ptr %2)');
+        expect(resultado).toMatch(/call void @RetornoLexador_construtor\(ptr %obj_RetornoLexador, ptr %vetor\d*, ptr %vetor\d*\)/);
+        expect(resultado).not.toContain('load %Vetor');
+        // Objeto zerado e campos vetor começam como Vetor* vazio.
+        expect(resultado).toContain('call ptr @calloc(i64 1, i64 24)');
+        expect(resultado).toContain('%simbolos_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8)');
+        expect(resultado).toContain('%erros_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8)');
     });
 
     it('Chamada de método de instância', async () => {

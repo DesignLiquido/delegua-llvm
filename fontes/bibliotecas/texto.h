@@ -15,10 +15,13 @@ char* delegua_texto_aparar(const char* s);
 char* delegua_texto_aparar_inicio(const char* s);
 char* delegua_texto_aparar_fim(const char* s);
 
-// Divide `s` em `delimitador`, preenchendo `saida` com char*. Delimitador vazio
+// Divide `s` em `delimitador`, retornando novo Vetor* com char*. Delimitador vazio
 // divide em caracteres. `limite` > 0 limita a quantidade de partes (a última
 // parte contém o restante do texto); `limite` <= 0 não limita.
-void  delegua_texto_dividir(const char* s, const char* delimitador, int limite, Vetor* saida);
+Vetor* delegua_texto_dividir(const char* s, const char* delimitador, int limite);
+
+// Retorna um texto recém-alocado com o caractere em `indice` (ou "" se fora dos limites).
+char* delegua_texto_caractere_em(const char* s, int indice);
 
 // Índice (em bytes) da primeira ocorrência de `sub` a partir de `inicio`, ou -1.
 int   delegua_texto_encontrar(const char* s, const char* sub, int inicio);

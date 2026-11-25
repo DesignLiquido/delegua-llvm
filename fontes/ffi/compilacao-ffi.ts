@@ -256,8 +256,8 @@ export async function carregarArgumentoPonteiro(this: CompiladorLLVM, argumento:
                 ? this.montador.CreateLoad(this.montador.getPtrTy(), valor, 'texto_ptr')
                 : valor;
         }
-        // ponteiro / qualquer: alloca guarda o valor; argumento de função já é o valor.
-        if (valor.constructor === llvm.AllocaInst) {
+        // ponteiro / opaco / qualquer: alloca ou GEP guarda o valor; argumento de função já é o valor.
+        if (valor.constructor === llvm.AllocaInst || valor.constructor === llvm.GetElementPtrInst) {
             return this.montador.CreateLoad(this.montador.getPtrTy(), valor, 'ponteiro_val');
         }
         return valor;

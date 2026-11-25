@@ -26,27 +26,33 @@
     #define delegua_stat_s struct stat
 #endif
 
+static char* duplicar_texto(const char* texto);
+
 // ── Funções de módulo (livres) ──────────────────────────────────────────────
 
 Arquivo* delegua_arq_abrir(char* caminho) {
+    if (!caminho) return NULL;
     FILE* fp = fopen(caminho, "rb");
     if (!fp) return NULL;
 
     fseek(fp, 0, SEEK_END);
     long tamanho = ftell(fp);
     rewind(fp);
+    if (tamanho < 0) { fclose(fp); return NULL; }
 
-    char* conteudo = (char*)malloc(tamanho + 1);
+    char* conteudo = (char*)malloc((size_t)tamanho + 1);
     if (!conteudo) { fclose(fp); return NULL; }
-    fread(conteudo, 1, tamanho, fp);
-    conteudo[tamanho] = '\0';
+    size_t lidos = fread(conteudo, 1, (size_t)tamanho, fp);
+    conteudo[lidos] = '\0';
     fclose(fp);
 
     Arquivo* arq = (Arquivo*)malloc(sizeof(Arquivo));
     if (!arq) { free(conteudo); return NULL; }
-    arq->caminho  = strdup(caminho);
+    char* caminhoCopia = strdup(caminho);
+    if (!caminhoCopia) { free(conteudo); free(arq); return NULL; }
+    arq->caminho  = caminhoCopia;
     arq->conteudo = conteudo;
-    arq->tamanho  = tamanho;
+    arq->tamanho  = (long)lidos;
     return arq;
 }
 
@@ -77,7 +83,7 @@ int delegua_arq_e_diretorio(char* caminho) {
 
 char* delegua_arq_para_texto(Arquivo* arq) {
     if (!arq) return NULL;
-    return arq->conteudo;
+    return duplicar_texto(arq->conteudo ? arq->conteudo : "");
 }
 
 void delegua_arq_escrever(Arquivo* arq, char* texto) {
@@ -104,16 +110,24 @@ void delegua_arq_recarregar(Arquivo* arq) {
     fseek(fp, 0, SEEK_END);
     long tamanho = ftell(fp);
     rewind(fp);
+    if (tamanho < 0) { fclose(fp); return; }
 
-    char* novo = (char*)malloc(tamanho + 1);
+    char* novo = (char*)malloc((size_t)tamanho + 1);
     if (!novo) { fclose(fp); return; }
-    fread(novo, 1, tamanho, fp);
-    novo[tamanho] = '\0';
+    size_t lidos = fread(novo, 1, (size_t)tamanho, fp);
+    novo[lidos] = '\0';
     fclose(fp);
 
     free(arq->conteudo);
     arq->conteudo = novo;
-    arq->tamanho  = tamanho;
+    arq->tamanho  = (long)lidos;
+}
+
+void delegua_arq_liberar(Arquivo* arq) {
+    if (!arq) return;
+    free(arq->caminho);
+    free(arq->conteudo);
+    free(arq);
 }
 
 int delegua_arq_instancia_e_arquivo(Arquivo* arq) {
@@ -254,24 +268,16 @@ static int comparar_textos(const void* a, const void* b) {
     return strcmp(*(const char* const*)a, *(const char* const*)b);
 }
 
-static void acrescentar_nome(Vetor* vetor, int* capacidade, const char* nome) {
-    if (vetor->tamanho >= *capacidade) {
-        int nova = *capacidade ? *capacidade * 2 : 16;
-        void* novos = realloc(vetor->ptr, (size_t)nova * sizeof(char*));
-        if (!novos) return;
-        vetor->ptr = novos;
-        *capacidade = nova;
-    }
-    ((char**)vetor->ptr)[vetor->tamanho++] = duplicar_texto(nome);
+static void acrescentar_nome(Vetor* vetor, const char* nome) {
+    char* copia = duplicar_texto(nome);
+    if (!copia) return;
+    delegua_vetor_adicionar(vetor, &copia, (int)sizeof(char*));
 }
 
 Vetor* delegua_arq_listar_diretorio(char* caminho) {
-    Vetor* vetor = (Vetor*)malloc(sizeof(Vetor));
+    Vetor* vetor = delegua_vetor_criar(0, (int)sizeof(char*));
     if (!vetor) return NULL;
-    vetor->ptr = NULL;
-    vetor->tamanho = 0;
     if (!caminho || !*caminho) return vetor;
-    int capacidade = 0;
 
 #ifdef _WIN32
     char* padrao = delegua_arq_juntar_caminhos(caminho, "*");
@@ -281,7 +287,7 @@ Vetor* delegua_arq_listar_diretorio(char* caminho) {
     if (busca != INVALID_HANDLE_VALUE) {
         do {
             if (strcmp(dados.cFileName, ".") == 0 || strcmp(dados.cFileName, "..") == 0) continue;
-            acrescentar_nome(vetor, &capacidade, dados.cFileName);
+            acrescentar_nome(vetor, dados.cFileName);
         } while (FindNextFileA(busca, &dados));
         FindClose(busca);
     }
@@ -291,7 +297,7 @@ Vetor* delegua_arq_listar_diretorio(char* caminho) {
         struct dirent* entrada;
         while ((entrada = readdir(diretorio)) != NULL) {
             if (strcmp(entrada->d_name, ".") == 0 || strcmp(entrada->d_name, "..") == 0) continue;
-            acrescentar_nome(vetor, &capacidade, entrada->d_name);
+            acrescentar_nome(vetor, entrada->d_name);
         }
         closedir(diretorio);
     }
