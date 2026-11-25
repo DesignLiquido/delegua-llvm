@@ -7,6 +7,8 @@
 static int64_t arc_alocacoes_vivas = 0;
 static int64_t arc_total_alocacoes = 0;
 static int64_t arc_total_liberacoes = 0;
+static int arc_fim_normal = 0;
+static ArcQuadroLimpeza* arc_topo_limpeza = NULL;
 
 static ArcCabecalho* cabecalho_de(const void* p) {
     return (ArcCabecalho*)((char*)p - sizeof(ArcCabecalho));
@@ -40,7 +42,7 @@ static void relatorio_depuracao(void) {
             (long long)arc_total_liberacoes,
             (long long)arc_alocacoes_vivas);
     fflush(stderr);
-    if (modo && strcmp(modo, "estrito") == 0 && arc_alocacoes_vivas > 0) {
+    if (modo && strcmp(modo, "estrito") == 0 && arc_fim_normal && arc_alocacoes_vivas > 0) {
         _Exit(99);
     }
 }
@@ -140,4 +142,36 @@ void* delegua_arc_caixa(size_t tamanho) {
 
 int64_t delegua_arc_alocacoes_vivas(void) {
     return arc_alocacoes_vivas;
+}
+
+void delegua_arc_quadro_empilhar(ArcQuadroLimpeza* quadro) {
+    if (!quadro) return;
+    quadro->anterior = arc_topo_limpeza;
+    arc_topo_limpeza = quadro;
+}
+
+void delegua_arc_quadro_desempilhar(ArcQuadroLimpeza* quadro) {
+    if (!quadro) return;
+    arc_topo_limpeza = quadro->anterior;
+}
+
+void* delegua_arc_quadro_topo(void) {
+    return arc_topo_limpeza;
+}
+
+void delegua_arc_desenrolar_ate(void* marca) {
+    while (arc_topo_limpeza && arc_topo_limpeza != (ArcQuadroLimpeza*)marca) {
+        ArcQuadroLimpeza* quadro = arc_topo_limpeza;
+        // Desempilha antes de liberar: um destrutor nunca vê este quadro como ativo.
+        arc_topo_limpeza = quadro->anterior;
+        for (int32_t i = 0; i < quadro->quantidade; i++) {
+            void* valor = *quadro->slots[i];
+            *quadro->slots[i] = NULL;
+            delegua_arc_liberar(valor);
+        }
+    }
+}
+
+void delegua_arc_fim_normal(void) {
+    arc_fim_normal = 1;
 }

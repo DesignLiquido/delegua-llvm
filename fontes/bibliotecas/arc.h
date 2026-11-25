@@ -79,6 +79,31 @@ char* delegua_arc_texto_copiar_trecho(const char* s, size_t tamanho); // copia e
 // Caixa para escalares guardados como `qualquer` (dicionários, parâmetros).
 void* delegua_arc_caixa(size_t tamanho);
 
+// ─── Quadros de limpeza (Fase 3: exceções com setjmp/longjmp) ────────────────
+//
+// Cada função Delégua ativa com variáveis gerenciadas empilha um quadro com os endereços dos
+// seus slots donos (o compilador o monta na pilha da função). Um `falhar` que atravessa a
+// função via longjmp não executa os retornos dela: delegua_excecao_lancar libera os slots de
+// todos os quadros acima do `tente` de destino antes de desviar.
+// Layout esperado pelo compilador: { ptr anterior, i32 quantidade, [N x ptr] slots }.
+typedef struct ArcQuadroLimpeza {
+    struct ArcQuadroLimpeza* anterior;
+    int32_t quantidade;
+    void** slots[];
+} ArcQuadroLimpeza;
+
+void delegua_arc_quadro_empilhar(ArcQuadroLimpeza* quadro);
+// Saída normal da função (antes do `ret`).
+void delegua_arc_quadro_desempilhar(ArcQuadroLimpeza* quadro);
+// Topo atual (guardado por cada `tente` ao instalar o tratador).
+void* delegua_arc_quadro_topo(void);
+// Libera os slots de todos os quadros acima de `marca` e a torna o topo.
+void delegua_arc_desenrolar_ate(void* marca);
+
+// O programa terminou normalmente (fim de `main`): só então o modo estrito de
+// DELEGUA_ARC_DEPURACAO acusa vazamentos (exit por erro ou processo.sair não contam).
+void delegua_arc_fim_normal(void);
+
 // Depuração: contadores globais. Com DELEGUA_ARC_DEPURACAO definida no ambiente, o
 // programa imprime o relatório ao terminar e sai com código 99 se houver alocações vivas
 // (quando DELEGUA_ARC_DEPURACAO=estrito).

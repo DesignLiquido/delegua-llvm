@@ -102,7 +102,8 @@ describe('Compilador - Exceções (setjmp/longjmp)', () => {
             '}',
         ]);
         const despacho = ir.slice(ir.indexOf('pegue_0_seguinte:'));
-        expect(despacho).toMatch(/call void @delegua_excecao_lancar\(ptr %objeto, ptr %mensagem_atual\)/);
+        // A mensagem vem do slot dono do despacho (o runtime já soltou a sua em concluir).
+        expect(despacho).toMatch(/call void @delegua_excecao_lancar\(ptr %objeto, ptr %mensagem_excecao\d*\)/);
     });
 
     it('exceção do runtime C (sem objeto) vira uma Excecao no despacho', async () => {

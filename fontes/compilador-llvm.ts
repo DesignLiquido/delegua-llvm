@@ -4863,6 +4863,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.finalizarSubprogramaDebug();
 
 
+        // Término normal: o modo estrito de DELEGUA_ARC_DEPURACAO só acusa vazamentos nesse caso.
+        this.montador.CreateCall(this.obterFuncaoRuntime('delegua_arc_fim_normal', llvm.Type.getVoidTy(this.contexto), []), []);
         this.registrarRetornoArc(this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0))));
         this.encerrarQuadroArc();
         // Todas as funções já foram compiladas: insere as liberações ARC antes de cada `ret`.

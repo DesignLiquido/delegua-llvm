@@ -105,10 +105,13 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
   - **Pendente para a Fase 4.3:** pares `reter`/`liberar` redundantes (temporário consumido por variável), temporários da condição de `se`/`enquanto` liberados só na instrução seguinte ou no retorno.
 
 ### Fase 3 — Exceções (`setjmp`/`longjmp`) + Desenrolamento ARC
-- [ ] **3.1 Quadro de limpeza cooperativo em `excecoes.c` / `excecoes.ts`:**
-  - Registrar slots ativos nas funções sob `tente` (ou que contêm `tente`) em lista encadeada de `QuadroLimpezaArc`.
-  - Antes do `longjmp` em `delegua_excecao_lancar`, percorrer e liberar todos os slots dos quadros acima do `QuadroExcecao` alvo.
-  - Gerenciar `objeto_atual` e `mensagem_atual` com `delegua_arc_atribuir`.
+- [x] **3.1 Quadro de limpeza cooperativo em `arc.c` / `excecoes.c` / `arc.ts`:**
+  - Cada função Delégua com slots gerenciados monta na própria pilha um quadro `{ anterior, quantidade, [N x ptr] slots }` com os endereços dos seus slots donos e temporários, empilhado no início do corpo (`delegua_arc_quadro_empilhar`) e desempilhado antes de cada `ret`. O quadro é montado ao finalizar a compilação, antes de uma âncora (carga morta) emitida no início do corpo, depois das allocas; só é emitido se o programa tiver algum `tente` (sem `tente`, custo zero).
+  - Cada `tente` guarda o topo dos quadros de limpeza ao instalar o tratador; `delegua_excecao_lancar` libera (e anula) os slots de todos os quadros acima dele antes do `longjmp`. A função que contém o `tente` não é afetada (o quadro dela está abaixo da marca).
+  - O runtime é dono de uma referência ao objeto e de uma cópia ARC da mensagem em voo (retidos antes de desenrolar). O despacho do `pegue` guarda os dois em slots donos e chama `delegua_excecao_concluir`, que solta os do runtime; o caminho sem `pegue` correspondente (`finalmente` + relançamento) usa os slots.
+  - O modo estrito de `DELEGUA_ARC_DEPURACAO` só acusa vazamentos após o fim normal de `main` (`delegua_arc_fim_normal`): exceção não tratada continua saindo com código 1.
+- **Estado (2026-11-25):** Fase 3 concluída. 200 exceções atravessando 6 níveis de chamadas com textos, objetos e vetores locais: 7205 alocações, 7205 liberações, sem erros sob AddressSanitizer (também com `-g`). Testes em `testes/compilador-llvm.arc-execucao.test.ts`.
+  - Limitação: temporários criados dentro de funções do runtime C que chamam `falhar` (ex.: erro no meio de uma operação de vetor) não são liberados.
 
 ### Fase 4 — Coletor de Ciclos Auxiliar, `fraco` e Otimizações
 - [ ] **4.1 Coletor de ciclos (Bacon-Rajan *trial deletion*):**

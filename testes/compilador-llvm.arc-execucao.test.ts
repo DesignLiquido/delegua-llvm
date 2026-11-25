@@ -37,7 +37,8 @@ descrever('ARC - execução sem vazamentos', () => {
                 executavel,
                 [],
                 { encoding: 'utf-8', env: { ...process.env, DELEGUA_ARC_DEPURACAO: 'estrito' } },
-                (erro, stdout, stderr) => (erro ? rejeitar(new Error(`${erro.message}\n${stderr}`)) : resolver(stdout))
+                (erro, stdout, stderr) =>
+                    erro ? rejeitar(new Error(`código de saída ${erro.code}: ${stderr}`)) : resolver(stdout)
             )
         );
         return saida.split(/\r?\n/).filter((linha) => linha !== '');
@@ -112,6 +113,64 @@ descrever('ARC - execução sem vazamentos', () => {
             'se ultimo == nulo { escreva("nulo") } senao { escreva("objeto") }',
         ]);
         expect(linhas).toEqual(['100', 'no99', 'no99', 'nova', 'B', 'B', 'objeto']);
+    }, 300000);
+
+    it('exceções atravessando funções liberam as variáveis das funções abandonadas', async () => {
+        const linhas = await compilarEExecutar('excecoes', [
+            'classe ErroRede herda Excecao {',
+            '    codigo: inteiro',
+            '    construtor(mensagem: texto, codigo: inteiro) {',
+            '        super.construtor(mensagem)',
+            '        isto.codigo = codigo',
+            '    }',
+            '}',
+            'classe Recurso {',
+            '    nome: texto',
+            '    construtor(nome: texto) { isto.nome = nome }',
+            '}',
+            'funcao profunda(n: inteiro): texto {',
+            '    var local = "nivel " + texto(n)',
+            '    var recurso = Recurso(local)',
+            '    var itens: Recurso[] = [recurso, Recurso("outro")]',
+            '    se n == 0 { falhar ErroRede("falhou em " + local, 503) }',
+            '    retorna profunda(n - 1) + local',
+            '}',
+            'funcao comTexto(): texto {',
+            '    var temporario = "a" + "b"',
+            '    falhar "simples " + temporario',
+            '}',
+            'var capturadas = 0',
+            'var ultima = ""',
+            'para (var i = 0; i < 200; i = i + 1) {',
+            '    tente {',
+            '        escreva(profunda(5))',
+            '    } pegue (erro: ErroRede) {',
+            '        capturadas = capturadas + 1',
+            '        ultima = erro.mensagem + " " + texto(erro.codigo)',
+            '    }',
+            '}',
+            'escreva(capturadas)',
+            'escreva(ultima)',
+            // Sem pegue correspondente: finalmente roda e a exceção chega ao tente de fora.
+            'tente {',
+            '    tente {',
+            '        comTexto()',
+            '    } pegue (erro: ErroRede) {',
+            '        escreva("não deveria")',
+            '    } finalmente {',
+            '        escreva("finalmente")',
+            '    }',
+            '} pegue (erro) {',
+            '    escreva(erro.mensagem)',
+            '}',
+        ]);
+        expect(linhas).toEqual(['200', 'falhou em nivel 0 503', 'finalmente', 'simples ab']);
+    }, 300000);
+
+    it('exceção não tratada mantém o código de saída 1 no modo estrito', async () => {
+        await expect(compilarEExecutar('nao-tratada', ['var s = "x" + "y"', 'falhar "fim " + s'])).rejects.toThrow(
+            /código de saída 1: Erro não tratado: fim xy/
+        );
     }, 300000);
 
     it('iterável temporário, módulos e vetores devolvidos', async () => {

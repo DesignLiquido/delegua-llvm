@@ -264,21 +264,27 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
 
     // ── Despacho da exceção (o runtime já removeu o tratador) ──
     this.montador.SetInsertPoint(blocoDespacho);
-    const slotObjeto = this.criarAllocaNoBlocoEntrada(ptr, 'objeto_excecao');
+    // Objeto e mensagem ficam em slots donos desta função (o runtime só empresta os seus e os
+    // solta em delegua_excecao_concluir): continuam válidos no `finalmente` e ao repropagar.
+    const slotObjeto = this.criarAllocaNoBlocoEntrada(ptr, 'objeto_excecao', true);
+    const slotMensagem = this.criarAllocaNoBlocoEntrada(ptr, 'mensagem_excecao', true);
     const objetoBruto = this.montador.CreateCall(this.obterFuncaoRuntime('delegua_excecao_atual', ptr, []), [], 'excecao_atual');
-    const mensagemAtual = this.montador.CreateCall(
+    const mensagemBruta = this.montador.CreateCall(
         this.obterFuncaoRuntime('delegua_excecao_mensagem_atual', ptr, []),
         [],
         'mensagem_atual'
     );
-    this.montador.CreateStore(objetoBruto, slotObjeto);
+    this.armazenarVariavelArc(slotObjeto, objetoBruto, NOME_CLASSE_EXCECAO);
+    this.armazenarVariavelArc(slotMensagem, mensagemBruta, 'texto');
+    this.montador.CreateCall(this.obterFuncaoRuntime('delegua_excecao_concluir', vazio, []), []);
+    const mensagemAtual = this.montador.CreateLoad(ptr, slotMensagem, 'mensagem_excecao');
     // Exceção lançada pelo runtime C (falhar(mensagem)): cria a Excecao aqui.
     const semObjeto = this.montador.CreateICmpEQ(objetoBruto, llvm.Constant.getNullValue(ptr) as unknown as llvm.Value, 'sem_objeto');
     const blocoCriarObjeto = novoBloco('pegue_criar_excecao');
     const blocoComObjeto = novoBloco('pegue_com_objeto');
     this.montador.CreateCondBr(semObjeto, blocoCriarObjeto, blocoComObjeto);
     this.montador.SetInsertPoint(blocoCriarObjeto);
-    this.montador.CreateStore(this.criarObjetoExcecao(mensagemAtual), slotObjeto);
+    this.armazenarVariavelArc(slotObjeto, this.criarObjetoExcecao(mensagemAtual), NOME_CLASSE_EXCECAO);
     this.montador.CreateBr(blocoComObjeto);
     this.montador.SetInsertPoint(blocoComObjeto);
     const objeto = this.montador.CreateLoad(ptr, slotObjeto, 'objeto');

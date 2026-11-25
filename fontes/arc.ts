@@ -124,6 +124,9 @@ export interface QuadroArc {
     pendentes: llvm.Value[];
     retornos: llvm.Instruction[];
     subprogramaDebug: llvm.DISubprogram | null;
+    // Instrução morta no início do corpo (depois das allocas): ponto onde o quadro de limpeza
+    // é montado e empilhado ao finalizar, se o programa usar exceções (Fase 3).
+    ancora: llvm.Instruction | null;
 }
 
 // Abre o quadro da função cujo corpo começa a ser emitido. As funções são compiladas de forma
@@ -136,7 +139,12 @@ export function iniciarQuadroArc(this: CompiladorLLVM): void {
         pendentes: [],
         retornos: [],
         subprogramaDebug: this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1] ?? null,
+        ancora: null,
     });
+    // As allocas vão sempre para o topo do bloco de entrada; esta carga fica depois delas e
+    // antes do corpo. Sem uso, o otimizador a remove.
+    const slotAncora = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'arc_ancora', true);
+    this.quadroArcAtual().ancora = this.montador.CreateLoad(this.montador.getPtrTy(), slotAncora, 'arc_ancora') as unknown as llvm.Instruction;
 }
 
 // Fecha o quadro da função atual (depois do seu `ret` implícito, se houver).
@@ -334,14 +342,51 @@ export function liberarTemporariosInstrucaoArc(this: CompiladorLLVM): void {
 /** Insere, antes de cada `ret` registrado, a liberação dos temporários e slots da função. */
 export function finalizarQuadrosArc(this: CompiladorLLVM): void {
     const ptr = this.montador.getPtrTy();
+    const i32 = this.montador.getInt32Ty();
+    const vazio = llvm.Type.getVoidTy(this.contexto);
     const blocoAnterior = this.montador.GetInsertBlock();
     for (const quadro of this.quadrosArcConcluidos) {
         const liberaveis = [...quadro.temporarios, ...quadro.slots];
         if (liberaveis.length === 0) continue;
-        for (const retorno of quadro.retornos) {
-            this.montador.SetInsertPoint(retorno);
+        const definirLocalizacao = () => {
             if (quadro.subprogramaDebug) {
                 this.montador.SetCurrentDebugLocation(llvm.DILocation.get(this.contexto, 0, 0, quadro.subprogramaDebug));
+            }
+        };
+
+        // Fase 3: com exceções no programa, a função registra seus slots num quadro de
+        // limpeza, liberado por delegua_excecao_lancar se um longjmp a atravessar.
+        let quadroLimpeza: llvm.Value | null = null;
+        if (this.contemExcecoes && quadro.ancora) {
+            this.montador.SetInsertPoint(quadro.ancora);
+            definirLocalizacao();
+            const tipoQuadro = llvm.StructType.get(this.contexto, [
+                ptr,
+                i32,
+                llvm.ArrayType.get(ptr, liberaveis.length) as unknown as llvm.Type,
+            ]);
+            quadroLimpeza = this.criarAllocaNoBlocoEntrada(tipoQuadro, 'arc_quadro_limpeza');
+            const indice = (n: number) => ConstantInt.get(this.contexto, new APInt(32, n));
+            this.montador.CreateStore(
+                ConstantInt.get(this.contexto, new APInt(32, liberaveis.length)),
+                this.montador.CreateInBoundsGEP(tipoQuadro, quadroLimpeza, [indice(0), indice(1)], 'arc_quadro_qtd')
+            );
+            liberaveis.forEach((slot, i) => {
+                this.montador.CreateStore(
+                    slot,
+                    this.montador.CreateInBoundsGEP(tipoQuadro, quadroLimpeza, [indice(0), indice(2), indice(i)], 'arc_quadro_slot')
+                );
+            });
+            this.montador.CreateCall(this.obterFuncaoRuntime('delegua_arc_quadro_empilhar', vazio, [ptr]), [quadroLimpeza]);
+        }
+
+        for (const retorno of quadro.retornos) {
+            this.montador.SetInsertPoint(retorno);
+            definirLocalizacao();
+            if (quadroLimpeza) {
+                this.montador.CreateCall(this.obterFuncaoRuntime('delegua_arc_quadro_desempilhar', vazio, [ptr]), [
+                    quadroLimpeza,
+                ]);
             }
             for (const slot of liberaveis) {
                 this.emitirArcLiberar(this.montador.CreateLoad(ptr, slot, 'arc_saida'));
