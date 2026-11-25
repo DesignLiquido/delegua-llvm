@@ -308,8 +308,9 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
         this.montador.SetInsertPoint(blocoTratamento);
         if (bloco.parametro?.lexema) {
             const tipoParametro = nomeTipo ?? NOME_CLASSE_EXCECAO;
-            const slot = this.criarAllocaNoBlocoEntrada(ptr, bloco.parametro.lexema);
-            this.montador.CreateStore(objeto, slot);
+            const slot = this.criarAllocaNoBlocoEntrada(ptr, bloco.parametro.lexema, true);
+            // Variável dona: a Excecao criada aqui é um temporário liberado ao fim da 1ª instrução.
+            this.armazenarVariavelArc(slot, objeto, tipoParametro);
             this.pilhaVariaveisEscopo.topoDaPilha().set(bloco.parametro.lexema, new VariavelEscopo(slot, undefined, tipoParametro));
         }
         await this.aceitarListaDeclaracoes(declaracoesDe(bloco.corpo));

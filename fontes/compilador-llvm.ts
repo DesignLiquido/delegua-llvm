@@ -226,6 +226,11 @@ import {
     quadroArcAtual,
     registrarRetornoArc,
     encerrarQuadroArc,
+    retornoPonteiroEhProprio,
+    registrarFuncaoDeleguaArc,
+    instalarRastreamentoArc,
+    registrarTemporarioArc,
+    liberarTemporariosInstrucaoArc,
     armazenarVariavelArc,
     slotEhDonoArc,
     armazenarCampoArc,
@@ -303,6 +308,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     quadroArcAtual: typeof quadroArcAtual;
     registrarRetornoArc: typeof registrarRetornoArc;
     encerrarQuadroArc: typeof encerrarQuadroArc;
+    retornoPonteiroEhProprio: typeof retornoPonteiroEhProprio;
+    registrarFuncaoDeleguaArc: typeof registrarFuncaoDeleguaArc;
+    instalarRastreamentoArc: typeof instalarRastreamentoArc;
+    registrarTemporarioArc: typeof registrarTemporarioArc;
+    liberarTemporariosInstrucaoArc: typeof liberarTemporariosInstrucaoArc;
     armazenarVariavelArc: typeof armazenarVariavelArc;
     slotEhDonoArc: typeof slotEhDonoArc;
     armazenarCampoArc: typeof armazenarCampoArc;
@@ -440,6 +450,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // quadros já encerrados, finalizados ao fim da compilação.
     pilhaQuadrosArc: QuadroArc[] = [];
     quadrosArcConcluidos: QuadroArc[] = [];
+    // Nome de cada função (wrapper JS → nome) e funções Delégua cujo retorno ptr é +1.
+    nomesFuncoesArc: WeakMap<object, string> = new WeakMap();
+    funcoesRetornoProprioArc: Set<string> = new Set();
 
     // Bibliotecas estrangeiras referenciadas por classes @definicao.
     // Campo público para que ilc.ts possa adicionar flags -l ao linker.
@@ -942,6 +955,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 this.modulo
             );
             funcoesMetodos.set(metodo.simbolo.lexema, objetoLlvmFuncaoPre);
+            this.registrarFuncaoDeleguaArc(objetoLlvmFuncaoPre, nomeFuncaoLlvm, tipoRetornoStr);
 
             this.metodosClasse.get(nomeClasse).set(metodo.simbolo.lexema, ehConstrutor ? 'vazio' : metodo.funcao.tipo);
             this.parametrosMetodosClasse.get(nomeClasse).set(metodo.simbolo.lexema, metodo.funcao.parametros);
@@ -1341,14 +1355,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Tamanho do iterável.
         let tamanho: llvm.Value;
         let vetorPtr: llvm.Value;
+        // O iterável fica retido num slot dono durante o laço: um temporário (`para cada x em
+        // v.fatiar(1)`) seria liberado pela primeira instrução do corpo, e uma reatribuição da
+        // variável iterada no corpo não deve liberar o vetor/texto que ainda está sendo percorrido.
+        const slotIteravel = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), 'para_cada_iteravel', true);
         if (ehVetor) {
             vetorPtr = this.ponteiroParaVetor(iteravelResolvido);
+            this.armazenarVariavelArc(slotIteravel, vetorPtr, tipoIterable);
             tamanho = this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr], 'para_cada_tam');
         } else {
             // texto: strlen retorna i64; trunca para i32.
             const textoPtr = ehArgumento
                 ? iteravelResolvido.variavelLlvm
                 : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr');
+            this.armazenarVariavelArc(slotIteravel, textoPtr, 'texto');
             const len64 = this.montador.CreateCall(this.funcaoStrlen, [textoPtr], 'strlen_res');
             tamanho = this.montador.CreateTrunc(len64, this.montador.getInt32Ty(), 'para_cada_tam');
         }
@@ -1376,7 +1396,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         if (ehVetor) {
             tipoElementoStr = tipoElementoVetor(tipoIterable);
             const tipoElemLlvm = this.obterTipoLlvm(tipoElementoStr);
-            alocElemento = this.criarAllocaNoBlocoEntrada(tipoElemLlvm, nomeElemento + '_val');
+            alocElemento = this.criarAllocaNoBlocoEntrada(tipoElemLlvm, nomeElemento + '_val', true);
 
             const iCorpo = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_corpo');
             // TODO: Como obter o nome do vetor aqui?
@@ -1387,16 +1407,17 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const ponteiroElementos = this.carregarPonteiroElementosVetor(nomeVetor, vetorPtr);
             const gepElem = this.montador.CreateInBoundsGEP(tipoElemLlvm, ponteiroElementos, [iCorpo], 'ptr_elem', true);
             const valorElementos = this.montador.CreateLoad(tipoElemLlvm, gepElem, nomeElemento + '_carregado');
-            this.montador.CreateStore(valorElementos, alocElemento);
+            // Elemento gerenciado: a variável do laço retém o seu (o corpo pode remover o
+            // elemento do vetor enquanto ainda o usa).
+            this.armazenarVariavelArc(alocElemento, valorElementos, tipoElementoStr);
         } else {
             // texto: cada elemento é uma string alocada via runtime (segura caso escape do laço).
             tipoElementoStr = 'texto';
             alocElemento = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), nomeElemento + '_ptr', true);
 
             const iCorpo = this.montador.CreateLoad(this.montador.getInt32Ty(), alocIndice, 'i_corpo');
-            const textoPtr2 = ehArgumento
-                ? iteravelResolvido.variavelLlvm
-                : this.montador.CreateLoad(this.montador.getPtrTy(), iteravelResolvido.variavelLlvm, 'texto_ptr2');
+            // Lê o texto retido antes do laço (mesmo texto cujo tamanho foi medido).
+            const textoPtr2 = this.montador.CreateLoad(this.montador.getPtrTy(), slotIteravel, 'texto_ptr2');
             // O índice já está limitado pelo tamanho calculado antes do laço: lê o byte direto
             // (sem strlen por iteração) e o copia num texto gerenciado próprio.
             const gepCaractere = this.montador.CreateInBoundsGEP(
@@ -1407,7 +1428,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
             const caractere = this.montador.CreateLoad(this.montador.getInt8Ty(), gepCaractere, 'char_val');
             const charTexto = this.textoDeCaractere(caractere, 'char_texto');
-            this.montador.CreateStore(charTexto, alocElemento);
+            this.armazenarVariavelArc(alocElemento, charTexto, 'texto');
         }
 
         const escopoIteracao = new Map<string, VariavelEscopo>();
@@ -1556,6 +1577,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 return Promise.resolve(resultadoOperacao);
             }
 
+            this.tiparLiteralVetor(expressao.valor, tipoAlvo);
             const valorResolvido = await expressao.valor.aceitar(this);
             const tipoValor = this.resolverTipoConstruto(expressao.valor);
             const valorLlvm = this.carregarValorSeNecessario(
@@ -1572,6 +1594,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // Alvo é acesso a propriedade (isto.campo = valor): resolve GEP e armazena.
         const infoPropriedade = await this.resolverGepPropriedadeAlvo(expressao.alvo as ConstrutoInterface);
         if (infoPropriedade) {
+            this.tiparLiteralVetor(expressao.valor, infoPropriedade.tipoProp);
             const valorResolvido = await expressao.valor.aceitar(this);
             const { gepPtr, tipoProp, nomeClasse } = infoPropriedade;
             const valorCarregado = this.carregarValorSeNecessario(valorResolvido, tipoProp, 'load_prop_atrib');
@@ -2136,6 +2159,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             return Promise.resolve();
         }
 
+        this.tiparLiteralVetor(expressao.valor, tipoProp);
         const novoValor = await expressao.valor.aceitar(this);
         let novoValorLlvm: llvm.Value;
         if (novoValor instanceof VariavelEscopo) {
@@ -2452,9 +2476,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         // `retorna [1, 2]` numa função `: inteiro[]`: o literal assume o tipo de elemento
         // declarado (mesma regra de `var v: inteiro[] = [...]`), senão os elementos seriam
         // gravados como double e lidos como i32.
-        if (declaracao.valor instanceof Vetor && tipoEhVetor(this.tipoRetornoFuncaoAtual ?? undefined)) {
-            (declaracao.valor as Vetor).tipo = `${tipoElementoVetor(this.tipoRetornoFuncaoAtual)}[]`;
-        }
+        this.tiparLiteralVetor(declaracao.valor, this.tipoRetornoFuncaoAtual ?? undefined);
 
         const valorResolvido = await declaracao.valor.aceitar(this);
 
@@ -2466,7 +2488,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const ptrRetorno = this.ehTipoObjeto(valorResolvido.tipo)
                     ? this.carregarPtrClasseSePreciso(valorResolvido)
                     : this.ponteiroParaVetor(valorResolvido);
-                this.reterRetornoArc(ptrRetorno, valorResolvido.tipo);
+                this.reterRetornoArc(ptrRetorno);
                 this.registrarRetornoArc(this.montador.CreateRet(ptrRetorno));
                 return Promise.resolve();
             }
@@ -2478,11 +2500,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     'load_retorno'
                 );
                 this.emitirSaidaDeTentes(this.tentesAtivos);
-                this.reterRetornoArc(valorCarregado, this.tipoRetornoFuncaoAtual || tipoRetorno);
+                this.reterRetornoArc(valorCarregado);
                 this.registrarRetornoArc(this.montador.CreateRet(valorCarregado));
             } else {
                 this.emitirSaidaDeTentes(this.tentesAtivos);
-                this.reterRetornoArc(valorResolvido.variavelLlvm, this.tipoRetornoFuncaoAtual || tipoRetorno);
+                this.reterRetornoArc(valorResolvido.variavelLlvm);
                 this.registrarRetornoArc(this.montador.CreateRet(valorResolvido.variavelLlvm));
             }
             return Promise.resolve();
@@ -2506,7 +2528,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         this.emitirSaidaDeTentes(this.tentesAtivos);
         // Retorno entregue com +1: retém (o slot local de origem, se houver, é liberado antes do `ret`).
-        this.reterRetornoArc(valorFinal, this.tipoRetornoFuncaoAtual || this.resolverTipoConstruto(declaracao.valor));
+        this.reterRetornoArc(valorFinal);
         this.registrarRetornoArc(this.montador.CreateRet(valorFinal));
         return Promise.resolve();
     }
@@ -3046,6 +3068,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             declaracao.simbolo.lexema,
             this.modulo
         );
+        this.registrarFuncaoDeleguaArc(objetoLlvmFuncao, declaracao.simbolo.lexema, declaracao.funcao.tipo);
         // Atributos de otimização para funções do usuário.
         objetoLlvmFuncao.addFnAttr(llvm.Attribute.get(this.contexto, llvm.Attribute.AttrKind.NoUnwind));
 
@@ -4365,6 +4388,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return texto;
     }
 
+    /**
+     * Literal de vetor gravado num destino tipado (variável, campo, retorno): assume o tipo de
+     * elemento do destino. Além do layout (inteiro vs número), isso decide se o vetor é
+     * gerenciado: `isto.simbolos = []` num campo `Simbolo[]` precisa reter os objetos que
+     * forem adicionados depois.
+     */
+    protected tiparLiteralVetor(construto: unknown, tipoDestino: string | undefined): void {
+        if (!(construto instanceof Vetor) || !tipoEhVetor(tipoDestino)) return;
+        const elemento = tipoElementoVetor(tipoDestino);
+        if (!elemento || /^qualquer\b/.test(elemento)) return;
+        (construto as Vetor).tipo = `${elemento}[]`;
+    }
+
     /** Verdadeiro se o tipo representa um handle opaco de biblioteca C (`opaco:*`). */
     tipoEhOpaco(tipo: string | undefined): boolean {
         return !!tipo && tipo.startsWith('opaco:');
@@ -4497,6 +4533,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             nomeLambda,
             this.modulo
         );
+        this.registrarFuncaoDeleguaArc(funcaoLlvm, nomeLambda, tipoRetornoStr);
 
         // Metadados de depuração: cria DISubprogram para este lambda.
         const linhaLambda = construto.linha ?? 0;
@@ -4931,6 +4968,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.contexto = new llvm.LLVMContext();
         this.modulo = new llvm.Module('demo', this.contexto);
         this.montador = new llvm.IRBuilder(this.contexto);
+        this.instalarRastreamentoArc();
 
         // Define target triple e data layout: plataforma nativa ou o alvo de compilação cruzada.
         llvm.InitializeNativeTarget();
@@ -4957,6 +4995,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.descritoresArcClasse = new Map();
         this.pilhaQuadrosArc = [];
         this.quadrosArcConcluidos = [];
+        this.nomesFuncoesArc = new WeakMap();
+        this.funcoesRetornoProprioArc = new Set();
         this.contemExcecoes = false;
         this.contadorLambda = 0;
         this.cachePointerVetor = new Map();
@@ -5283,6 +5323,11 @@ CompiladorLLVM.prototype.iniciarQuadroArc = iniciarQuadroArc;
 CompiladorLLVM.prototype.quadroArcAtual = quadroArcAtual;
 CompiladorLLVM.prototype.registrarRetornoArc = registrarRetornoArc;
 CompiladorLLVM.prototype.encerrarQuadroArc = encerrarQuadroArc;
+CompiladorLLVM.prototype.retornoPonteiroEhProprio = retornoPonteiroEhProprio;
+CompiladorLLVM.prototype.registrarFuncaoDeleguaArc = registrarFuncaoDeleguaArc;
+CompiladorLLVM.prototype.instalarRastreamentoArc = instalarRastreamentoArc;
+CompiladorLLVM.prototype.registrarTemporarioArc = registrarTemporarioArc;
+CompiladorLLVM.prototype.liberarTemporariosInstrucaoArc = liberarTemporariosInstrucaoArc;
 CompiladorLLVM.prototype.armazenarVariavelArc = armazenarVariavelArc;
 CompiladorLLVM.prototype.slotEhDonoArc = slotEhDonoArc;
 CompiladorLLVM.prototype.armazenarCampoArc = armazenarCampoArc;
@@ -5294,3 +5339,23 @@ CompiladorLLVM.prototype.chamarMetodoVetor = chamarMetodoVetor;
 CompiladorLLVM.prototype.chamarMapear = chamarMapear;
 CompiladorLLVM.prototype.chamarEncontrar = chamarEncontrar;
 CompiladorLLVM.prototype.criarFuncaoNativa = criarFuncaoNativa;
+
+// Fim de instrução: libera os temporários ARC da instrução (ver arc.ts, Fase 2.3). Instruções
+// compostas (se, enquanto, para...) não entram aqui: as instruções internas liberam os
+// temporários pendentes, inclusive os da condição.
+for (const nomeVisitante of [
+    'visitarDeclaracaoDeExpressao',
+    'visitarDeclaracaoVar',
+    'visitarDeclaracaoConst',
+    'visitarDeclaracaoVarMultiplo',
+    'visitarDeclaracaoConstMultiplo',
+    'visitarDeclaracaoEscreva',
+    'visitarDeclaracaoEscrevaMesmaLinha',
+] as const) {
+    const original = CompiladorLLVM.prototype[nomeVisitante] as (...argumentos: unknown[]) => Promise<unknown>;
+    (CompiladorLLVM.prototype as any)[nomeVisitante] = async function (this: CompiladorLLVM, ...argumentos: unknown[]) {
+        const resultado = await original.apply(this, argumentos);
+        this.liberarTemporariosInstrucaoArc();
+        return resultado;
+    };
+}

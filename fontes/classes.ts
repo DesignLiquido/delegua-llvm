@@ -73,7 +73,8 @@ export async function instanciarClasse(
                 ],
                 `${nomeCampo}_ptr_inicial`
             );
-            this.montador.CreateStore(vetorVazio, gepCampo);
+            // O objeto retém o vetor (o temporário da criação é liberado ao fim da instrução).
+            this.emitirArcAtribuir(gepCampo, vetorVazio);
         }
     }
 

@@ -87,20 +87,22 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
 
 ### Fase 2 — Instrumentação ARC no `CompiladorLLVM`
 
-> **Pendências herdadas da Fase 1:**
-> - Objetos de classe e de exceção ainda usam `calloc`/`malloc` (precisam dos descritores gerados em 2.2).
-> - A inicialização de literais de vetor (`[a, b]`) e a escrita por índice (`v[i] = x`, via `delegua_vetor_definir_indice`) gravam direto no buffer: com elementos gerenciados, o compilador precisa reter o valor gravado e liberar o sobrescrito.
-> - Caixas `qualquer` e textos temporários entram nas coleções com +1 e são retidos de novo pela coleção: são temporários que 2.3 deve liberar.
-> - Campos `vetor` iniciados vazios e depois sobrescritos pelo construtor (`isto.itens = itens`) precisam de `delegua_arc_atribuir`.
-> - Enquanto houver `texto` sem cabeçalho (literais do IR, retornos de FFI), `reter`/`liberar` fazem uma leitura especulativa da `magia` antes do ponteiro (isenta do ASan só nessa função). Some com 2.1 e com a cópia na fronteira FFI.
-- [ ] **2.1 Literais imortais no IR:** Emitir literais globais de texto com `ArcCabecalho { rc = -1, magia = DELEGUA_ARC_MAGIA, null }` (`{ i32 -1, i32 0xA4C0DE1A, ptr null, [N x i8] }`) em `.rodata` (deduplicados por conteúdo) e copiar retornos `texto` de FFI `@definicao` na fronteira C → Delégua.
-- [ ] **2.2 Destrutores gerados para classes:** Emitir `__destrutor_<Classe>` e descriptor global `__arc_desc_<Classe>` em `visitarDeclaracaoClasse`, liberando todos os campos gerenciados (inclusive herdados).
-- [ ] **2.3 Convenção de chamadas (+0 emprestado / +1 retornado):**
-  - Parâmetros recebidos em +0; retidos se armazenados ou retornados.
-  - Retornos entregues em +1; temporários rastreados em `temporariosArc` por expressão/declaração e liberados se não consumidos (ou movidos diretamente sem `reter`+`liberar`).
-- [ ] **2.4 Pilha de escopos léxicos (`pilhaEscoposArc`):**
-  - Liberação LIFO automática na saída normal de blocos, em `retorna`, `sustar` e `continua`.
-  - Reatribuições de variáveis e campos (`=`, `+=`, `isto.campo = ...`) via `delegua_arc_atribuir`.
+- [x] **2.1 Literais imortais no IR:** literais globais de texto com `{ i32 -1, i32 0xA4C0DE1A, ptr null, [N x i8] }` (layout de `ArcCabecalho` + bytes), deduplicados por conteúdo; retornos `texto` de classes estrangeiras (`@definicao`) copiados com `delegua_arc_texto_copiar` na fronteira.
+- [x] **2.2 Destrutores gerados para classes:** `__destrutor_<Classe>` e `__arc_desc_<Classe>` criados na primeira instanciação (layout completo, inclusive campos herdados); instâncias e `Excecao` alocadas com `delegua_arc_alocar`.
+- [x] **2.3 Convenção de chamadas (+0 emprestado / +1 retornado):**
+  - Parâmetros em +0. `retorna` retém o valor devolvido (+1).
+  - Temporários: um gancho em `CreateCall` reconhece, pelo nome do alvo (registrado quando a função é obtida ou criada), chamadas que devolvem +1: funções, métodos e lambdas Delégua com retorno de ponteiro, despachos, `delegua_arc_alocar`/criadores do runtime C (com lista de exceções emprestadas: `delegua_dicionario_obter`, `delegua_vetor_definir_indice`, `delegua_excecao_*`, memória bruta). O resultado vai para um slot próprio do ponto de criação; gravar de novo no slot libera o valor anterior (laços), e os slots pendentes são liberados ao fim de cada instrução (expressão, `var`/`const`, `escreva`) e nos retornos. Chamadas indiretas (ponteiro de função) são tratadas como emprestadas: no pior caso vazam, nunca liberam cedo.
+  - Caller e callee usam a mesma regra (`retornoPonteiroEhProprio` sobre o tipo de retorno declarado): só tipos explicitamente não gerenciados (`ponteiro`, função, estrangeiros) ficam de fora.
+- [x] **2.4 Variáveis e campos donos de referência:**
+  - Cada função (inclusive `main` e lambdas) tem um quadro ARC (pilha aninhada). Slots locais gerenciados são gravados com `delegua_arc_atribuir` (declaração, reatribuição, iteração seguinte de um laço) e liberados antes de cada `ret`, inserido ao fim da compilação (com localização de depuração do subprograma). **Diferente do plano original:** a liberação é no fim da função, não no fim de cada bloco léxico; a variável de um bloco dentro de um laço é solta na iteração seguinte (pelo `atribuir`) ou no retorno. `sustar`/`continua` não precisam de tratamento especial.
+  - Atribuição a slot de outro dono (parâmetro `texto`/`qualquer`/dicionário, que é o slot de quem chamou) só retém o novo valor.
+  - Campos (`isto.campo = x`), elementos (`[a, b]`, `v[i] = x`) e a variável de `pegue (e)` retêm; `para cada` retém o iterável num slot oculto durante o laço e o elemento na variável do laço.
+  - Tipo desconhecido ou `nulo` conta como gerenciado (`var r = nulo` que depois recebe um objeto temporário causava uso após liberação).
+  - Literais de vetor gravados em destinos tipados (variável, campo, retorno, argumento) assumem o tipo de elemento do destino; sem isso `isto.simbolos = []` num campo `Simbolo[]` criava um vetor não gerenciado e os objetos adicionados eram liberados.
+- **Estado (2026-11-25):** Fase 2 concluída. Os programas de teste e o interpretador `delegua-delegua` compilado terminam com 0 alocações vivas (`DELEGUA_ARC_DEPURACAO`) e sem erros sob AddressSanitizer (inclusive sem a isenção da leitura da magia). Testes: `testes/compilador-llvm.arc-execucao.test.ts` (modo estrito).
+  - **Vetores sem verificação de limites:** o código compilado não verifica índices. O runtime mantém uma posição sentinela zerada após o último elemento e zera posições removidas, então `v[v.tamanho()]` devolve nulo (o `delegua-delegua` lê o símbolo atual após o fim); leituras mais distantes continuam indefinidas e, com ARC, podem travar ao reter lixo.
+  - **Pendente para a Fase 3:** temporários e variáveis de funções abandonadas por `longjmp` não são liberados; o objeto e a mensagem da exceção vivem até o fim do programa.
+  - **Pendente para a Fase 4.3:** pares `reter`/`liberar` redundantes (temporário consumido por variável), temporários da condição de `se`/`enquanto` liberados só na instrução seguinte ou no retorno.
 
 ### Fase 3 — Exceções (`setjmp`/`longjmp`) + Desenrolamento ARC
 - [ ] **3.1 Quadro de limpeza cooperativo em `excecoes.c` / `excecoes.ts`:**

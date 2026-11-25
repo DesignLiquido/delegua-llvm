@@ -27,9 +27,13 @@ static int comparar_texto(const void* a, const void* b) {
     return strcmp(ta, tb);
 }
 
-// Garante capacidade para pelo menos `min_cap` elementos (crescimento geométrico 2x).
+// Garante capacidade para pelo menos `min_cap` elementos (crescimento geométrico 2x),
+// mais uma posição sentinela sempre zerada após o último elemento: o código compilado não
+// verifica limites, e a leitura logo após o fim (`v[v.tamanho()]`, comum em analisadores que
+// olham o símbolo atual ao terminar) devolve nulo em vez de memória alheia.
 static int vetor_garantir_capacidade(Vetor* v, int min_cap, int tam_elem) {
     if (!v || tam_elem <= 0) return 0;
+    min_cap += 1;
     if (min_cap <= v->capacidade && v->ptr != NULL) return 1;
     int nova_cap = v->capacidade > 0 ? v->capacidade : 4;
     while (nova_cap < min_cap) {
@@ -41,6 +45,10 @@ static int vetor_garantir_capacidade(Vetor* v, int min_cap, int tam_elem) {
     }
     void* novo_ptr = realloc(v->ptr, (size_t)nova_cap * (size_t)tam_elem);
     if (!novo_ptr) return 0;
+    // Zera a capacidade nova: uma leitura além do tamanho (dentro da capacidade) devolve
+    // nulo em vez de lixo, que reter/liberar ignorariam com segurança.
+    size_t antigos = v->ptr ? (size_t)v->capacidade : 0;
+    memset((char*)novo_ptr + antigos * (size_t)tam_elem, 0, ((size_t)nova_cap - antigos) * (size_t)tam_elem);
     v->ptr = novo_ptr;
     v->capacidade = nova_cap;
     v->tam_elem = tam_elem;
@@ -88,7 +96,8 @@ Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem, int gerenciado) {
     v->gerenciado = gerenciado && tam_elem == (int)sizeof(void*);
     v->tamanho = tamanho_inicial;
     if (tamanho_inicial > 0) {
-        int cap = tamanho_inicial < 4 ? 4 : tamanho_inicial;
+        // + 1: posição sentinela zerada (ver vetor_garantir_capacidade).
+        int cap = tamanho_inicial < 4 ? 4 : tamanho_inicial + 1;
         v->ptr = calloc((size_t)cap, (size_t)tam_elem);
         if (!v->ptr) {
             delegua_arc_liberar(v);
@@ -148,22 +157,25 @@ void* delegua_vetor_definir_indice(Vetor* v, int indice, int tam_elem) {
 
 int delegua_vetor_remover_ultimo(Vetor* v) {
     if (!v || v->tamanho <= 0) return -1;
-    if (ehGerenciado(v)) delegua_arc_liberar(((void**)v->ptr)[v->tamanho - 1]);
+    void** ultimo = &((void**)v->ptr)[v->tamanho - 1];
+    if (ehGerenciado(v)) delegua_arc_liberar(*ultimo);
     v->tamanho -= 1;
+    // A posição liberada não guarda um ponteiro pendente.
+    memset((char*)v->ptr + (size_t)v->tamanho * (size_t)v->tam_elem, 0, (size_t)v->tam_elem);
     return v->tamanho;
 }
 
 int delegua_vetor_remover_primeiro(Vetor* v, int tam_elem) {
     if (!v || v->tamanho <= 0) return -1;
     if (ehGerenciado(v)) delegua_arc_liberar(((void**)v->ptr)[0]);
-    if (v->tamanho == 1) {
-        v->tamanho = 0;
-        return 0;
+    if (v->tamanho > 1) {
+        memmove(v->ptr,
+                (char*)v->ptr + tam_elem,
+                (size_t)(v->tamanho - 1) * (size_t)tam_elem);
     }
-    memmove(v->ptr,
-            (char*)v->ptr + tam_elem,
-            (size_t)(v->tamanho - 1) * (size_t)tam_elem);
     v->tamanho -= 1;
+    // A posição que sobrou no fim não guarda um ponteiro pendente.
+    memset((char*)v->ptr + (size_t)v->tamanho * (size_t)tam_elem, 0, (size_t)tam_elem);
     return v->tamanho;
 }
 

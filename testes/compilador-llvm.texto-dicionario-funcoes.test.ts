@@ -127,7 +127,7 @@ describe('Compilador - correções de vetores e funções', () => {
             'escreva(z[0])',
         ]);
         expect(ir).toContain('define ptr @g()');
-        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)\s+call void @delegua_arc_atribuir\(ptr %z, ptr \1\)/);
+        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)[\s\S]*?call void @delegua_arc_atribuir\(ptr %z, ptr \1\)/);
         expect(ir).not.toContain('%Vetor %');
     });
 

@@ -68,8 +68,12 @@ static void testar_vetor(void) {
         delegua_arc_liberar(item);  // o vetor fica com a única referência
     }
     VERIFICAR(v->tamanho == 100);
-    VERIFICAR(v->capacidade >= 100 && v->capacidade < 200);
+    VERIFICAR(v->capacidade > 100 && v->capacidade < 256);
+    // Sentinela: a posição logo após o último elemento existe e é nula.
+    VERIFICAR(((void**)v->ptr)[v->tamanho] == NULL);
     delegua_vetor_remover_ultimo(v);
+    // A posição liberada não guarda o ponteiro do texto já solto.
+    VERIFICAR(((void**)v->ptr)[v->tamanho] == NULL);
     delegua_vetor_remover_primeiro(v, (int)sizeof(char*));
     VERIFICAR(delegua_arc_alocacoes_vivas() == antes + 1 + 98);
 
