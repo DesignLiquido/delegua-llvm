@@ -33,7 +33,7 @@ describe('Compilador - métodos de texto adicionais', () => {
         ]);
         // O runtime devolve um novo Vetor* no heap (sem parâmetro de saída).
         expect(ir).toMatch(/%texto_dividido = call ptr @delegua_texto_dividir\(ptr .*, ptr .*, i32 0\)/);
-        expect(ir).toContain('store ptr %texto_dividido, ptr %partes');
+        expect(ir).toContain('call void @delegua_arc_atribuir(ptr %partes, ptr %texto_dividido)');
         expect(ir).toMatch(/call i32 @delegua_vetor_tamanho\(ptr %vetor_ptr\d*\)/);
     });
 
@@ -113,7 +113,7 @@ describe('Compilador - correções de vetores e funções', () => {
             '  escreva(x)',
             '}',
         ]);
-        expect(ir).toContain('store ptr %fatia, ptr %f');
+        expect(ir).toContain('call void @delegua_arc_atribuir(ptr %f, ptr %fatia)');
         expect(ir).toMatch(/(%vetor_ptr\d*) = load ptr, ptr %f[\s\S]*call i32 @delegua_vetor_tamanho\(ptr \1\)/);
     });
 
@@ -127,7 +127,7 @@ describe('Compilador - correções de vetores e funções', () => {
             'escreva(z[0])',
         ]);
         expect(ir).toContain('define ptr @g()');
-        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)\s+store ptr \1, ptr %z/);
+        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)\s+call void @delegua_arc_atribuir\(ptr %z, ptr \1\)/);
         expect(ir).not.toContain('%Vetor %');
     });
 

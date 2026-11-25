@@ -10,7 +10,7 @@ describe('Compilador - Leia', () => {
 
         expect(resultado).toBeTruthy();
         expect(resultado).toContain('call ptr @leia');
-        expect(resultado).toContain('store ptr %0, ptr %nome, align 8');
+        expect(resultado).toContain('call void @delegua_arc_atribuir(ptr %nome, ptr %0)');
     });
 
     it('Leia e escreva', async () => {

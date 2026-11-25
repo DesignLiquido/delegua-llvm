@@ -158,7 +158,7 @@ describe('FFI - estruturas', () => {
             'escreva(f(nulo))',
         ]);
         // O valor do parâmetro é o próprio ponteiro do objeto (não o endereço de um slot).
-        expect(corpoFuncao(ir, 'f')).toContain('store ptr %0, ptr %contexto');
+        expect(corpoFuncao(ir, 'f')).toContain('call void @delegua_arc_atribuir(ptr %contexto, ptr %0)');
         expect(corpoFuncao(ir, 'f')).toMatch(/getelementptr inbounds %Contexto, ptr %load_obj_ptr/);
     });
 });

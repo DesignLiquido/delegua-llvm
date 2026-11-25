@@ -77,6 +77,12 @@ export function registrarClasseExcecao(this: CompiladorLLVM): void {
         [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, 1))],
         'mensagem_ptr'
     );
+    // O objeto é dono da mensagem (o destrutor gerado de Excecao a libera).
+    const reter = this.modulo.getOrInsertFunction(
+        'delegua_arc_reter',
+        llvm.FunctionType.get(llvm.Type.getVoidTy(this.contexto), [ptr], false)
+    );
+    montador.CreateCall(reter, [mensagem]);
     montador.CreateStore(mensagem, campo);
     montador.CreateRetVoid();
 }
@@ -132,7 +138,8 @@ export function criarObjetoExcecao(this: CompiladorLLVM, mensagem: llvm.Value): 
         [zero, ConstantInt.get(this.contexto, new APInt(32, 1))],
         'excecao_mensagem_ptr'
     );
-    this.montador.CreateStore(mensagem, campoMensagem);
+    // Objeto recém-criado (campo nulo): atribuir só retém a mensagem.
+    this.emitirArcAtribuir(campoMensagem, mensagem);
     return objeto;
 }
 

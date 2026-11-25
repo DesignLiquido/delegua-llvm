@@ -222,6 +222,16 @@ import {
     emitirArcAtribuir,
     obterDescritorArcClasse,
     alocarObjetoArc,
+    iniciarQuadroArc,
+    quadroArcAtual,
+    registrarRetornoArc,
+    encerrarQuadroArc,
+    armazenarVariavelArc,
+    slotEhDonoArc,
+    armazenarCampoArc,
+    reterRetornoArc,
+    finalizarQuadrosArc,
+    QuadroArc,
 } from './arc';
 import {
     criarFuncaoNativa,
@@ -289,6 +299,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     emitirArcAtribuir: typeof emitirArcAtribuir;
     obterDescritorArcClasse: typeof obterDescritorArcClasse;
     alocarObjetoArc: typeof alocarObjetoArc;
+    iniciarQuadroArc: typeof iniciarQuadroArc;
+    quadroArcAtual: typeof quadroArcAtual;
+    registrarRetornoArc: typeof registrarRetornoArc;
+    encerrarQuadroArc: typeof encerrarQuadroArc;
+    armazenarVariavelArc: typeof armazenarVariavelArc;
+    slotEhDonoArc: typeof slotEhDonoArc;
+    armazenarCampoArc: typeof armazenarCampoArc;
+    reterRetornoArc: typeof reterRetornoArc;
+    finalizarQuadrosArc: typeof finalizarQuadrosArc;
     argumentosVetorCriar: typeof argumentosVetorCriar;
     chamarMetodoVetor: typeof chamarMetodoVetor;
     chamarMapear: typeof chamarMapear;
@@ -417,6 +436,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     cacheLiteraisTextoArc: Map<string, llvm.Value> = new Map();
     // Descritores ARC (`__arc_desc_<Classe>`) já emitidos, por classe.
     descritoresArcClasse: Map<string, llvm.Value> = new Map();
+    // Quadros ARC (slots donos, temporários e retornos): pilha das funções em emissão e
+    // quadros já encerrados, finalizados ao fim da compilação.
+    pilhaQuadrosArc: QuadroArc[] = [];
+    quadrosArcConcluidos: QuadroArc[] = [];
 
     // Bibliotecas estrangeiras referenciadas por classes @definicao.
     // Campo público para que ilc.ts possa adicionar flags -l ao linker.
@@ -701,7 +724,20 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         valor = this.montador.CreateSIToFP(valor, this.montador.getDoubleTy(), 'int_para_double');
                     }
                 }
-                this.montador.CreateStore(valor, destino.variavelLlvm);
+                const tipoArc = destino.tipo || tipoDestinoDelegua;
+                if (this.tipoGerenciadoArc(tipoArc) && tipoEhPonteiro(valor.getType())) {
+                    if (this.slotEhDonoArc(destino.variavelLlvm)) {
+                        // Variável local dona de referência: retém o novo, libera o antigo.
+                        this.emitirArcAtribuir(destino.variavelLlvm, valor);
+                    } else {
+                        // Slot de outro dono (ex.: parâmetro texto, que é o slot de quem chamou):
+                        // só retém o novo valor. Nunca libera o antigo, que não é nosso.
+                        this.emitirArcReter(valor);
+                        this.montador.CreateStore(valor, destino.variavelLlvm);
+                    }
+                } else {
+                    this.montador.CreateStore(valor, destino.variavelLlvm);
+                }
             } else {
                 // Destino já é valor direto: não faz sentido armazenar, mas podemos tentar sobrescrever
                 // (isso é raro; normalmente destino será ponteiro).
@@ -952,13 +988,16 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const blocoAtualMetodo = this.montador.GetInsertBlock();
             if (blocoAtualMetodo && !blocoAtualMetodo.getTerminator()) {
                 if (tipoRetornoStr === 'vazio') {
-                    this.montador.CreateRetVoid();
+                    this.registrarRetornoArc(this.montador.CreateRetVoid());
                 } else if (tipoRetornoStr === 'nulo' || tipoRetornoStr === 'qualquer') {
-                    this.montador.CreateRet(llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value);
+                    this.registrarRetornoArc(
+                        this.montador.CreateRet(llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value)
+                    );
                 } else {
                     this.montador.CreateUnreachable();
                 }
             }
+            this.encerrarQuadroArc();
             this.tipoRetornoFuncaoAtual = tipoRetornoAnteriorMetodo;
             this.pilhaIsto.pop();
             this.pilhaVariaveisEscopo.removerUltimo();
@@ -1008,7 +1047,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             valor = this.montador.CreateFPToSI(valor, llvm.Type.getInt64Ty(this.contexto), 'double_para_longo');
         }
 
-        this.montador.CreateStore(valor, aloc);
+        this.armazenarVariavelArc(aloc, valor, tipoVariavel);
         this.emitirDeclaracaoVariavelDebug(aloc, declaracao.simbolo.lexema, tipoVariavel, linhaConst);
 
         const topo = this.pilhaVariaveisEscopo.topoDaPilha();
@@ -1046,7 +1085,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
             const alocacao = this.criarAllocaNoBlocoEntrada(tipoLlvm, nomeSimbolo, true);
             const valorResolvido = await declaracao.inicializador.aceitar(this);
-            this.montador.CreateStore(valorResolvido, alocacao);
+            this.armazenarVariavelArc(alocacao, valorResolvido, tipoVariavel);
 
             topoDaPilha.set(nomeSimbolo, new VariavelEscopo(alocacao, declaracao, tipoVariavel, true));
         }
@@ -1456,7 +1495,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoLlvm = this.obterTipoLlvm(tipoVariavel);
             const alocacao = this.criarAllocaNoBlocoEntrada(tipoLlvm, nomeSimbolo, true);
             const valorResolvido = await declaracao.inicializador.aceitar(this);
-            this.montador.CreateStore(valorResolvido, alocacao);
+            this.armazenarVariavelArc(alocacao, valorResolvido, tipoVariavel);
 
             topoDaPilha.set(nomeSimbolo, new VariavelEscopo(alocacao, declaracao, tipoVariavel, false));
         }
@@ -1534,9 +1573,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const infoPropriedade = await this.resolverGepPropriedadeAlvo(expressao.alvo as ConstrutoInterface);
         if (infoPropriedade) {
             const valorResolvido = await expressao.valor.aceitar(this);
-            const { gepPtr, tipoProp } = infoPropriedade;
+            const { gepPtr, tipoProp, nomeClasse } = infoPropriedade;
             const valorCarregado = this.carregarValorSeNecessario(valorResolvido, tipoProp, 'load_prop_atrib');
-            this.montador.CreateStore(valorCarregado, gepPtr);
+            this.armazenarCampoArc(gepPtr, valorCarregado, tipoProp, nomeClasse);
             return Promise.resolve(valorResolvido);
         }
 
@@ -1546,7 +1585,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
     protected async resolverGepPropriedadeAlvo(
         expressao: ConstrutoInterface
-    ): Promise<{ gepPtr: llvm.Value; tipoProp: string } | null> {
+    ): Promise<{ gepPtr: llvm.Value; tipoProp: string; nomeClasse: string } | null> {
         const construtorExp = expressao.constructor;
         if (construtorExp !== AcessoPropriedade && construtorExp !== AcessoMetodoOuPropriedade) {
             return null;
@@ -1586,7 +1625,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, indice))],
             `${nomePropriedade}_alvo`
         );
-        return { gepPtr, tipoProp };
+        return { gepPtr, tipoProp, nomeClasse };
     }
 
     async visitarExpressaoAcessoIndiceVariavel(expressao: AcessoIndiceVariavel): Promise<any> {
@@ -2115,7 +2154,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             novoValorLlvm = this.coagirEscalar(novoValorLlvm, this.obterTipoLlvm(tipoProp), 'coerce_campo');
         }
 
-        this.montador.CreateStore(novoValorLlvm, gepPtr);
+        this.armazenarCampoArc(gepPtr, novoValorLlvm, tipoProp, nomeClasse);
         return Promise.resolve();
     }
 
@@ -2403,9 +2442,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             const tipoRetornoLlvm = this.montador.GetInsertBlock()?.getParent()?.getReturnType();
             this.emitirSaidaDeTentes(this.tentesAtivos);
             if (!tipoRetornoLlvm || tipoRetornoLlvm.isVoidTy()) {
-                this.montador.CreateRetVoid();
+                this.registrarRetornoArc(this.montador.CreateRetVoid());
             } else {
-                this.montador.CreateRet(llvm.Constant.getNullValue(tipoRetornoLlvm) as unknown as llvm.Value);
+                this.registrarRetornoArc(this.montador.CreateRet(llvm.Constant.getNullValue(tipoRetornoLlvm) as unknown as llvm.Value));
             }
             return Promise.resolve();
         }
@@ -2427,7 +2466,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const ptrRetorno = this.ehTipoObjeto(valorResolvido.tipo)
                     ? this.carregarPtrClasseSePreciso(valorResolvido)
                     : this.ponteiroParaVetor(valorResolvido);
-                this.montador.CreateRet(ptrRetorno);
+                this.reterRetornoArc(ptrRetorno, valorResolvido.tipo);
+                this.registrarRetornoArc(this.montador.CreateRet(ptrRetorno));
                 return Promise.resolve();
             }
             if (tipoEhPonteiro(valorResolvido.variavelLlvm.getType())) {
@@ -2438,10 +2478,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     'load_retorno'
                 );
                 this.emitirSaidaDeTentes(this.tentesAtivos);
-                this.montador.CreateRet(valorCarregado);
+                this.reterRetornoArc(valorCarregado, this.tipoRetornoFuncaoAtual || tipoRetorno);
+                this.registrarRetornoArc(this.montador.CreateRet(valorCarregado));
             } else {
                 this.emitirSaidaDeTentes(this.tentesAtivos);
-                this.montador.CreateRet(valorResolvido.variavelLlvm);
+                this.reterRetornoArc(valorResolvido.variavelLlvm, this.tipoRetornoFuncaoAtual || tipoRetorno);
+                this.registrarRetornoArc(this.montador.CreateRet(valorResolvido.variavelLlvm));
             }
             return Promise.resolve();
         }
@@ -2463,7 +2505,9 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         this.emitirSaidaDeTentes(this.tentesAtivos);
-        this.montador.CreateRet(valorFinal);
+        // Retorno entregue com +1: retém (o slot local de origem, se houver, é liberado antes do `ret`).
+        this.reterRetornoArc(valorFinal, this.tipoRetornoFuncaoAtual || this.resolverTipoConstruto(declaracao.valor));
+        this.registrarRetornoArc(this.montador.CreateRet(valorFinal));
         return Promise.resolve();
     }
 
@@ -2738,6 +2782,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     ) {
         const blocoEscopo = llvm.BasicBlock.Create(this.contexto, 'entry', objetoLlvmFuncao);
         this.montador.SetInsertPoint(blocoEscopo);
+        this.iniciarQuadroArc();
         // Emite alloca + store + llvm.dbg.declare para cada parâmetro formal.
         // A alloca substitui a referência direta ao argumento LLVM no escopo de variáveis,
         // permitindo ao LLDB/CodeLLDB inspecionar parâmetros nas janelas de variáveis e watch.
@@ -3055,11 +3100,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         const blocoFinal = this.montador.GetInsertBlock();
         if (blocoFinal && !blocoFinal.getTerminator()) {
             if (tipoRetorno.isVoidTy()) {
-                this.montador.CreateRetVoid();
+                this.registrarRetornoArc(this.montador.CreateRetVoid());
             } else {
-                this.montador.CreateRet(llvm.Constant.getNullValue(tipoRetorno) as unknown as llvm.Value);
+                this.registrarRetornoArc(
+                    this.montador.CreateRet(llvm.Constant.getNullValue(tipoRetorno) as unknown as llvm.Value)
+                );
             }
         }
+        this.encerrarQuadroArc();
 
         this.finalizarSubprogramaDebug();
         this.tipoRetornoFuncaoAtual = tipoRetornoAnterior;
@@ -3493,7 +3541,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 declaracao.simbolo.lexema,
                 true
             );
-            this.montador.CreateStore(objetoPtr, allocaVariavel);
+            this.armazenarVariavelArc(allocaVariavel, objetoPtr, tipoVariavel);
             const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
             topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(allocaVariavel, undefined, tipoVariavel));
             return Promise.resolve();
@@ -3514,7 +3562,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 declaracao.simbolo.lexema,
                 true
             );
-            this.montador.CreateStore(vetorPtr, allocaVetor);
+            this.armazenarVariavelArc(allocaVetor, vetorPtr, tipoVariavel);
             const topoDaPilha = this.pilhaVariaveisEscopo.topoDaPilha();
             topoDaPilha.set(declaracao.simbolo.lexema, new VariavelEscopo(allocaVetor, undefined, tipoVariavel));
             return Promise.resolve();
@@ -3598,7 +3646,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             );
         }
 
-        this.montador.CreateStore(valorOuReferenciaVariavel, inicializacaoVariavel);
+        this.armazenarVariavelArc(inicializacaoVariavel, valorOuReferenciaVariavel, tipoVariavel);
         this.emitirDeclaracaoVariavelDebug(
             inicializacaoVariavel,
             declaracao.simbolo.lexema,
@@ -4468,6 +4516,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         this.pilhaVariaveisEscopo.empilhar(mapaVariaveis);
         await this.visitarCorpoFuncao(construto, funcaoLlvm);
+        this.encerrarQuadroArc();
         this.pilhaVariaveisEscopo.removerUltimo();
 
         this.finalizarSubprogramaDebug();
@@ -4768,6 +4817,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.montador.SetInsertPoint(blocoEscopo);
 
         this.criarSubprogramaDebug(funcaoInicio, 'main', 1);
+        this.iniciarQuadroArc();
 
         for (const declaracao of declaracoes) {
             await declaracao.aceitar(this);
@@ -4776,7 +4826,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.finalizarSubprogramaDebug();
 
 
-        this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0)));
+        this.registrarRetornoArc(this.montador.CreateRet(ConstantInt.get(this.contexto, new APInt(32, 0))));
+        this.encerrarQuadroArc();
+        // Todas as funções já foram compiladas: insere as liberações ARC antes de cada `ret`.
+        this.finalizarQuadrosArc();
 
         if (llvm.verifyFunction(funcaoInicio)) {
             console.error('Falha ao verificar função de início.');
@@ -4902,6 +4955,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.tipoEstruturaVetor = null;
         this.cacheLiteraisTextoArc = new Map();
         this.descritoresArcClasse = new Map();
+        this.pilhaQuadrosArc = [];
+        this.quadrosArcConcluidos = [];
         this.contemExcecoes = false;
         this.contadorLambda = 0;
         this.cachePointerVetor = new Map();
@@ -5224,6 +5279,15 @@ CompiladorLLVM.prototype.emitirArcLiberar = emitirArcLiberar;
 CompiladorLLVM.prototype.emitirArcAtribuir = emitirArcAtribuir;
 CompiladorLLVM.prototype.obterDescritorArcClasse = obterDescritorArcClasse;
 CompiladorLLVM.prototype.alocarObjetoArc = alocarObjetoArc;
+CompiladorLLVM.prototype.iniciarQuadroArc = iniciarQuadroArc;
+CompiladorLLVM.prototype.quadroArcAtual = quadroArcAtual;
+CompiladorLLVM.prototype.registrarRetornoArc = registrarRetornoArc;
+CompiladorLLVM.prototype.encerrarQuadroArc = encerrarQuadroArc;
+CompiladorLLVM.prototype.armazenarVariavelArc = armazenarVariavelArc;
+CompiladorLLVM.prototype.slotEhDonoArc = slotEhDonoArc;
+CompiladorLLVM.prototype.armazenarCampoArc = armazenarCampoArc;
+CompiladorLLVM.prototype.reterRetornoArc = reterRetornoArc;
+CompiladorLLVM.prototype.finalizarQuadrosArc = finalizarQuadrosArc;
 CompiladorLLVM.prototype.argumentosVetorCriar = argumentosVetorCriar;
 CompiladorLLVM.prototype.constTamElem = constTamElem;
 CompiladorLLVM.prototype.chamarMetodoVetor = chamarMetodoVetor;
