@@ -107,8 +107,9 @@ describe('Compilador - Classes', () => {
         ]);
 
         expect(resultado).toBeTruthy();
-        // Objeto no heap com memória zerada (campos de ponteiro começam nulos).
-        expect(resultado).toContain('call ptr @calloc(i64 1, i64');
+        // Objeto ARC (memória zerada) com o descritor da classe e destrutor gerado.
+        expect(resultado).toMatch(/call ptr @delegua_arc_alocar\(i64 \d+, ptr @__arc_desc_Ponto\)/);
+        expect(resultado).toContain('define internal void @__destrutor_Ponto(ptr %0)');
         expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 
@@ -132,7 +133,9 @@ describe('Compilador - Classes', () => {
         expect(resultado).toMatch(/call void @RetornoLexador_construtor\(ptr %obj_RetornoLexador, ptr %vetor\d*, ptr %vetor\d*\)/);
         expect(resultado).not.toContain('load %Vetor');
         // Objeto zerado e campos vetor começam como Vetor* vazio.
-        expect(resultado).toContain('call ptr @calloc(i64 1, i64 24)');
+        expect(resultado).toContain('call ptr @delegua_arc_alocar(i64 24, ptr @__arc_desc_RetornoLexador)');
+        // O destrutor libera os dois campos vetor.
+        expect(resultado).toMatch(/@__destrutor_RetornoLexador[\s\S]*%simbolos = load ptr[\s\S]*call void @delegua_arc_liberar\(ptr %simbolos\)/);
         // texto[]: elementos de 8 bytes gerenciados pelo ARC (gerenciado = 1).
         expect(resultado).toContain('%simbolos_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8, i32 1)');
         expect(resultado).toContain('%erros_vazio = call ptr @delegua_vetor_criar(i32 0, i32 8, i32 1)');

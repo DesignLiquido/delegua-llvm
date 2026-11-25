@@ -47,15 +47,9 @@ export async function instanciarClasse(
         );
     }
 
-    // Memória zerada: campos de ponteiro (texto, objetos, dicionários) começam como nulo,
-    // requisito para que destrutores e atribuições ARC nunca leiam lixo.
-    const i64Obj = llvm.Type.getInt64Ty(this.contexto);
-    const callocObj = this.obterFuncaoRuntime('calloc', this.montador.getPtrTy(), [i64Obj, i64Obj]);
-    const objetoAlloc = this.montador.CreateCall(
-        callocObj,
-        [ConstantInt.get(this.contexto, new APInt(64, 1)), tamanhoConst],
-        `obj_${nomeClasse}`
-    );
+    // Objeto ARC (+1) com o descritor da classe; memória zerada: campos de ponteiro (texto,
+    // objetos, dicionários) começam como nulo, para que destrutor e atribuições nunca leiam lixo.
+    const objetoAlloc = this.alocarObjetoArc(nomeClasse, `obj_${nomeClasse}`);
 
     // Campos de vetor (próprios e herdados) começam como um Vetor* vazio no heap, para que
     // `isto.itens.adicionar(x)` funcione sem inicialização explícita.

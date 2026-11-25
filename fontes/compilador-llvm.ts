@@ -216,6 +216,14 @@ import {
     chamarEncontrar,
 } from './colecoes';
 import {
+    tipoGerenciadoArc,
+    emitirArcReter,
+    emitirArcLiberar,
+    emitirArcAtribuir,
+    obterDescritorArcClasse,
+    alocarObjetoArc,
+} from './arc';
+import {
     criarFuncaoNativa,
 } from './funcoes-nativas';
 
@@ -275,6 +283,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     tamElementoEmBytes: typeof tamElementoEmBytes;
     constTamElem: typeof constTamElem;
     elementoVetorGerenciado: typeof elementoVetorGerenciado;
+    tipoGerenciadoArc: typeof tipoGerenciadoArc;
+    emitirArcReter: typeof emitirArcReter;
+    emitirArcLiberar: typeof emitirArcLiberar;
+    emitirArcAtribuir: typeof emitirArcAtribuir;
+    obterDescritorArcClasse: typeof obterDescritorArcClasse;
+    alocarObjetoArc: typeof alocarObjetoArc;
     argumentosVetorCriar: typeof argumentosVetorCriar;
     chamarMetodoVetor: typeof chamarMetodoVetor;
     chamarMapear: typeof chamarMapear;
@@ -401,6 +415,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     protected _contadorNomesAnonimos: number = 0;
     // Literais de texto imortais (com cabeçalho ARC) já emitidos no módulo, por conteúdo.
     cacheLiteraisTextoArc: Map<string, llvm.Value> = new Map();
+    // Descritores ARC (`__arc_desc_<Classe>`) já emitidos, por classe.
+    descritoresArcClasse: Map<string, llvm.Value> = new Map();
 
     // Bibliotecas estrangeiras referenciadas por classes @definicao.
     // Campo público para que ilc.ts possa adicionar flags -l ao linker.
@@ -1965,7 +1981,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 }
             }
 
-            this.montador.CreateStore(valorFinal, gepElemento);
+            if (this.elementoVetorGerenciado(tipoElementoStr)) {
+                // Vetor gerenciado: retém o novo elemento e libera o sobrescrito (buracos
+                // criados por definir_indice já vêm zerados).
+                this.emitirArcAtribuir(gepElemento, valorFinal);
+            } else {
+                this.montador.CreateStore(valorFinal, gepElemento);
+            }
             return Promise.resolve(valorFinal);
         }
 
@@ -2697,7 +2719,12 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     [ConstantInt.get(this.contexto, new APInt(32, i))],
                     `ptr_arr_${i}`
                 );
-                this.montador.CreateStore(valorElem, gepElem);
+                if (this.elementoVetorGerenciado(tipoElementoStr)) {
+                    // O vetor é dono de cada elemento (o buffer vem zerado de delegua_vetor_criar).
+                    this.emitirArcAtribuir(gepElem, valorElem);
+                } else {
+                    this.montador.CreateStore(valorElem, gepElem);
+                }
             }
         }
 
@@ -4874,6 +4901,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
 
         this.tipoEstruturaVetor = null;
         this.cacheLiteraisTextoArc = new Map();
+        this.descritoresArcClasse = new Map();
         this.contemExcecoes = false;
         this.contadorLambda = 0;
         this.cachePointerVetor = new Map();
@@ -5190,6 +5218,12 @@ CompiladorLLVM.prototype.embalarValorParaDicionario = embalarValorParaDicionario
 CompiladorLLVM.prototype.embalarValorEmHeap = embalarValorEmHeap;
 CompiladorLLVM.prototype.tamElementoEmBytes = tamElementoEmBytes;
 CompiladorLLVM.prototype.elementoVetorGerenciado = elementoVetorGerenciado;
+CompiladorLLVM.prototype.tipoGerenciadoArc = tipoGerenciadoArc;
+CompiladorLLVM.prototype.emitirArcReter = emitirArcReter;
+CompiladorLLVM.prototype.emitirArcLiberar = emitirArcLiberar;
+CompiladorLLVM.prototype.emitirArcAtribuir = emitirArcAtribuir;
+CompiladorLLVM.prototype.obterDescritorArcClasse = obterDescritorArcClasse;
+CompiladorLLVM.prototype.alocarObjetoArc = alocarObjetoArc;
 CompiladorLLVM.prototype.argumentosVetorCriar = argumentosVetorCriar;
 CompiladorLLVM.prototype.constTamElem = constTamElem;
 CompiladorLLVM.prototype.chamarMetodoVetor = chamarMetodoVetor;

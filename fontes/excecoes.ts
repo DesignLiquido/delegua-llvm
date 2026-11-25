@@ -122,8 +122,7 @@ export function mensagemDeExcecao(this: CompiladorLLVM, objeto: llvm.Value, nome
 /** Nova instância de Excecao com a mensagem (char*). */
 export function criarObjetoExcecao(this: CompiladorLLVM, mensagem: llvm.Value): llvm.Value {
     const tipoStruct = this.registroClasses.get(NOME_CLASSE_EXCECAO);
-    const tamanho = ConstantInt.get(this.contexto, new APInt(64, this.layoutDados.getTypeAllocSize(tipoStruct)));
-    const objeto = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'excecao');
+    const objeto = this.alocarObjetoArc(NOME_CLASSE_EXCECAO, 'excecao');
     const zero = ConstantInt.get(this.contexto, new APInt(32, 0));
     const campoTipo = this.montador.CreateInBoundsGEP(tipoStruct, objeto, [zero, zero], 'excecao_tipo_ptr');
     this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(32, ID_CLASSE_EXCECAO)), campoTipo);
