@@ -179,6 +179,8 @@ gdb ./meu_programa
 | Variável | Valor | Descrição |
 |----------|-------|-----------|
 | `DELEGUA_DEBUG` | `true` | Exibe o LLVM IR gerado no console antes de compilar |
+| `DELEGUA_FLAGS_C` | flags do compilador C | Flags extras passadas ao compilar a biblioteca de tempo de execução e ao ligar o binário (ex.: `-fsanitize=address`) |
+| `DELEGUA_ARC_DEPURACAO` | `1` ou `estrito` | Lida pelo **binário gerado**, não pelo compilador: ver [Gerenciamento de memória (ARC)](#gerenciamento-de-memória-arc) |
 
 Exemplo:
 
@@ -400,6 +402,58 @@ tente {
 - Exceção não tratada: a mensagem vai para a saída de erro e o programa termina com código 1.
 
 As exceções são implementadas com `setjmp`/`longjmp` da biblioteca C (`bibliotecas/excecoes.c`), sem a ABI de exceções de C++: funcionam igual em Linux, macOS e Windows, inclusive com o clang nativo do Windows (ABI MSVC). Funções que contêm `tente` são compiladas sem otimização (`optnone`), para que variáveis alteradas dentro do `tente` mantenham seus valores no `pegue`.
+
+## Gerenciamento de memória (ARC)
+
+Programas compilados liberam a própria memória com **contagem automática de referências** (ARC, *Automatic Reference Counting*), sem coletor de lixo em segundo plano e sem que o programa precise liberar nada à mão. Textos, vetores, dicionários, instâncias de classes, caixas de valores `qualquer` e os objetos dos módulos (`json`, `csv`, `arquivos`, `dados`, `http`, `rede`) são contados; números, inteiros e lógicos não usam memória dinâmica.
+
+- Cada valor sabe quantas variáveis, campos e coleções o referenciam. Quando a última referência some (a variável é reatribuída, a função retorna, o elemento sai do vetor, o objeto dono é destruído), a memória é liberada **na hora**, de forma determinística.
+- Valores intermediários de uma expressão (ex.: `a + b + c`, `pessoa.nome.maiusculo()`) são liberados ao fim da instrução.
+- Uma exceção que atravessa funções libera as variáveis das funções interrompidas antes de chegar ao `pegue`.
+- Textos literais do programa nunca são liberados (são constantes do binário) e continuam sendo `char*` comuns para C e FFI.
+
+### Ciclos e referências fracas (`@fraco`)
+
+Objetos que se referenciam mutuamente (ex.: pai ↔ filho, listas circulares) formam ciclos que a contagem sozinha não libera. Um **coletor de ciclos** roda automaticamente de tempos em tempos e os libera quando não são mais alcançáveis pelo programa.
+
+Quando a relação tem um dono claro, prefira marcar a referência de volta com o decorador `@fraco`: um campo fraco não mantém o objeto vivo, não forma ciclo e passa a valer `nulo` quando o objeto referenciado é liberado.
+
+```delegua
+classe No {
+    nome: texto
+    @fraco
+    pai: No          // não mantém o pai vivo; vira nulo quando o pai é liberado
+    filhos: No[]     // os filhos pertencem ao pai
+}
+```
+
+`@fraco` só vale para campos que referenciam objetos, vetores ou dicionários; em outros tipos é erro de compilação.
+
+### Liberação manual nos módulos
+
+Funções como `json.liberar`, `csv.liberar`, `arquivos.liberar`, `dados.liberar` e `rede.fechar` continuam existindo para soltar um recurso **antes** do fim do seu uso (fechar um soquete, descartar um documento grande). Elas podem ser chamadas mais de uma vez; depois delas, o objeto se comporta como vazio. Não é preciso chamá-las para evitar vazamentos.
+
+### Depurando o uso de memória
+
+Defina `DELEGUA_ARC_DEPURACAO` ao **executar** o binário para ver, ao final, um relatório na saída de erro:
+
+```sh
+DELEGUA_ARC_DEPURACAO=1 ./meu_programa
+# [DELEGUA ARC] alocacoes=10 liberacoes=10 vivas=0 pico=9 ciclos=0 reter=7 liberar=38
+```
+
+- `vivas`: alocações ainda não liberadas ao fim (após uma coleta de ciclos final); `pico`: máximo de alocações vivas ao mesmo tempo; `ciclos`: objetos liberados pelo coletor de ciclos.
+- Com `DELEGUA_ARC_DEPURACAO=estrito`, um programa que termina normalmente com alocações vivas sai com código 99 (útil em testes automatizados). Saídas por exceção não tratada ou `processo.sair` não são verificadas.
+
+Para procurar erros de memória na biblioteca de tempo de execução C, compile com os sanitizadores do clang:
+
+```sh
+DELEGUA_FLAGS_C="-fsanitize=address -fno-omit-frame-pointer" npx @designliquido/delegua-llvm meu_programa.delegua
+```
+
+Limitação: o acesso a vetores não verifica limites. Ler a posição logo após o último elemento (`v[v.tamanho()]`) devolve `nulo`, mas acessos mais distantes têm comportamento indefinido.
+
+A arquitetura completa (layout do cabeçalho, convenção +0/+1, desenrolamento de exceções, coletor de ciclos) está em [PLANO-ARC.md](PLANO-ARC.md).
 
 ## Compilação manual (avançado)
 
