@@ -1,0 +1,30 @@
+// Arquivo importado com espaço de nomes: seus membros recebem nomes qualificados.
+var saudacao: texto = "olá de a"
+
+funcao nome(): texto {
+    retorna "a"
+}
+
+funcao dobro(x: inteiro): inteiro {
+    retorna x * 2
+}
+
+funcao dobroMaisUm(x: inteiro): inteiro {
+    retorna dobro(x) + 1
+}
+
+funcao apresentar(): texto {
+    retorna "sou " + nome()
+}
+
+classe CaixaA {
+    valor: inteiro
+
+    construtor(valor: inteiro) {
+        isto.valor = valor
+    }
+
+    dobrado(): inteiro {
+        retorna dobro(isto.valor)
+    }
+}

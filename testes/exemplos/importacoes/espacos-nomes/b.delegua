@@ -1,0 +1,9 @@
+// Declara `nome`, como a.delegua: com espaço de nomes, os dois não colidem.
+funcao nome(): texto {
+    retorna "b"
+}
+
+// O parâmetro `nome` esconde a função `nome` dentro desta função.
+funcao exclamar(nome: texto): texto {
+    retorna nome + "!"
+}

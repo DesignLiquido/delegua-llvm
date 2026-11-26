@@ -1,0 +1,6 @@
+// Espaço de nomes dentro de um arquivo que também é importado com espaço de nomes.
+importar tudo como b de "./b"
+
+funcao nome(): texto {
+    retorna "aninhado/" + b.nome()
+}

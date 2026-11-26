@@ -288,6 +288,22 @@ Isso permite que chamadas estáticas como `LibM.cosseno(0.0)` resolvam o nome `L
 
 > **Nota:** Essa abordagem de sentinela pode mudar no futuro; consulte o código em `compilarClasseEstrangeira()` e `pilha-variaveis-escopo.ts` para a implementação atual.
 
+## Importação de arquivos
+
+Arquivos `.delegua` são importados por caminho relativo, trazendo elementos ou um espaço de nomes:
+
+```delegua
+importar { dobro } de "./matematica"
+importar tudo como textos de "./utilidades/textos"
+
+escreva(dobro(2))
+escreva(textos.maiusculas("olá"))
+```
+
+Todos os arquivos são compilados juntos em um só programa. As funções, variáveis e constantes do nível superior de um arquivo importado com `tudo como` recebem um nome qualificado pelo nome do arquivo (`textos__maiusculas`), então dois arquivos importados assim podem declarar funções com o mesmo nome. Classes não são qualificadas: `m.Classe(...)` é o mesmo que `Classe(...)`, e duas classes com o mesmo nome em arquivos diferentes ainda colidem. Arquivos importados apenas com `{ ... }` mantêm os nomes originais.
+
+O apelido do espaço de nomes só pode ser usado para acessar membros (`m.funcao(...)`, `m.constante`), e não como valor. O mesmo vale para pacotes: `importar tudo como semver de "semver"`.
+
 ## Pacotes
 
 Pacotes instalados pelo gerenciador [`pacote`](https://github.com/DesignLiquido/pacote-go) ficam em `pacotes/llvm/<nome>/` e são importados pelo nome:

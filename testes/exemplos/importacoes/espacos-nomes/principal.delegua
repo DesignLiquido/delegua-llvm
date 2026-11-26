@@ -1,0 +1,15 @@
+importar tudo como a de "./a"
+importar tudo como b de "./b"
+importar tudo como aninhado de "./aninhado"
+importar { quadruplo } de "./usa-a"
+
+escreva(a.nome())
+escreva(b.nome())
+escreva(aninhado.nome())
+escreva(a.apresentar())
+escreva(texto(a.dobroMaisUm(4)))
+escreva(texto(quadruplo(3)))
+escreva(b.exclamar("oi"))
+var caixa = a.CaixaA(7)
+escreva(texto(caixa.dobrado()))
+escreva(a.saudacao)
