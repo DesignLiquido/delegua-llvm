@@ -25,7 +25,7 @@ static void _delegua_handler_parametro_invalido(
 // restaura a página original ao terminar, para não deixar o console alterado. (Só a saída:
 // a leitura do console em UTF-8 não é confiável em todas as versões do Windows.)
 // Declaradas aqui, e não com <windows.h>, para não trazer as macros do Windows para o
-// código do runtime; ficam na kernel32, sempre ligada.
+// código do tempo de execução; ficam na kernel32, sempre ligada.
 __declspec(dllimport) unsigned int __stdcall GetConsoleOutputCP(void);
 __declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int codigo);
 #define DELEGUA_CP_UTF8 65001u

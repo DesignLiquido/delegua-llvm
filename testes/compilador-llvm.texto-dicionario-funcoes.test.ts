@@ -23,7 +23,7 @@ describe('Compilador - métodos de texto adicionais', () => {
         expect(ir).toContain(`call ptr @${funcaoC}(`);
     });
 
-    it('dividir devolve texto[] preenchido pelo runtime e itera com para cada', async () => {
+    it('dividir devolve texto[] preenchido pelo tempo de execução e itera com para cada', async () => {
         const ir = await compilar([
             'var t: texto = "a,b"',
             'var partes = t.dividir(",")',
@@ -31,9 +31,9 @@ describe('Compilador - métodos de texto adicionais', () => {
             '  escreva(p)',
             '}',
         ]);
-        // O runtime devolve um novo Vetor* no heap (sem parâmetro de saída).
+        // O tempo de execução devolve um novo Vetor* no heap (sem parâmetro de saída).
         expect(ir).toMatch(/%texto_dividido = call ptr @delegua_texto_dividir\(ptr .*, ptr .*, i32 0\)/);
-        expect(ir).toContain('call void @delegua_arc_atribuir(ptr %partes, ptr %texto_dividido)');
+        expect(ir).toContain('store ptr %texto_dividido, ptr %partes');
         expect(ir).toMatch(/call i32 @delegua_vetor_tamanho\(ptr %vetor_ptr\d*\)/);
     });
 
@@ -113,7 +113,7 @@ describe('Compilador - correções de vetores e funções', () => {
             '  escreva(x)',
             '}',
         ]);
-        expect(ir).toContain('call void @delegua_arc_atribuir(ptr %f, ptr %fatia)');
+        expect(ir).toContain('store ptr %fatia, ptr %f');
         expect(ir).toMatch(/(%vetor_ptr\d*) = load ptr, ptr %f[\s\S]*call i32 @delegua_vetor_tamanho\(ptr \1\)/);
     });
 
@@ -127,7 +127,7 @@ describe('Compilador - correções de vetores e funções', () => {
             'escreva(z[0])',
         ]);
         expect(ir).toContain('define ptr @g()');
-        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)[\s\S]*?call void @delegua_arc_atribuir\(ptr %z, ptr \1\)/);
+        expect(ir).toMatch(/(%\d+) = call ptr @g\(\)[\s\S]*?store ptr \1, ptr %z/);
         expect(ir).not.toContain('%Vetor %');
     });
 
@@ -166,5 +166,16 @@ describe('Compilador - correções de vetores e funções', () => {
             'escreva(tipoDe("[]"))',
         ]);
         expect(corpoFuncao(ir, 'tipoDe')).toContain('call ptr @delegua_json_tipo(');
+    });
+
+    it('variável número passada a parâmetro inteiro é convertida, não reinterpretada', async () => {
+        const ir = await compilar([
+            'funcao g(n: inteiro): inteiro { retorna n }',
+            'var i = 3',
+            'escreva(g(i))',
+        ]);
+        expect(ir).toMatch(/%load_arg = load double, ptr %i/);
+        expect(ir).toMatch(/%conv_arg\w* = fptosi double %load_arg to i32/);
+        expect(ir).toMatch(/call i32 @g\(i32 %conv_arg\w*\)/);
     });
 });

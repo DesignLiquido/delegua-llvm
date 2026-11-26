@@ -1,4 +1,4 @@
-// Teste do runtime ARC (Fase 1): cada bloco cria valores pelo runtime, solta as
+// Teste do tempo de execução ARC (Fase 1): cada bloco cria valores pelo tempo de execução, solta as
 // referências e confere que nenhuma alocação gerenciada ficou viva.
 #include <stdio.h>
 #include <stdlib.h>

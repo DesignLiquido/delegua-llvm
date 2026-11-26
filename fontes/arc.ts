@@ -27,11 +27,19 @@ function funcaoArc(compilador: CompiladorLLVM, nome: string, parametros: llvm.Ty
     return compilador.obterFuncaoRuntime(nome, llvm.Type.getVoidTy(compilador.contexto), parametros);
 }
 
+// Constantes (literais de texto imortais, nulo, funções) nunca precisam de reter/liberar
+// (Fase 4.3): a chamada não faria nada.
+function ehConstante(valor: llvm.Value): boolean {
+    return valor instanceof llvm.Constant;
+}
+
 export function emitirArcReter(this: CompiladorLLVM, valor: llvm.Value): void {
+    if (ehConstante(valor)) return;
     this.montador.CreateCall(funcaoArc(this, 'delegua_arc_reter', [this.montador.getPtrTy()]), [valor]);
 }
 
 export function emitirArcLiberar(this: CompiladorLLVM, valor: llvm.Value): void {
+    if (ehConstante(valor)) return;
     this.montador.CreateCall(funcaoArc(this, 'delegua_arc_liberar', [this.montador.getPtrTy()]), [valor]);
 }
 
@@ -108,7 +116,7 @@ export function obterDescritorArcClasse(this: CompiladorLLVM, nomeClasse: string
         const montadorVisitar = new llvm.IRBuilder(llvm.BasicBlock.Create(this.contexto, 'entrada', funcao));
         for (const [nomeCampo, indice] of camposCiclicos) {
             const valor = montadorVisitar.CreateLoad(ptr, gepCampo(montadorVisitar, funcao.getArg(0), nomeCampo, indice), nomeCampo);
-            // O runtime ignora filhos nulos, imortais ou sem cabeçalho ARC.
+            // O tempo de execução ignora filhos nulos, imortais ou sem cabeçalho ARC.
             montadorVisitar.CreateCall(tipoVisitanteFilho, funcao.getArg(1), [valor, funcao.getArg(2)]);
         }
         montadorVisitar.CreateRetVoid();
@@ -162,8 +170,12 @@ export function alocarObjetoArc(this: CompiladorLLVM, nomeClasse: string, nome: 
 export interface QuadroArc {
     slots: llvm.Value[];
     temporarios: llvm.Value[];
-    // Temporários criados desde o último fim de instrução.
+    // Temporários criados desde o último fim de instrução, e o slot de cada valor (movimento).
     pendentes: llvm.Value[];
+    temporarioPorValor: Map<llvm.Value, llvm.Value>;
+    // > 0 enquanto se emite uma instrução que libera seus temporários ao terminar (expressão,
+    // var/const, escreva): nela um ponto de criação não executa duas vezes antes da liberação.
+    profundidadeInstrucao: number;
     retornos: llvm.Instruction[];
     subprogramaDebug: llvm.DISubprogram | null;
     // Instrução morta no início do corpo (depois das allocas): ponto onde o quadro de limpeza
@@ -179,6 +191,8 @@ export function iniciarQuadroArc(this: CompiladorLLVM): void {
         slots: [],
         temporarios: [],
         pendentes: [],
+        temporarioPorValor: new Map(),
+        profundidadeInstrucao: 0,
         retornos: [],
         subprogramaDebug: this.pilhaSubprogramas[this.pilhaSubprogramas.length - 1] ?? null,
         ancora: null,
@@ -216,7 +230,7 @@ export function armazenarVariavelArc(this: CompiladorLLVM, slot: llvm.Value, val
         return;
     }
     if (!quadro.slots.includes(slot)) quadro.slots.push(slot);
-    this.emitirArcAtribuir(slot, valor);
+    this.atribuirDonoArc(slot, valor);
 }
 
 // Verdadeiro se `slot` é uma variável local dona de referência na função atual.
@@ -243,12 +257,12 @@ export function armazenarCampoArc(
         return;
     }
     if (nomeClasse && nomeCampo && this.camposFracosArc.get(nomeClasse)?.has(nomeCampo)) {
-        // @fraco: não retém; o runtime zera o campo quando o alvo morrer.
+        // @fraco: não retém; o tempo de execução zera o campo quando o alvo morrer.
         const ptr = this.montador.getPtrTy();
         this.montador.CreateCall(funcaoArc(this, 'delegua_arc_fraco_atribuir', [ptr, ptr]), [campo, valor]);
         return;
     }
-    this.emitirArcAtribuir(campo, valor);
+    this.atribuirDonoArc(campo, valor);
 }
 
 /**
@@ -259,13 +273,15 @@ export function armazenarCampoArc(
 export function reterRetornoArc(this: CompiladorLLVM, valor: llvm.Value): void {
     if (!this.quadroArcAtual() || !valor || !tipoEhPonteiro(valor.getType())) return;
     if (!this.retornoPonteiroEhProprio(this.tipoRetornoFuncaoAtual)) return;
+    // Temporário devolvido direto (`retorna a + b`): a referência dele é a do retorno.
+    if (this.consumirTemporarioArc(valor)) return;
     this.emitirArcReter(valor);
 }
 
 // ─── Temporários (Fase 2.3) ──────────────────────────────────────────────────
 //
 // Uma chamada que devolve +1 (função Delégua com retorno gerenciado, construtor via
-// delegua_arc_alocar, runtime C que cria texto/vetor/dicionário/handle) gera um temporário:
+// delegua_arc_alocar, tempo de execução C que cria texto/vetor/dicionário/handle) gera um temporário:
 // o resultado é guardado num slot próprio do ponto de criação. Gravar no slot libera o valor
 // anterior (o mesmo ponto executado de novo num laço), e os slots pendentes são liberados ao
 // fim de cada instrução e, por garantia, nos retornos da função. Quem guarda o valor (variável,
@@ -282,8 +298,8 @@ export function retornoPonteiroEhProprio(this: CompiladorLLVM, tipo: string | un
     return !this.estruturasEstrangeiras.has(tipo);
 }
 
-// Funções do runtime C que devolvem um ponteiro emprestado (não +1).
-const RUNTIME_EMPRESTADO = new Set([
+// Funções do tempo de execução C que devolvem um ponteiro emprestado (não +1).
+const EMPRESTADOS_TEMPO_EXECUCAO = new Set([
     'delegua_dicionario_obter',
     'delegua_vetor_definir_indice',
     'delegua_excecao_atual',
@@ -295,14 +311,14 @@ const MEMORIA_PROPRIO = new Set([
     'delegua_memoria_texto_de_tamanho',
     'delegua_memoria_ler_texto',
 ]);
-const RUNTIME_SEM_PREFIXO_PROPRIO = new Set(['leia', 'texto_de_inteiro', 'texto_de_numero', 'texto_de_longo']);
+const PROPRIOS_SEM_PREFIXO = new Set(['leia', 'texto_de_inteiro', 'texto_de_numero', 'texto_de_longo']);
 
 function chamadaDevolveProprio(compilador: CompiladorLLVM, nome: string | undefined): boolean {
     if (!nome) return false;
     if (compilador.funcoesRetornoProprioArc.has(nome)) return true;
     if (nome.startsWith('__despacho_')) return true;
-    if (RUNTIME_SEM_PREFIXO_PROPRIO.has(nome)) return true;
-    if (!nome.startsWith('delegua_') || RUNTIME_EMPRESTADO.has(nome)) return false;
+    if (PROPRIOS_SEM_PREFIXO.has(nome)) return true;
+    if (!nome.startsWith('delegua_') || EMPRESTADOS_TEMPO_EXECUCAO.has(nome)) return false;
     if (nome.startsWith('delegua_memoria_')) return MEMORIA_PROPRIO.has(nome);
     if (nome.startsWith('delegua_excecao_')) return false;
     // delegua_arc_reter/liberar/atribuir devolvem void; os demais delegua_arc_* criam (+1).
@@ -365,11 +381,44 @@ export function registrarTemporarioArc(this: CompiladorLLVM, valor: llvm.Value):
     if (!quadro) return;
     const ptr = this.montador.getPtrTy();
     const slot = this.criarAllocaNoBlocoEntrada(ptr, 'arc_tmp', true);
-    // Mesmo ponto executado de novo (laço): solta o temporário da execução anterior.
-    this.emitirArcLiberar(this.montador.CreateLoad(ptr, slot, 'arc_tmp_anterior'));
+    // Fora de uma instrução que libera seus temporários (condição de `se`/`enquanto`, `retorna`),
+    // o mesmo ponto pode executar de novo (laço) com o temporário anterior ainda no slot: solta-o.
+    // Dentro dela o slot está sempre nulo aqui (Fase 4.3); a exceção que interrompe a instrução
+    // é tratada no despacho do `pegue` (liberarTodosTemporariosArc).
+    if (quadro.profundidadeInstrucao === 0) {
+        this.emitirArcLiberar(this.montador.CreateLoad(ptr, slot, 'arc_tmp_anterior'));
+    }
     this.montador.CreateStore(valor, slot);
     quadro.temporarios.push(slot);
     quadro.pendentes.push(slot);
+    quadro.temporarioPorValor.set(valor, slot);
+}
+
+// Início/fim de uma instrução que libera seus temporários (ver profundidadeInstrucao).
+export function entrarInstrucaoArc(this: CompiladorLLVM): void {
+    const quadro = this.quadroArcAtual();
+    if (quadro) quadro.profundidadeInstrucao++;
+}
+
+export function sairInstrucaoArc(this: CompiladorLLVM): void {
+    const quadro = this.quadroArcAtual();
+    if (quadro && quadro.profundidadeInstrucao > 0) quadro.profundidadeInstrucao--;
+}
+
+// Despacho de exceção (`pegue`): uma instrução interrompida por longjmp nesta função não chegou
+// a soltar seus temporários. Solta todos os da função até aqui (as instruções anteriores já
+// deixaram seus slots nulos; a condição de um laço externo já foi usada).
+export function liberarTodosTemporariosArc(this: CompiladorLLVM): void {
+    const quadro = this.quadroArcAtual();
+    if (!quadro) return;
+    const ptr = this.montador.getPtrTy();
+    const nulo = llvm.Constant.getNullValue(ptr) as unknown as llvm.Value;
+    for (const slot of quadro.temporarios) {
+        this.emitirArcLiberar(this.montador.CreateLoad(ptr, slot, 'arc_tmp_excecao'));
+        this.montador.CreateStore(nulo, slot);
+    }
+    quadro.pendentes = [];
+    quadro.temporarioPorValor.clear();
 }
 
 // Fim de instrução: libera os temporários criados desde a última liberação.
@@ -386,6 +435,7 @@ export function liberarTemporariosInstrucaoArc(this: CompiladorLLVM): void {
         this.montador.CreateStore(nulo, slot);
     }
     quadro.pendentes = [];
+    quadro.temporarioPorValor.clear();
 }
 
 /** Insere, antes de cada `ret` registrado, a liberação dos temporários e slots da função. */
@@ -449,5 +499,43 @@ export function finalizarQuadrosArc(this: CompiladorLLVM): void {
 // *slot = valor, retendo `valor` e liberando o anterior (seguro quando são o mesmo).
 export function emitirArcAtribuir(this: CompiladorLLVM, slot: llvm.Value, valor: llvm.Value): void {
     const ptr = this.montador.getPtrTy();
+    if (ehConstante(valor)) {
+        // Constante: não há o que reter; só solta o valor anterior.
+        const anterior = this.montador.CreateLoad(ptr, slot, 'arc_anterior');
+        this.montador.CreateStore(valor, slot);
+        this.emitirArcLiberar(anterior);
+        return;
+    }
     this.montador.CreateCall(funcaoArc(this, 'delegua_arc_atribuir', [ptr, ptr]), [slot, valor]);
+}
+
+/**
+ * Semântica de movimento (Fase 4.3): se `valor` é um temporário +1 desta instrução ainda
+ * pendente, a referência dele passa a quem o consome. O slot do temporário é anulado (o fim
+ * da instrução, os retornos e o desenrolamento de exceções passam a soltar nulo) e quem
+ * consome não precisa reter. Devolve falso se `valor` não é um temporário pendente.
+ */
+export function consumirTemporarioArc(this: CompiladorLLVM, valor: llvm.Value): boolean {
+    const quadro = this.quadroArcAtual();
+    const slot = quadro?.temporarioPorValor.get(valor);
+    if (!quadro || !slot) return false;
+    const indice = quadro.pendentes.indexOf(slot);
+    if (indice < 0) return false;
+    quadro.pendentes.splice(indice, 1);
+    quadro.temporarioPorValor.delete(valor);
+    this.montador.CreateStore(llvm.Constant.getNullValue(this.montador.getPtrTy()) as unknown as llvm.Value, slot);
+    return true;
+}
+
+// Grava `valor` num local (ou campo) dono de referência: move um temporário quando possível,
+// senão retém (atribuir).
+export function atribuirDonoArc(this: CompiladorLLVM, slot: llvm.Value, valor: llvm.Value): void {
+    if (this.consumirTemporarioArc(valor)) {
+        const ptr = this.montador.getPtrTy();
+        const anterior = this.montador.CreateLoad(ptr, slot, 'arc_anterior');
+        this.montador.CreateStore(valor, slot);
+        this.emitirArcLiberar(anterior);
+        return;
+    }
+    this.emitirArcAtribuir(slot, valor);
 }

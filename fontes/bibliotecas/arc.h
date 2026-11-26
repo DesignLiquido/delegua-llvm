@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /*
- * ARC (contagem automática de referências) do runtime Delégua.
+ * ARC (contagem automática de referências) do tempo de execução Delégua.
  *
  * Toda alocação gerenciada tem um cabeçalho de 16 bytes imediatamente ANTES do payload:
  *
@@ -16,10 +16,10 @@
  * - rc >= 1: vivo; rc < 0 (DELEGUA_ARC_RC_IMORTAL): estático, nunca é liberado.
  * - magia: identifica ponteiros gerenciados. reter/liberar ignoram ponteiros sem ela
  *   (literais ainda sem cabeçalho, memória de FFI, `malloc` puro), o que permite migrar o
- *   runtime e o compilador aos poucos sem corromper memória.
+ *   tempo de execução e o compilador aos poucos sem corromper memória.
  * - descritor: nome e destrutor do tipo; NULL para buffers simples (texto, caixas).
  *
- * Convenção de propriedade do runtime C:
+ * Convenção de propriedade do tempo de execução C:
  * - funções que devolvem um ponteiro gerenciado devolvem +1 (o chamador é dono);
  * - coleções (Vetor, Dicionario) retêm o que guardam e liberam o que removem/sobrescrevem;
  * - parâmetros são emprestados (+0): quem guarda um parâmetro o retém.
@@ -44,7 +44,7 @@ typedef struct {
     const ArcDescritor* tipo;
 } ArcCabecalho;
 
-// Literal de texto imortal com cabeçalho, para constantes devolvidas pelo runtime C:
+// Literal de texto imortal com cabeçalho, para constantes devolvidas pelo tempo de execução C:
 //     DELEGUA_TEXTO_ESTATICO(texto_linux, "linux");
 //     return DELEGUA_TEXTO(texto_linux);
 #define DELEGUA_TEXTO_ESTATICO(nome, literal)                                                \

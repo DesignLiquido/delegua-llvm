@@ -3,7 +3,7 @@ import llvm from '@designliquido/llvm-bindings';
 import type { CompiladorLLVM } from './compilador-llvm';
 
 /**
- * Declarações das funções do runtime C (`bibliotecas/*.c`) usadas pelo código gerado.
+ * Declarações das funções do tempo de execução C (`bibliotecas/*.c`) usadas pelo código gerado.
  * Implementado como mixin de CompiladorLLVM.
  */
 

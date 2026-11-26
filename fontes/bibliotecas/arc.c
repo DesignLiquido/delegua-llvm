@@ -3,11 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Contadores globais (o runtime Delégua é monothread).
+// Contadores globais (o tempo de execução Delégua é monothread).
 static int64_t arc_alocacoes_vivas = 0;
 static int64_t arc_total_alocacoes = 0;
 static int64_t arc_total_liberacoes = 0;
 static int64_t arc_ciclos_coletados = 0;
+// Chamadas a reter/liberar (inclusive as que não fazem nada), para medir o custo do ARC.
+static int64_t arc_chamadas_reter = 0;
+static int64_t arc_chamadas_liberar = 0;
 static int arc_fim_normal = 0;
 static ArcQuadroLimpeza* arc_topo_limpeza = NULL;
 
@@ -363,11 +366,13 @@ static void relatorio_depuracao(void) {
     // Ciclos ainda não coletados contam como vazamento só se sobreviverem a uma coleta final.
     delegua_arc_coletar_ciclos();
     fprintf(stderr,
-            "[DELEGUA ARC] alocacoes=%lld liberacoes=%lld vivas=%lld ciclos=%lld\n",
+            "[DELEGUA ARC] alocacoes=%lld liberacoes=%lld vivas=%lld ciclos=%lld reter=%lld liberar=%lld\n",
             (long long)arc_total_alocacoes,
             (long long)arc_total_liberacoes,
             (long long)arc_alocacoes_vivas,
-            (long long)arc_ciclos_coletados);
+            (long long)arc_ciclos_coletados,
+            (long long)arc_chamadas_reter,
+            (long long)arc_chamadas_liberar);
     fflush(stderr);
     if (modo && strcmp(modo, "estrito") == 0 && arc_fim_normal && arc_alocacoes_vivas > 0) {
         _Exit(99);
@@ -412,6 +417,7 @@ void* delegua_arc_realocar(void* p, size_t novo_tamanho) {
 }
 
 void delegua_arc_reter(void* p) {
+    arc_chamadas_reter++;
     ArcCabecalho* c = cabecalho_valido(p);
     if (!c || c->rc < 0) return;
     c->rc++;
@@ -419,6 +425,7 @@ void delegua_arc_reter(void* p) {
 }
 
 void delegua_arc_liberar(void* p) {
+    arc_chamadas_liberar++;
     ArcCabecalho* c = cabecalho_valido(p);
     if (!c || c->rc < 0) return;
     if (c->rc <= 0) {

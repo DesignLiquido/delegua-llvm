@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-// Testa o runtime ARC diretamente em C (arc-teste.c): contagem de referências, destrutores de
+// Testa o tempo de execução ARC diretamente em C (arc-teste.c): contagem de referências, destrutores de
 // Vetor, Dicionario, JsonRef e TabelaCsv, e ausência de alocações vivas ao final.
 // Precisa do clang (o ambiente de testes de unidade pode não ter).
 const temClang = spawnSync('clang', ['--version'], { stdio: 'ignore' }).status === 0;
@@ -55,7 +55,7 @@ descrever('Runtime ARC (C)', () => {
         try {
             executavel = compilar('arc-teste-asan', ['-g', '-fsanitize=address']);
         } catch {
-            // Sem o runtime do ASan instalado: nada a verificar neste ambiente.
+            // Sem o tempo de execução do ASan instalado: nada a verificar neste ambiente.
             return;
         }
         const resultado = spawnSync(executavel, [], { encoding: 'utf-8' });

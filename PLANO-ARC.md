@@ -7,7 +7,7 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
 ## Decisões de Arquitetura Aprovadas
 
 1. **`Vetor` como referência ARC no heap:** Deixa de ser um struct copiado por valor (`{ ptr, i32 }`) para ser um objeto no heap gerenciado por ARC (com `capacidade`, crescimento geométrico e elemento gerenciado), eliminando cópia rasa + *use-after-free* e unificando `vetor.h` e `estatistica.h`.
-2. **Literais `texto` com cabeçalho imortal (`rc = -1`):** Literais globais no LLVM IR e constantes C no runtime recebem um cabeçalho negativo `{ rc = -1, descritor = NULL }` antes dos bytes UTF-8 em `.rodata`, preservando 100% de compatibilidade com `char*` em `printf`/FFI sem tabela hash de ponteiros. Strings retornadas por funções FFI externas (`@definicao`) são copiadas na fronteira para strings ARC.
+2. **Literais `texto` com cabeçalho imortal (`rc = -1`):** Literais globais no LLVM IR e constantes C no tempo de execução recebem um cabeçalho negativo `{ rc = -1, descritor = NULL }` antes dos bytes UTF-8 em `.rodata`, preservando 100% de compatibilidade com `char*` em `printf`/FFI sem tabela hash de ponteiros. Strings retornadas por funções FFI externas (`@definicao`) são copiadas na fronteira para strings ARC.
 3. **Handles opacos C encapsulados em caixas ARC:** Handles de módulos (`json`, `csv`, `dados`, `arquivos`, `http`, `rede`) deixam de usar o tipo `'texto'` em `registro-modulos/*.ts`, passam a usar tipos opacos distintos (`opaco:*`) encapsulados em objetos ARC com destrutor C automático (mantendo `.liberar()` / `.fechar()` idempotentes), e todos os acessores de string retornam cópias ARC seguras em vez de ponteiros emprestados/internos.
 4. **Quebra de ciclos via coletor de ciclos auxiliar (+ `fraco`):** Além da contagem de referências determinística e suporte a referências fracas (`fraco`), o `ArcDescritor` incluirá suporte a visitação de filhos para um coletor de ciclos por *trial deletion* (estilo Bacon-Rajan) para grafos cíclicos de classes, vetores e dicionários.
 
@@ -52,7 +52,7 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
   - Remover a definição duplicada de `Vetor` em `estatistica.h` (incluindo `vetor.h`).
   - Adicionar `capacidade` (crescimento $2\times$), `tam_elem` e metadados de elemento em `Vetor`, passando a alocar a estrutura `Vetor` no heap via `delegua_vetor_criar` e representá-la no LLVM IR como `ptr` (eliminando cópia por valor `{ ptr, i32 }`).
   - Unificar funções que retornavam `Vetor*` vs out-param `Vetor*`.
-- [x] **0.4 Corrigir segurança de ponteiros e checagens no runtime C:**
+- [x] **0.4 Corrigir segurança de ponteiros e checagens no tempo de execução C:**
   - Substituir o `[2 x i8]` na pilha em `para cada c em texto` por alocação segura (`delegua_texto_caractere_em` ou buffer heap).
   - Fazer funções que retornam ponteiros emprestados (`delegua_arq_para_texto`, `delegua_json_valor_texto`, `delegua_json_chaves`, `delegua_dicionario_chaves`, `delegua_csv_obter_celula`, `delegua_http_dados`, `delegua_rede_ultimo_erro`, `delegua_arg_argumento`) retornarem cópias próprias ou estáticas seguras.
   - Corrigir checagens de `ftell < 0` / `fread` / `strdup == NULL` em `arquivos.c`, `csv.c`, `json.c`, `http.c` e `dicionario.c`.
@@ -65,21 +65,21 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
     - `para cada c em "literal"` não gerava o laço; texto bruto agora é guardado num slot.
     - `arquivos.c` não compilava (`duplicar_texto` usado antes de declarado).
 
-### Fase 1 — Runtime ARC (`arc.h` / `arc.c`) e Migração das Coleções
+### Fase 1 — Tempo de execução ARC (`arc.h` / `arc.c`) e Migração das Coleções
 - [x] **1.1 Criar `fontes/bibliotecas/arc.h` e `fontes/bibliotecas/arc.c`** e incluí-los em `BIBLIOTECAS_NUCLEO`:
-  - `ArcCabecalho { int32_t rc; uint32_t magia; const ArcDescritor* tipo; }` (16 bytes antes do payload). A `magia` (`DELEGUA_ARC_MAGIA`) identifica ponteiros gerenciados: `reter`/`liberar` ignoram ponteiros sem ela, o que permite migrar runtime e compilador aos poucos.
+  - `ArcCabecalho { int32_t rc; uint32_t magia; const ArcDescritor* tipo; }` (16 bytes antes do payload). A `magia` (`DELEGUA_ARC_MAGIA`) identifica ponteiros gerenciados: `reter`/`liberar` ignoram ponteiros sem ela, o que permite migrar tempo de execução e compilador aos poucos.
   - `ArcDescritor { const char* nome; void (*destrutor)(void*); void (*visitar_filhos)(void*, visitante, contexto); }`.
   - Primitivas: `delegua_arc_alocar`, `delegua_arc_reter`, `delegua_arc_liberar`, `delegua_arc_atribuir(void** slot, void* novo)`, `delegua_arc_texto_criar`, `delegua_arc_texto_copiar`, `DELEGUA_TEXTO_ESTATICO("...")`.
   - Contadores de depuração (`DELEGUA_ARC_DEPURACAO`) para validar 0 vazamentos em testes.
-- [x] **1.2 Migrar todas as alocações do runtime C** (`padrao.c`, `texto.c`, `vetor.c`, `dicionario.c`, `arquivos.c`, `csv.c`, `dados.c`, `http.c`, `json.c`, `rede.c`, `processo.c`, `criptografia*.c`, `memoria.c`) para o alocador ARC.
+- [x] **1.2 Migrar todas as alocações do tempo de execução C** (`padrao.c`, `texto.c`, `vetor.c`, `dicionario.c`, `arquivos.c`, `csv.c`, `dados.c`, `http.c`, `json.c`, `rede.c`, `processo.c`, `criptografia*.c`, `memoria.c`) para o alocador ARC.
 - [x] **1.3 Destrutores completos de coleções, caixas `qualquer` e handles opacos (`ARC_OPACO`):**
   - `Vetor`: libera elementos gerenciados em `remover*`, sobrescrita e destruição, e libera o buffer de elementos.
   - `Dicionario`: `definir` e `remover` liberam valores antigos/removidos; destrutor libera todas as entradas, chaves, valores e `baldes`.
   - `ArcCaixa`: substitui `embalarValorEmHeap` para valores escalares em dicionários e parâmetros `qualquer`.
   - `ARC_OPACO`: caixas ARC para `cJSON*`, `Arquivo*`, `TabelaCsv*`, `RecorteDados*`, `Serie*`, `ClienteHttp*`, `RespostaHttp*`, `SoqueteDelegua*` com limpeza automática (e `.liberar()`/`.fechar()` idempotentes).
 
-  - **Estado (2026-11-25):** Fase 1 concluída. `arc.h`/`arc.c` no núcleo; todo texto devolvido pelo runtime C é ARC (+1); `Vetor`, `Dicionario`, `JsonRef`, `TabelaCsv`, `RecorteDados`, `Serie`, `Arquivo`, `SoqueteDelegua`, `ClienteHttp` e `RespostaHttp` são objetos ARC com destrutor, e os `liberar`/`fechar` manuais liberam o conteúdo de forma idempotente (a estrutura em si fica para o ARC). Verificado por `testes/bibliotecas/arc-teste.c` (0 alocações vivas, limpo sob AddressSanitizer), pela suíte de execução e compilando o `delegua-delegua`.
-    - **Convenção do runtime:** funções devolvem +1; coleções retêm o que guardam e liberam o que removem, sobrescrevem ou destroem; parâmetros são emprestados (+0).
+  - **Estado (2026-11-25):** Fase 1 concluída. `arc.h`/`arc.c` no núcleo; todo texto devolvido pelo tempo de execução C é ARC (+1); `Vetor`, `Dicionario`, `JsonRef`, `TabelaCsv`, `RecorteDados`, `Serie`, `Arquivo`, `SoqueteDelegua`, `ClienteHttp` e `RespostaHttp` são objetos ARC com destrutor, e os `liberar`/`fechar` manuais liberam o conteúdo de forma idempotente (a estrutura em si fica para o ARC). Verificado por `testes/bibliotecas/arc-teste.c` (0 alocações vivas, limpo sob AddressSanitizer), pela suíte de execução e compilando o `delegua-delegua`.
+    - **Convenção do tempo de execução:** funções devolvem +1; coleções retêm o que guardam e liberam o que removem, sobrescrevem ou destroem; parâmetros são emprestados (+0).
     - **`Vetor`** ganhou o campo `gerenciado` (`%Vetor = { ptr, i32, i32, i32, i32 }`) e `delegua_vetor_criar(tamanho, tam_elem, gerenciado)`; o compilador marca como gerenciados os elementos que não são escalares, ponteiros de função ou `ponteiro`.
     - **JSON:** `cJSON*` não pode ter cabeçalho, então o handle virou `JsonRef { no, raiz, removidos }`. Filhos (`obterCampo`/`obterItem`) retêm a raiz; nós substituídos ou removidos vão para `removidos` (nunca ficam pendentes); `json.liberar` apaga a árvore e os filhos passam a ver JSON inválido.
     - **Caixas `qualquer`:** `embalarValorEmHeap` usa `delegua_arc_caixa`. `texto[i]` e `para cada c em texto` leem o byte direto e criam um texto ARC de 1 caractere (sem `strlen` por iteração).
@@ -91,7 +91,7 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
 - [x] **2.2 Destrutores gerados para classes:** `__destrutor_<Classe>` e `__arc_desc_<Classe>` criados na primeira instanciação (layout completo, inclusive campos herdados); instâncias e `Excecao` alocadas com `delegua_arc_alocar`.
 - [x] **2.3 Convenção de chamadas (+0 emprestado / +1 retornado):**
   - Parâmetros em +0. `retorna` retém o valor devolvido (+1).
-  - Temporários: um gancho em `CreateCall` reconhece, pelo nome do alvo (registrado quando a função é obtida ou criada), chamadas que devolvem +1: funções, métodos e lambdas Delégua com retorno de ponteiro, despachos, `delegua_arc_alocar`/criadores do runtime C (com lista de exceções emprestadas: `delegua_dicionario_obter`, `delegua_vetor_definir_indice`, `delegua_excecao_*`, memória bruta). O resultado vai para um slot próprio do ponto de criação; gravar de novo no slot libera o valor anterior (laços), e os slots pendentes são liberados ao fim de cada instrução (expressão, `var`/`const`, `escreva`) e nos retornos. Chamadas indiretas (ponteiro de função) são tratadas como emprestadas: no pior caso vazam, nunca liberam cedo.
+  - Temporários: um gancho em `CreateCall` reconhece, pelo nome do alvo (registrado quando a função é obtida ou criada), chamadas que devolvem +1: funções, métodos e lambdas Delégua com retorno de ponteiro, despachos, `delegua_arc_alocar`/criadores do tempo de execução C (com lista de exceções emprestadas: `delegua_dicionario_obter`, `delegua_vetor_definir_indice`, `delegua_excecao_*`, memória bruta). O resultado vai para um slot próprio do ponto de criação; gravar de novo no slot libera o valor anterior (laços), e os slots pendentes são liberados ao fim de cada instrução (expressão, `var`/`const`, `escreva`) e nos retornos. Chamadas indiretas (ponteiro de função) são tratadas como emprestadas: no pior caso vazam, nunca liberam cedo.
   - Caller e callee usam a mesma regra (`retornoPonteiroEhProprio` sobre o tipo de retorno declarado): só tipos explicitamente não gerenciados (`ponteiro`, função, estrangeiros) ficam de fora.
 - [x] **2.4 Variáveis e campos donos de referência:**
   - Cada função (inclusive `main` e lambdas) tem um quadro ARC (pilha aninhada). Slots locais gerenciados são gravados com `delegua_arc_atribuir` (declaração, reatribuição, iteração seguinte de um laço) e liberados antes de cada `ret`, inserido ao fim da compilação (com localização de depuração do subprograma). **Diferente do plano original:** a liberação é no fim da função, não no fim de cada bloco léxico; a variável de um bloco dentro de um laço é solta na iteração seguinte (pelo `atribuir`) ou no retorno. `sustar`/`continua` não precisam de tratamento especial.
@@ -100,7 +100,7 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
   - Tipo desconhecido ou `nulo` conta como gerenciado (`var r = nulo` que depois recebe um objeto temporário causava uso após liberação).
   - Literais de vetor gravados em destinos tipados (variável, campo, retorno, argumento) assumem o tipo de elemento do destino; sem isso `isto.simbolos = []` num campo `Simbolo[]` criava um vetor não gerenciado e os objetos adicionados eram liberados.
 - **Estado (2026-11-25):** Fase 2 concluída. Os programas de teste e o interpretador `delegua-delegua` compilado terminam com 0 alocações vivas (`DELEGUA_ARC_DEPURACAO`) e sem erros sob AddressSanitizer (inclusive sem a isenção da leitura da magia). Testes: `testes/compilador-llvm.arc-execucao.test.ts` (modo estrito).
-  - **Vetores sem verificação de limites:** o código compilado não verifica índices. O runtime mantém uma posição sentinela zerada após o último elemento e zera posições removidas, então `v[v.tamanho()]` devolve nulo (o `delegua-delegua` lê o símbolo atual após o fim); leituras mais distantes continuam indefinidas e, com ARC, podem travar ao reter lixo.
+  - **Vetores sem verificação de limites:** o código compilado não verifica índices. O tempo de execução mantém uma posição sentinela zerada após o último elemento e zera posições removidas, então `v[v.tamanho()]` devolve nulo (o `delegua-delegua` lê o símbolo atual após o fim); leituras mais distantes continuam indefinidas e, com ARC, podem travar ao reter lixo.
   - ~~Pendente para a Fase 3: temporários e variáveis de funções abandonadas por `longjmp` não são liberados; o objeto e a mensagem da exceção vivem até o fim do programa.~~ Resolvido na Fase 3.
   - **Pendente para a Fase 4.3:** pares `reter`/`liberar` redundantes (temporário consumido por variável), temporários da condição de `se`/`enquanto` liberados só na instrução seguinte ou no retorno.
 
@@ -108,17 +108,28 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
 - [x] **3.1 Quadro de limpeza cooperativo em `arc.c` / `excecoes.c` / `arc.ts`:**
   - Cada função Delégua com slots gerenciados monta na própria pilha um quadro `{ anterior, quantidade, [N x ptr] slots }` com os endereços dos seus slots donos e temporários, empilhado no início do corpo (`delegua_arc_quadro_empilhar`) e desempilhado antes de cada `ret`. O quadro é montado ao finalizar a compilação, antes de uma âncora (carga morta) emitida no início do corpo, depois das allocas; só é emitido se o programa tiver algum `tente` (sem `tente`, custo zero).
   - Cada `tente` guarda o topo dos quadros de limpeza ao instalar o tratador; `delegua_excecao_lancar` libera (e anula) os slots de todos os quadros acima dele antes do `longjmp`. A função que contém o `tente` não é afetada (o quadro dela está abaixo da marca).
-  - O runtime é dono de uma referência ao objeto e de uma cópia ARC da mensagem em voo (retidos antes de desenrolar). O despacho do `pegue` guarda os dois em slots donos e chama `delegua_excecao_concluir`, que solta os do runtime; o caminho sem `pegue` correspondente (`finalmente` + relançamento) usa os slots.
+  - O tempo de execução é dono de uma referência ao objeto e de uma cópia ARC da mensagem em voo (retidos antes de desenrolar). O despacho do `pegue` guarda os dois em slots donos e chama `delegua_excecao_concluir`, que solta os do tempo de execução; o caminho sem `pegue` correspondente (`finalmente` + relançamento) usa os slots.
   - O modo estrito de `DELEGUA_ARC_DEPURACAO` só acusa vazamentos após o fim normal de `main` (`delegua_arc_fim_normal`): exceção não tratada continua saindo com código 1.
 - **Estado (2026-11-25):** Fase 3 concluída. 200 exceções atravessando 6 níveis de chamadas com textos, objetos e vetores locais: 7205 alocações, 7205 liberações, sem erros sob AddressSanitizer (também com `-g`). Testes em `testes/compilador-llvm.arc-execucao.test.ts`.
-  - Limitação: temporários criados dentro de funções do runtime C que chamam `falhar` (ex.: erro no meio de uma operação de vetor) não são liberados.
+  - Limitação: temporários criados dentro de funções do tempo de execução C que chamam `falhar` (ex.: erro no meio de uma operação de vetor) não são liberados.
 
-### Fase 4 — Coletor de Ciclos Auxiliar, `fraco` e Otimizações
-- [ ] **4.1 Coletor de ciclos (Bacon-Rajan *trial deletion*):**
-  - Implementar `visitar_filhos` nos descritores de classes, vetores e dicionários.
-  - Manter buffer de raízes candidatas (objetos cujo `rc` foi decrementado mas continuou `> 0`) e executar marcação/varredura de ciclos quando o limiar for atingido ou sob demanda (`delegua_arc_coletar_ciclos`).
-- [ ] **4.2 Referências fracas (`fraco`):** Suportar campos/referências `fraco` com contador fraco ou *side-table* que retornam `nulo` após destruição do alvo.
-- [ ] **4.3 Elisões e otimização:** Pular `reter`/`liberar` em literais constantes, usar semântica de movimento para temporários e manter passes LLVM (`SROA`, `EarlyCSE`, `InstCombine`).
+### Fase 4 — Coletor de Ciclos Auxiliar, `@fraco` e Otimizações
+- [x] **4.1 Coletor de ciclos (Bacon-Rajan *trial deletion* síncrono, em `arc.c`):**
+  - `visitar_filhos` em `Vetor` (gerenciado), `Dicionario` e nas classes: `__visitar_<Classe>` é gerado só quando a classe tem campos que podem fechar um ciclo (não só `texto`/`opaco:*`) e ignora campos `@fraco`.
+  - Uma liberação que deixa `rc > 0` num objeto com `visitar_filhos` o põe no buffer de raízes candidatas. A coleta roda num ponto de alocação quando o buffer passa de 10 000 raízes (nunca dentro de um destrutor) e ao fim do programa no modo de depuração; `delegua_arc_coletar_ciclos()` também pode ser chamada diretamente.
+  - Cor e marcadores do coletor ficam no byte baixo de `magia` (os 24 bits altos continuam identificando o cabeçalho; os literais `{ i32 -1, i32 0xA4C0DE1A, ... }` não mudam).
+  - Percursos iterativos (sem recursão em C). No lixo, as arestas para objetos vivos são restauradas, os objetos ficam imortais e passam pelos destrutores normais (que soltam só os filhos vivos); por fim a memória é desalocada. Objeto que chega a `rc = 0` enquanto está no buffer roda o destrutor e só tem a memória desalocada pela coleta.
+- [x] **4.2 Referências fracas com o decorador `@fraco` (em vez de palavra reservada; não exige mudança na gramática):**
+  - `@fraco` num campo de classe: a gravação usa `delegua_arc_fraco_atribuir`, que não retém e registra o slot numa tabela lateral (alvo → slots, marcador `MARCA_TEM_FRACOS` no cabeçalho). Quando o alvo morre (liberação ou coleta de ciclo), todos os slots registrados viram nulo antes do destrutor dele.
+  - O destrutor do dono só cancela o registro; o visitante de ciclos ignora o campo. `@fraco` em campo que não referencia objeto/vetor/dicionário (escalar, `texto`) é erro de compilação.
+- [x] **4.3 Elisões e otimização:**
+  - `reter`/`liberar` não são emitidos para constantes (literais imortais, nulo); `atribuir` de constante vira carga + gravação + liberação do anterior.
+  - Semântica de movimento: um temporário +1 consumido na mesma instrução por variável, campo ou `retorna` passa a referência adiante (slot do temporário anulado), sem par `reter`/`liberar`.
+  - Dentro de instruções que liberam seus temporários (expressão, `var`/`const`, `escreva`), o ponto de criação não solta mais o valor anterior do slot (sempre nulo ali); o despacho do `pegue` solta todos os temporários da função, cobrindo a instrução interrompida por `longjmp`.
+  - Medição (300 mil iterações com texto, objeto e campo; 1,2 milhão de alocações): chamadas a `reter` 1,5 M → 0,3 M, `liberar` 4,5 M → 2,7 M, tempo ~200 ms → ~184 ms. O relatório de `DELEGUA_ARC_DEPURACAO` passou a mostrar `ciclos`, `reter` e `liberar`.
+- **Estado (2026-11-25):** Fase 4 concluída. Testes: ciclos (árvores pai ↔ filhos, cadeia circular de 100 mil nós com coletas automáticas, dicionário que contém a si mesmo), `@fraco` (zerado ao morrer o alvo, sem coleta necessária), exceção interrompendo instrução em laço; tudo com 0 alocações vivas e sem erros sob AddressSanitizer.
+  - Correção encontrada nos testes: variável `número` passada a parâmetro `inteiro` era lida como i32 a partir dos bits do double (`var i = 3; g(i)` passava 0); agora é carregada com o tipo da variável e convertida.
+  - Pendente: operações com custo ainda evitável (liberações de nulo nas saídas de função, temporários de condições de `se`/`enquanto` liberados só na instrução seguinte).
 
 ### Fase 5 — Verificação e Regressão Anti-Vazamento
 - [ ] **5.1 Modo estrito de testes (`DELEGUA_ARC_DEPURACAO`):** Falhar testes de execução quando `alocacoes_vivas > 0` ao fim do programa.

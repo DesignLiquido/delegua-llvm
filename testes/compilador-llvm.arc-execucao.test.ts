@@ -167,6 +167,31 @@ descrever('ARC - execução sem vazamentos', () => {
         expect(linhas).toEqual(['200', 'falhou em nivel 0 503', 'finalmente', 'simples ab']);
     }, 300000);
 
+    it('exceção que interrompe uma instrução solta os temporários dela no pegue', async () => {
+        // g lança no meio de `f() + g(i) + f()`: o temporário de f() já existe e a instrução
+        // não chega ao fim, onde seria solto.
+        const linhas = await compilarEExecutar('excecao-instrucao', [
+            'funcao f(): texto { retorna "f" + "1" }',
+            'funcao g(n: inteiro): texto {',
+            '    se n % 2 == 0 { falhar "par " + texto(n) }',
+            '    retorna "g"',
+            '}',
+            'var erros = 0',
+            'var ok = 0',
+            'para (var i = 0; i < 1000; i = i + 1) {',
+            '    tente {',
+            '        var s = f() + g(i) + f()',
+            '        ok = ok + 1',
+            '    } pegue (erro) {',
+            '        erros = erros + 1',
+            '    }',
+            '}',
+            'escreva(ok)',
+            'escreva(erros)',
+        ]);
+        expect(linhas).toEqual(['500', '500']);
+    }, 300000);
+
     it('exceção não tratada mantém o código de saída 1 no modo estrito', async () => {
         await expect(compilarEExecutar('nao-tratada', ['var s = "x" + "y"', 'falhar "fim " + s'])).rejects.toThrow(
             /código de saída 1: Erro não tratado: fim xy/

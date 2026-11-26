@@ -357,9 +357,9 @@ async function principal() {
             taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
         }
 
-        // Fontes C de pacotes ("nativo.fontes"). Podem incluir os cabeçalhos do runtime
+        // Fontes C de pacotes ("nativo.fontes"). Podem incluir os cabeçalhos do tempo de execução
         // (ex.: "vetor.h"). O nome do objeto leva um hash do caminho para não colidir
-        // com os objetos do runtime nem com fontes homônimas de outros pacotes.
+        // com os objetos do tempo de execução nem com fontes homônimas de outros pacotes.
         for (const arquivoC of compilador.fontesNativasPacotes) {
             const hashCaminho = createHash('sha1').update(arquivoC).digest('hex').slice(0, 8);
             const nomeArquivo = `pacote-${hashCaminho}-${path.basename(arquivoC, '.c')}`;

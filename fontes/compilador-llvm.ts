@@ -234,6 +234,11 @@ import {
     armazenarVariavelArc,
     slotEhDonoArc,
     armazenarCampoArc,
+    consumirTemporarioArc,
+    entrarInstrucaoArc,
+    sairInstrucaoArc,
+    liberarTodosTemporariosArc,
+    atribuirDonoArc,
     reterRetornoArc,
     finalizarQuadrosArc,
     QuadroArc,
@@ -316,6 +321,11 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     armazenarVariavelArc: typeof armazenarVariavelArc;
     slotEhDonoArc: typeof slotEhDonoArc;
     armazenarCampoArc: typeof armazenarCampoArc;
+    consumirTemporarioArc: typeof consumirTemporarioArc;
+    entrarInstrucaoArc: typeof entrarInstrucaoArc;
+    sairInstrucaoArc: typeof sairInstrucaoArc;
+    liberarTodosTemporariosArc: typeof liberarTodosTemporariosArc;
+    atribuirDonoArc: typeof atribuirDonoArc;
     reterRetornoArc: typeof reterRetornoArc;
     finalizarQuadrosArc: typeof finalizarQuadrosArc;
     argumentosVetorCriar: typeof argumentosVetorCriar;
@@ -406,7 +416,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
     // Mapa de módulos importados: nomeModulo → (nomeFuncaoDelégua → FunctionCallee).
     // Populado em criarFuncaoNativa() à medida que as bibliotecas são implementadas.
     protected mapaModulos: Map<string, Map<string, EntradaFuncaoModulo>> = new Map();
-    // Funções C do runtime declaradas sob demanda por obterFuncaoRuntime().
+    // Funções C do tempo de execução declaradas sob demanda por obterFuncaoRuntime().
     protected funcoesRuntime: Map<string, llvm.FunctionCallee> = new Map();
     // FFI: estruturas C declaradas como `classe estrangeira` com campos, e trampolins
     // gerados para passar funções Delégua a código C (ver ffi/compilacao-ffi.ts).
@@ -742,8 +752,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 const tipoArc = destino.tipo || tipoDestinoDelegua;
                 if (this.tipoGerenciadoArc(tipoArc) && tipoEhPonteiro(valor.getType())) {
                     if (this.slotEhDonoArc(destino.variavelLlvm)) {
-                        // Variável local dona de referência: retém o novo, libera o antigo.
-                        this.emitirArcAtribuir(destino.variavelLlvm, valor);
+                        // Variável local dona de referência: move um temporário ou retém o novo; libera o antigo.
+                        this.atribuirDonoArc(destino.variavelLlvm, valor);
                     } else {
                         // Slot de outro dono (ex.: parâmetro texto, que é o slot de quem chamou):
                         // só retém o novo valor. Nunca libera o antigo, que não é nosso.
@@ -1431,7 +1441,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // elemento do vetor enquanto ainda o usa).
             this.armazenarVariavelArc(alocElemento, valorElementos, tipoElementoStr);
         } else {
-            // texto: cada elemento é uma string alocada via runtime (segura caso escape do laço).
+            // texto: cada elemento é uma string alocada via tempo de execução (segura caso escape do laço).
             tipoElementoStr = 'texto';
             alocElemento = this.criarAllocaNoBlocoEntrada(this.montador.getPtrTy(), nomeElemento + '_ptr', true);
 
@@ -1747,7 +1757,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         // Caminho LLVM IR: dicionário (literal {} ou campo `qualquer` populado com {})
-        // acessado por chave texto — delega para o runtime de hash.
+        // acessado por chave texto — delega para o tempo de execução de hash.
         if (alvoParaIndice instanceof VariavelEscopo && tipoEhDicionario(alvoParaIndice.tipo)) {
             const dictPtr = this.resolverPonteiroDireto(alvoParaIndice);
             const chavePtr = this.resolverPonteiroDireto(indiceResolvido);
@@ -2011,7 +2021,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             // Resolve o índice como valor LLVM i32.
             const indiceValor = this.resolverIndiceVetorComoI32(indiceBruto, indiceResolvido, 'store');
 
-            // Escreve via runtime em vez de um GEP cru sobre o ponteiro de elementos
+            // Escreve via tempo de execução em vez de um GEP cru sobre o ponteiro de elementos
             // atual: `delegua_vetor_definir_indice` cresce (realoca) o vetor quando
             // `indiceValor` está além do tamanho atual, e devolve o endereço de destino
             // já válido. Sem isso, atribuição por índice além da capacidade (ex.: usar
@@ -4300,7 +4310,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         return argumento;
     }
 
-    // Declara (uma única vez por módulo) uma função C do runtime e a devolve.
+    // Declara (uma única vez por módulo) uma função C do tempo de execução e a devolve.
     // Usado pelos métodos embutidos mais recentes, para não exigir um campo
     // `funcaoX` + declaração em criarFuncaoNativa() para cada função.
     obterFuncaoRuntime(nomeC: string, tipoRetorno: llvm.Type, tiposParametros: llvm.Type[]): llvm.FunctionCallee {
@@ -4768,11 +4778,19 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     const tipoParam = tiposParametros[indice] || argumentoResolvido.tipo || 'número';
                     const tipoLlvm = this.obterTipoLlvm(tipoParam);
                     if (tipoEhPonteiro(argumentoResolvido.variavelLlvm.getType())) {
+                        // Variável escalar de outro tipo (ex.: `var i = 3`, que é número, passada a
+                        // um parâmetro inteiro): carrega com o tipo da variável e converte. Carregar
+                        // um i32 do slot de um double lia os bits baixos do número.
+                        const tipoVariavel = argumentoResolvido.tipo;
+                        const escalares = ['inteiro', 'longo', 'número', 'numero', 'lógico', 'logico'];
+                        const converter =
+                            escalares.includes(tipoVariavel) && escalares.includes(tipoParam) && tipoVariavel !== tipoParam;
                         argumentoResolvido = this.montador.CreateLoad(
-                            tipoLlvm,
+                            converter ? this.obterTipoLlvm(tipoVariavel) : tipoLlvm,
                             argumentoResolvido.variavelLlvm,
                             'load_arg'
                         );
+                        if (converter) argumentoResolvido = this.coagirEscalar(argumentoResolvido, tipoLlvm, 'conv_arg');
                     } else {
                         argumentoResolvido = argumentoResolvido.variavelLlvm;
                     }
@@ -5354,6 +5372,11 @@ CompiladorLLVM.prototype.liberarTemporariosInstrucaoArc = liberarTemporariosInst
 CompiladorLLVM.prototype.armazenarVariavelArc = armazenarVariavelArc;
 CompiladorLLVM.prototype.slotEhDonoArc = slotEhDonoArc;
 CompiladorLLVM.prototype.armazenarCampoArc = armazenarCampoArc;
+CompiladorLLVM.prototype.consumirTemporarioArc = consumirTemporarioArc;
+CompiladorLLVM.prototype.entrarInstrucaoArc = entrarInstrucaoArc;
+CompiladorLLVM.prototype.sairInstrucaoArc = sairInstrucaoArc;
+CompiladorLLVM.prototype.liberarTodosTemporariosArc = liberarTodosTemporariosArc;
+CompiladorLLVM.prototype.atribuirDonoArc = atribuirDonoArc;
 CompiladorLLVM.prototype.reterRetornoArc = reterRetornoArc;
 CompiladorLLVM.prototype.finalizarQuadrosArc = finalizarQuadrosArc;
 CompiladorLLVM.prototype.argumentosVetorCriar = argumentosVetorCriar;
@@ -5377,8 +5400,14 @@ for (const nomeVisitante of [
 ] as const) {
     const original = CompiladorLLVM.prototype[nomeVisitante] as (...argumentos: unknown[]) => Promise<unknown>;
     (CompiladorLLVM.prototype as any)[nomeVisitante] = async function (this: CompiladorLLVM, ...argumentos: unknown[]) {
-        const resultado = await original.apply(this, argumentos);
-        this.liberarTemporariosInstrucaoArc();
-        return resultado;
+        // O quadro de entrada é o mesmo da saída (funções aninhadas abrem e fecham o seu dentro).
+        this.entrarInstrucaoArc();
+        try {
+            const resultado = await original.apply(this, argumentos);
+            this.liberarTemporariosInstrucaoArc();
+            return resultado;
+        } finally {
+            this.sairInstrucaoArc();
+        }
     };
 }

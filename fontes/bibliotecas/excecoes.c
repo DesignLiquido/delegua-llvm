@@ -23,7 +23,7 @@ typedef struct QuadroExcecao {
 typedef char verificar_tamanho_quadro[sizeof(QuadroExcecao) <= DELEGUA_TAMANHO_QUADRO_EXCECAO ? 1 : -1];
 
 static QuadroExcecao* topo = NULL;
-// Exceção em voo / sendo tratada. O runtime é dono de uma referência a cada um (ARC) até
+// Exceção em voo / sendo tratada. O tempo de execução é dono de uma referência a cada um (ARC) até
 // delegua_excecao_concluir ou o próximo lançamento.
 static void* objeto_atual = NULL;
 static char* mensagem_atual = NULL;

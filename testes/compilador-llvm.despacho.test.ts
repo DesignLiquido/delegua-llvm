@@ -129,7 +129,7 @@ describe('Compilador - longo em campos e conversões', () => {
         expect(resultado).toContain('store i64');
     });
 
-    it('longo(texto) chama a conversão de 64 bits do runtime', async () => {
+    it('longo(texto) chama a conversão de 64 bits do tempo de execução', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['var n: longo = longo("12345678901")', 'escreva(n)']);
 

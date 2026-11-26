@@ -12,7 +12,7 @@ import { tipoEhDicionario } from './ajudantes';
  * (núcleo): a função recebe dois elementos e devolve um valor > 0 quando o primeiro deve
  * vir depois do segundo. Implementado como mixin de CompiladorLLVM.
  *
- * O runtime (delegua_vetor_ordenar_com_funcao) ordena com um comparador C que recebe
+ * O tempo de execução (delegua_vetor_ordenar_com_funcao) ordena com um comparador C que recebe
  * ponteiros para os elementos; o compilador gera esse comparador para cada função Delégua.
  */
 

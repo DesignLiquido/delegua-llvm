@@ -3,7 +3,7 @@ import { CompiladorLLVM } from '../fontes/compilador-llvm';
 
 // Regressão: `vetor[indice] = valor` gerava um GEP cru sobre o ponteiro de
 // elementos ATUAL do vetor, sem checar limites nem crescer o buffer — o
-// runtime C não tinha (e o codegen não chamava) nenhuma função de "definir
+// tempo de execução C não tinha (e o codegen não chamava) nenhuma função de "definir
 // por índice, crescendo se preciso" (só existia `delegua_vetor_adicionar`,
 // que só cresce ao final). Escrever num índice além do tamanho atual (ex.:
 // usar `vetor[indice] = valor` para empilhar, como em `PilhaEscoposExecucao`

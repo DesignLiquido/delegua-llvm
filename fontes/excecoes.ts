@@ -8,7 +8,7 @@ import { VariavelEscopo } from './variavel-escopo';
 /**
  * Exceções (tente/pegue/senão/finalmente e falhar) com setjmp/longjmp, sem a ABI de
  * exceções de C++ — o mesmo mecanismo em Linux, macOS e Windows (MSVC e MinGW).
- * Implementado como mixin de CompiladorLLVM; o runtime está em bibliotecas/excecoes.c.
+ * Implementado como mixin de CompiladorLLVM; o tempo de execução está em bibliotecas/excecoes.c.
  *
  * Semântica do núcleo de Delégua:
  *   - `falhar <instância de classe>` lança o objeto; `falhar <outro valor>` lança uma
@@ -262,9 +262,11 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
         }
     }
 
-    // ── Despacho da exceção (o runtime já removeu o tratador) ──
+    // ── Despacho da exceção (o tempo de execução já removeu o tratador) ──
     this.montador.SetInsertPoint(blocoDespacho);
-    // Objeto e mensagem ficam em slots donos desta função (o runtime só empresta os seus e os
+    // Temporários de uma instrução do corpo interrompida pelo longjmp (Fase 4.3).
+    this.liberarTodosTemporariosArc();
+    // Objeto e mensagem ficam em slots donos desta função (o tempo de execução só empresta os seus e os
     // solta em delegua_excecao_concluir): continuam válidos no `finalmente` e ao repropagar.
     const slotObjeto = this.criarAllocaNoBlocoEntrada(ptr, 'objeto_excecao', true);
     const slotMensagem = this.criarAllocaNoBlocoEntrada(ptr, 'mensagem_excecao', true);
@@ -278,7 +280,7 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
     this.armazenarVariavelArc(slotMensagem, mensagemBruta, 'texto');
     this.montador.CreateCall(this.obterFuncaoRuntime('delegua_excecao_concluir', vazio, []), []);
     const mensagemAtual = this.montador.CreateLoad(ptr, slotMensagem, 'mensagem_excecao');
-    // Exceção lançada pelo runtime C (falhar(mensagem)): cria a Excecao aqui.
+    // Exceção lançada pelo tempo de execução C (falhar(mensagem)): cria a Excecao aqui.
     const semObjeto = this.montador.CreateICmpEQ(objetoBruto, llvm.Constant.getNullValue(ptr) as unknown as llvm.Value, 'sem_objeto');
     const blocoCriarObjeto = novoBloco('pegue_criar_excecao');
     const blocoComObjeto = novoBloco('pegue_com_objeto');

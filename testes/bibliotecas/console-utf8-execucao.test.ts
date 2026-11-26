@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-// No Windows, o runtime muda a página de código de saída do console para UTF-8 (65001) ao
+// No Windows, o tempo de execução muda a página de código de saída do console para UTF-8 (65001) ao
 // iniciar e restaura a original ao terminar. O teste roda o programa num cmd.exe com
 // `chcp 850` e consulta a página de saída com um auxiliar em C, durante e depois.
 const temClang = spawnSync('clang', ['--version'], { stdio: 'ignore' }).status === 0;

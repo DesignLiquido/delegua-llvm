@@ -119,7 +119,7 @@ export function tamElementoEmBytes(this: CompiladorLLVM, tipoElem: string): numb
 }
 
 // Verdadeiro se os elementos de um vetor deste tipo são ponteiros gerenciados por ARC
-// (texto, instâncias, vetores, dicionários, `qualquer`, handles opacos): o runtime retém o
+// (texto, instâncias, vetores, dicionários, `qualquer`, handles opacos): o tempo de execução retém o
 // que o vetor guarda e libera o que ele remove. Escalares (inteiro, número, lógico, longo) não.
 export function elementoVetorGerenciado(this: CompiladorLLVM, tipoElem: string): boolean {
     if (!tipoElem) return false;
