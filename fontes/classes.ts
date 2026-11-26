@@ -622,6 +622,18 @@ export async function chamarMetodoInstancia(
                 typeof (funcaoLlvm as any).arg_size === 'function' && indiceArgAtual < funcaoLlvm.arg_size()
                     ? funcaoLlvm.getArg(indiceArgAtual).getType()
                     : undefined;
+            // Vetor devolvido por valor (ex.: `objeto.metodo(criarLista())`): parâmetros de
+            // vetor recebem o endereço de um %Vetor, não uma caixa de `qualquer`.
+            if (
+                tipoParamEsperado &&
+                tipoEhPonteiro(tipoParamEsperado) &&
+                val &&
+                val.getType().isStructTy() &&
+                (tipoEhVetor(tipoParamDeclarado) || tipoEhVetor(this.resolverTipoConstruto(argumento as ConstrutoInterface)))
+            ) {
+                args.push(this.resolverPonteiroEstruturaVetor(val));
+                continue;
+            }
             if (tipoParamEsperado && tipoEhPonteiro(tipoParamEsperado) && val && !tipoEhPonteiro(val.getType())) {
                 // Mesma convenção ptr* de dupla indireção do ramo VariavelEscopo acima:
                 // a caixa do heap precisa ir numa alloca temporária antes de passar.

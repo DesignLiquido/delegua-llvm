@@ -1,0 +1,6 @@
+// Importa um elemento de um arquivo que outro arquivo importa com espaço de nomes.
+importar { dobro } de "./a"
+
+funcao quadruplo(x: inteiro): inteiro {
+    retorna dobro(dobro(x))
+}

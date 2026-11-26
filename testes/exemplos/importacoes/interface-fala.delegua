@@ -1,0 +1,4 @@
+// Interface declarada em um arquivo e implementada em outro.
+interface Fala {
+    falar(): texto
+}

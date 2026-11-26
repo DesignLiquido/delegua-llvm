@@ -78,6 +78,8 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
             tipo === 'qualquer' ||
             tipoEhVetor(tipo) ||
             this.ehTipoObjeto(tipo);
+        // Vetores são objetos ARC no heap: a variável guarda o ponteiro, que o dicionário
+        // retém. Não copiar o cabeçalho %Vetor por valor (o slot tem só 8 bytes).
         if (ehPonteiro) {
             return this.resolverPonteiroDireto(resolvido);
         }
@@ -97,12 +99,14 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
 // Aloca uma caixa ARC (delegua_arc_caixa) do tamanho do tipo dado e armazena o valor nela.
 export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo: llvm.Type): llvm.Value {
     const construtorTipo = tipo?.constructor;
-    const tamanhoBytes =
-        construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
-            ? 4
-            : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
-              ? 1
-              : 8;
+    // Estruturas (ex.: %Vetor devolvido por valor por uma função) ocupam mais de 8 bytes.
+    const tamanhoBytes = tipo?.isStructTy?.()
+        ? this.layoutDados.getTypeAllocSize(tipo)
+        : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(32)
+          ? 4
+          : construtorTipo === llvm.IntegerType && tipo.isIntegerTy(1)
+            ? 1
+            : 8;
     const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
     const funcaoCaixa = this.obterFuncaoRuntime('delegua_arc_caixa', this.montador.getPtrTy(), [
         llvm.Type.getInt64Ty(this.contexto),
@@ -257,7 +261,14 @@ export async function chamarMetodoVetor(
         case 'inclui': {
             if (tipoElem === 'texto') {
                 const valorBusca = await this.carregarArgumentoTexto(argumentos[0]);
-                return this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
+                const encontrado = this.montador.CreateCall(this.funcaoVetorIncluiTexto, [vetorPtr, valorBusca]);
+                // O runtime devolve int; `inclui` é lógico (i1) para poder ser retornado e
+                // atribuído como tal.
+                return this.montador.CreateICmpNE(
+                    encontrado,
+                    ConstantInt.get(this.contexto, new APInt(32, 0)),
+                    'vetor_inclui'
+                );
             }
             const erroInclui = new ErroCompilador(`Método 'inclui' só suportado para vetor<texto>.`);
             erroInclui.linha = linha;

@@ -1,0 +1,8 @@
+// Classe que implementa uma interface de outro arquivo.
+importar { Fala } de "./interface-fala"
+
+classe Gato implementa Fala {
+    falar(): texto {
+        retorna "miau"
+    }
+}

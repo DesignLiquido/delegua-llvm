@@ -131,7 +131,10 @@ import {
     ehImportacaoResolvida,
     criarContextoResolucao,
     registrarSimbolosImportados,
+    prepararImportacoesLocais,
 } from './resolucao-importacoes';
+import { ImportacoesLocais, renomearReferencias } from './espacos-nomes';
+import * as path from 'path';
 import { ErroCompilador } from './erros/erro-compilador';
 import { AlvoCompilacao, arquiteturaLlvmDoTriplo } from './alvos';
 import {
@@ -5102,6 +5105,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         this.fontesNativasPacotes = new Set();
         this.bibliotecasNativasPacotes = new Set();
         let contextoResolucao = criarContextoResolucao();
+        let importacoesLocais: ImportacoesLocais | null = null;
         contextoResolucao.prepararAvaliador = (avaliador) => CompiladorLLVM.ajustarAvaliadorSintatico(avaliador);
 
         if (diretorioBase) {
@@ -5120,6 +5124,15 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             this.fontesNativasPacotes = contextoResolucao.fontesNativas;
             this.bibliotecasNativasPacotes = contextoResolucao.bibliotecasNativas;
 
+            // Apelidos de `importar tudo como` e elementos vindos de arquivos com espaço de nomes.
+            importacoesLocais = prepararImportacoesLocais(
+                codigo,
+                nomeArquivoFonte ? path.join(diretorioArquivoFonte ?? diretorioBase, nomeArquivoFonte) : '<principal>',
+                diretorioBase,
+                contextoResolucao
+            );
+            const simbolosLocais = importacoesLocais.simbolosLocais();
+
             // analisar() reseta tiposDefinidosEmCodigo logo de início; envolve
             // inicializarPilhaEscopos (chamada depois do reset, antes do loop de parse)
             // para injetar as classes importadas no momento certo.
@@ -5128,7 +5141,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                 avaliadorComTipagem.inicializarPilhaEscopos = () => {
                     inicializarOriginal();
                     Object.assign(avaliadorComTipagem.tiposDefinidosEmCodigo, registroClasses);
-                    registrarSimbolosImportados(avaliadorComTipagem, declaracoesImportadas);
+                    Object.assign((avaliadorComTipagem as any).interfacesDeclaradas, contextoResolucao.interfaces);
+                    registrarSimbolosImportados(avaliadorComTipagem, declaracoesImportadas, simbolosLocais);
                 };
             }
 
@@ -5137,6 +5151,13 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
         }
 
         const resultadoLexador = this.lexador.mapear(codigoPrincipal, -1);
+        if (importacoesLocais) {
+            try {
+                resultadoLexador.simbolos = importacoesLocais.reescreverSimbolos(resultadoLexador.simbolos);
+            } catch (erro) {
+                throw new ErroCompilador((erro as Error).message);
+            }
+        }
         const resultadoAvaliadorSintatico = await this.avaliadorSintatico.analisar(resultadoLexador, -1);
 
         // Restaura inicializarPilhaEscopos para não afetar chamadas subsequentes.
@@ -5152,6 +5173,10 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             erroSintatico.linha = primeiroErro.simbolo?.linha ?? primeiroErro.linha;
             erroSintatico.coluna = primeiroErro.simbolo?.colunaInicio;
             throw erroSintatico;
+        }
+
+        if (importacoesLocais) {
+            renomearReferencias(resultadoAvaliadorSintatico.declaracoes, importacoesLocais.renomeacoes(), -1);
         }
 
         const todasDeclaracoes: Declaracao[] = [...declaracoesImportadas, ...resultadoAvaliadorSintatico.declaracoes];
