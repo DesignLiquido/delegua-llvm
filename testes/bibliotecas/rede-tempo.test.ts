@@ -30,6 +30,26 @@ describe('Compilador - módulo rede', () => {
         expect(ir).toContain('%requisicao = alloca ptr');
     });
 
+    it('soquetes são handles ARC: a variável assume a referência, liberada só na saída', async () => {
+        const ir = await compilar([
+            'var rede = importar("rede")',
+            'var servidor = rede.escutar("127.0.0.1", 0)',
+            'var conexao = rede.aceitar(servidor, 1000)',
+            'rede.fechar(conexao)',
+        ]);
+        // O +1 do temporário passa para a variável (slot zerado), em vez de o temporário ser
+        // liberado no fim da instrução — o que destruía (e fechava) o soquete na hora.
+        for (const nome of ['escutar', 'aceitar']) {
+            expect(ir).toMatch(
+                new RegExp(
+                    `(%\\d+) = call ptr @delegua_rede_${nome}\\([^\\n]*\\n\\s+store ptr \\1, ptr (%arc_tmp\\d*)[^\\n]*\\n\\s+store ptr null, ptr \\2`
+                )
+            );
+        }
+        expect(ir).toMatch(/%arc_saida\d+ = load ptr, ptr %servidor/);
+        expect(ir).toMatch(/%arc_saida\d+ = load ptr, ptr %conexao/);
+    });
+
     it('cliente: conectar, ler e ultimoErro; nulo indica falha', async () => {
         const ir = await compilar([
             'var rede = importar("rede")',

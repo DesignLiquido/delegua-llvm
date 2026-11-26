@@ -139,6 +139,9 @@ export function obterDespachoVirtual(
         `__despacho_${nomeClasse}_${metodo}`,
         this.modulo
     );
+    // Function.Create não passa pelos ganchos do ARC: sem o nome, o retorno (+1) da
+    // implementação seria tratado como emprestado e nunca liberado por quem chama.
+    this.nomesFuncoesArc.set(funcao, `__despacho_${nomeClasse}_${metodo}`);
     this.despachos.set(chave, { funcao, tipo: nomeClasse, metodo, padrao });
     return funcao;
 }
@@ -169,6 +172,8 @@ export function obterDespachoInterface(
         `__despacho_${nomeInterface}_${metodo}`,
         this.modulo
     );
+    // Ver obterDespachoVirtual: registra o nome para o ARC reconhecer o retorno +1.
+    this.nomesFuncoesArc.set(funcao, `__despacho_${nomeInterface}_${metodo}`);
     this.despachos.set(chave, { funcao, tipo: nomeInterface, metodo });
     return funcao;
 }
