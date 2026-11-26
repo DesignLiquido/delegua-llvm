@@ -48,7 +48,7 @@ describe('Compilador - módulo processo', () => {
             'var codigo = processo.executar("git", ["status"])',
             'escreva(codigo)',
         ]);
-        expect(ir).toMatch(/call i32 @delegua_processo_executar\(ptr @str[.\d]*, ptr %vetor, ptr null\)/);
+        expect(ir).toMatch(/call i32 @delegua_processo_executar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), ptr %vetor, ptr null\)/);
     });
 
     it('executarCapturando e ultimoCodigoSaida', async () => {
@@ -105,7 +105,8 @@ describe('Compilador - módulo arquivos (sistema de arquivos e caminhos)', () =>
             '}',
         ]);
         expect(ir).toMatch(/%(\d+) = call ptr @delegua_arq_listar_diretorio\(/);
-        expect(ir).toMatch(/call i32 @delegua_vetor_tamanho\(ptr %\d+\)/);
+        // O Vetor* devolvido pelo tempo de execução fica no slot da variável e é carregado para iterar.
+        expect(ir).toMatch(/call i32 @delegua_vetor_tamanho\(ptr %vetor_ptr\d*\)/);
     });
 });
 

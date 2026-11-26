@@ -4,7 +4,7 @@ import { AlvoCompilacao, ajustarAlvoParaZig, alvoDaMaquinaAtual, resolverAlvo } 
 
 /**
  * Montagem dos comandos do compilador C (clang ou `zig cc`) usados pelo ilc para compilar
- * o runtime e ligar o binário, nativo ou para outro alvo. Funções puras (exceto a detecção
+ * o tempo de execução e ligar o binário, nativo ou para outro alvo. Funções puras (exceto a detecção
  * de programas no PATH), para poderem ser testadas sem executar nada.
  */
 
@@ -83,14 +83,14 @@ export function argumentosAlvo(cadeia: CadeiaFerramentas): string[] {
 }
 
 /**
- * Bibliotecas adicionais exigidas pelo runtime em qualquer alvo. Vazio: as exceções usam
+ * Bibliotecas adicionais exigidas pelo tempo de execução em qualquer alvo. Vazio: as exceções usam
  * setjmp/longjmp da biblioteca C (excecoes.c), sem a ABI de exceções de C++.
  */
 export function bibliotecasSuporteExecucao(_cadeia: CadeiaFerramentas): string[] {
     return [];
 }
 
-/** Comando para compilar um arquivo C do runtime ou de um pacote em objeto. */
+/** Comando para compilar um arquivo C do tempo de execução ou de um pacote em objeto. */
 export function comandoCompilarObjeto(
     cadeia: CadeiaFerramentas,
     arquivoC: string,

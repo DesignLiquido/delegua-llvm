@@ -1,4 +1,5 @@
 #include "processo.h"
+#include "arc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,12 +52,13 @@ static void buffer_anexar_caractere(BufferTexto* b, char c, size_t repeticoes) {
 #endif
 
 static char* buffer_finalizar(BufferTexto* b) {
-    if (!b->dados) {
-        char* vazio = (char*)malloc(1);
-        if (vazio) vazio[0] = '\0';
-        return vazio;
-    }
-    return b->dados;
+    // O buffer de montagem é interno: devolve um texto gerenciado (ARC, +1) e o libera.
+    char* resultado = delegua_arc_texto_copiar_trecho(b->dados ? b->dados : "", b->tamanho);
+    free(b->dados);
+    b->dados = NULL;
+    b->tamanho = 0;
+    b->capacidade = 0;
+    return resultado;
 }
 
 // ── Informações do processo ─────────────────────────────────────────────────
@@ -76,35 +78,35 @@ void delegua_processo_escrever_erro(char* texto) {
 
 char* delegua_processo_sistema_operacional(void) {
 #if defined(_WIN32)
-    return (char*)"windows";
+    { DELEGUA_TEXTO_ESTATICO(literal, "windows"); return DELEGUA_TEXTO(literal); }
 #elif defined(__APPLE__)
-    return (char*)"darwin";
+    { DELEGUA_TEXTO_ESTATICO(literal, "darwin"); return DELEGUA_TEXTO(literal); }
 #elif defined(__linux__)
-    return (char*)"linux";
+    { DELEGUA_TEXTO_ESTATICO(literal, "linux"); return DELEGUA_TEXTO(literal); }
 #elif defined(__FreeBSD__)
-    return (char*)"freebsd";
+    { DELEGUA_TEXTO_ESTATICO(literal, "freebsd"); return DELEGUA_TEXTO(literal); }
 #elif defined(__wasm__)
-    return (char*)"wasm";
+    { DELEGUA_TEXTO_ESTATICO(literal, "wasm"); return DELEGUA_TEXTO(literal); }
 #else
-    return (char*)"desconhecido";
+    { DELEGUA_TEXTO_ESTATICO(literal, "desconhecido"); return DELEGUA_TEXTO(literal); }
 #endif
 }
 
 char* delegua_processo_arquitetura(void) {
 #if defined(__x86_64__) || defined(_M_X64)
-    return (char*)"amd64";
+    { DELEGUA_TEXTO_ESTATICO(literal, "amd64"); return DELEGUA_TEXTO(literal); }
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    return (char*)"arm64";
+    { DELEGUA_TEXTO_ESTATICO(literal, "arm64"); return DELEGUA_TEXTO(literal); }
 #elif defined(__i386__) || defined(_M_IX86)
-    return (char*)"386";
+    { DELEGUA_TEXTO_ESTATICO(literal, "386"); return DELEGUA_TEXTO(literal); }
 #elif defined(__arm__) || defined(_M_ARM)
-    return (char*)"arm";
+    { DELEGUA_TEXTO_ESTATICO(literal, "arm"); return DELEGUA_TEXTO(literal); }
 #elif defined(__riscv) && (__riscv_xlen == 64)
-    return (char*)"riscv64";
+    { DELEGUA_TEXTO_ESTATICO(literal, "riscv64"); return DELEGUA_TEXTO(literal); }
 #elif defined(__wasm32__)
-    return (char*)"wasm32";
+    { DELEGUA_TEXTO_ESTATICO(literal, "wasm32"); return DELEGUA_TEXTO(literal); }
 #else
-    return (char*)"desconhecida";
+    { DELEGUA_TEXTO_ESTATICO(literal, "desconhecida"); return DELEGUA_TEXTO(literal); }
 #endif
 }
 
@@ -112,11 +114,7 @@ char* delegua_processo_variavel_ambiente(char* nome) {
     if (!nome) return NULL;
     const char* valor = getenv(nome);
     if (!valor) return NULL;
-    size_t tamanho = strlen(valor);
-    char* copia = (char*)malloc(tamanho + 1);
-    if (!copia) return NULL;
-    memcpy(copia, valor, tamanho + 1);
-    return copia;
+    return delegua_arc_texto_copiar(valor);
 }
 
 int delegua_processo_definir_variavel_ambiente(char* nome, char* valor) {

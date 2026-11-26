@@ -1,6 +1,7 @@
 // Sub-fase F.1b — hashes, HMAC, aleatório, UUID, PBKDF2.
 // Compilar com: clang ... criptografia-hashes.c -lcrypto
 #include "criptografia.h"
+#include "arc.h"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -12,7 +13,7 @@
 
 // Converte n bytes em string hexadecimal alocada (minúsculas).
 static char* bytes_para_hex(const unsigned char* bytes, unsigned int n) {
-    char* hex = (char*)malloc(n * 2 + 1);
+    char* hex = delegua_arc_texto_criar(n * 2);
     if (!hex) return NULL;
     for (unsigned int i = 0; i < n; i++) {
         sprintf(hex + i * 2, "%02x", bytes[i]);
@@ -95,7 +96,7 @@ char* delegua_cript_texto_aleatorio(int n) {
     unsigned char* buf = (unsigned char*)malloc(n);
     if (!buf) return NULL;
     if (RAND_bytes(buf, n) != 1) { free(buf); return NULL; }
-    char* resultado = (char*)malloc(n + 1);
+    char* resultado = delegua_arc_texto_criar(n);
     if (!resultado) { free(buf); return NULL; }
     for (int i = 0; i < n; i++) {
         resultado[i] = ALFANUMERICO[buf[i] % 62];
@@ -113,7 +114,7 @@ char* delegua_cript_uuid(void) {
     // RFC 4122: version 4, variant 10xx
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
-    char* uuid = (char*)malloc(37);
+    char* uuid = delegua_arc_texto_criar(36);
     if (!uuid) return NULL;
     snprintf(uuid, 37,
         "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",

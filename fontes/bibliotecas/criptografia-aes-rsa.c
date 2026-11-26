@@ -1,6 +1,7 @@
 // Sub-fase F.1c — AES-256-GCM e RSA.
 // Compilar com: clang ... criptografia-aes-rsa.c -lcrypto -lssl
 #include "criptografia.h"
+#include "arc.h"
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/bio.h>
@@ -13,7 +14,7 @@
 
 // Bytes → hex string (alocado).
 static char* bytes_para_hex(const unsigned char* b, size_t n) {
-    char* h = (char*)malloc(n * 2 + 1);
+    char* h = delegua_arc_texto_criar(n * 2);
     if (!h) return NULL;
     for (size_t i = 0; i < n; i++) sprintf(h + i * 2, "%02x", b[i]);
     h[n * 2] = '\0';
@@ -96,7 +97,7 @@ char* delegua_cript_aes256_cifrar(char* texto, char* chave, char* iv) {
 
     int total = len1 + len2;
     // resultado = hex(ciphertext) + hex(tag)
-    char* resultado = (char*)malloc((total + 16) * 2 + 1);
+    char* resultado = delegua_arc_texto_criar((total + 16) * 2);
     if (!resultado) { free(cifrado); return NULL; }
     for (int i = 0; i < total; i++) sprintf(resultado + i * 2, "%02x", cifrado[i]);
     for (int i = 0; i < 16; i++) sprintf(resultado + (total + i) * 2, "%02x", tag[i]);
@@ -130,11 +131,11 @@ char* delegua_cript_aes256_decifrar(char* cifrado_hex, char* chave, char* iv) {
         free(bytes_cifrados); return NULL;
     }
 
-    unsigned char* plain = (unsigned char*)malloc(n_texto + 1);
+    unsigned char* plain = (unsigned char*)delegua_arc_texto_criar(n_texto);
     if (!plain) { free(bytes_cifrados); return NULL; }
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(bytes_cifrados); free(plain); return NULL; }
+    if (!ctx) { free(bytes_cifrados); delegua_arc_liberar(plain); return NULL; }
 
     int len1 = 0, len2 = 0;
     EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
@@ -146,7 +147,7 @@ char* delegua_cript_aes256_decifrar(char* cifrado_hex, char* chave, char* iv) {
     EVP_CIPHER_CTX_free(ctx);
     free(bytes_cifrados);
 
-    if (ok <= 0) { free(plain); return NULL; } // falha de autenticação GCM
+    if (ok <= 0) { delegua_arc_liberar(plain); return NULL; } // falha de autenticação GCM
     plain[len1 + len2] = '\0';
     return (char*)plain;
 }
@@ -173,7 +174,7 @@ char* delegua_cript_rsa_gerar_privada(int bits) {
 
     BUF_MEM* bptr;
     BIO_get_mem_ptr(bio, &bptr);
-    char* pem = (char*)malloc(bptr->length + 1);
+    char* pem = delegua_arc_texto_criar(bptr->length);
     if (pem) { memcpy(pem, bptr->data, bptr->length); pem[bptr->length] = '\0'; }
     BIO_free(bio);
     return pem;
@@ -193,7 +194,7 @@ char* delegua_cript_rsa_derivar_publica(char* chave_privada_pem) {
 
     BUF_MEM* bptr;
     BIO_get_mem_ptr(bio_out, &bptr);
-    char* pem = (char*)malloc(bptr->length + 1);
+    char* pem = delegua_arc_texto_criar(bptr->length);
     if (pem) { memcpy(pem, bptr->data, bptr->length); pem[bptr->length] = '\0'; }
     BIO_free(bio_out);
     return pem;
@@ -248,12 +249,12 @@ char* delegua_cript_rsa_decifrar(char* cifrado_hex, char* chave_privada_pem) {
 
     size_t plain_len = 0;
     EVP_PKEY_decrypt(ctx, NULL, &plain_len, cifrado, n_bytes);
-    unsigned char* plain = (unsigned char*)malloc(plain_len + 1);
+    unsigned char* plain = (unsigned char*)delegua_arc_texto_criar(plain_len);
     int ok = EVP_PKEY_decrypt(ctx, plain, &plain_len, cifrado, n_bytes);
     EVP_PKEY_CTX_free(ctx);
     free(cifrado);
 
-    if (ok <= 0) { free(plain); return NULL; }
+    if (ok <= 0) { delegua_arc_liberar(plain); return NULL; }
     plain[plain_len] = '\0';
     return (char*)plain;
 }

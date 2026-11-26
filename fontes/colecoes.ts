@@ -52,7 +52,7 @@ export async function chamarMetodoDicionario(
     }
 }
 
-// Preenche um %Vetor (alloca) com as chaves (char*) ou os valores (void*) do
+// Retorna um Vetor* com as chaves (char*) ou os valores (void*) do
 // dicionário, em ordem de inserção.
 export function coletarDicionarioEmVetor(
     this: CompiladorLLVM,
@@ -61,10 +61,8 @@ export function coletarDicionarioEmVetor(
 ): llvm.Value {
     const ptr = this.montador.getPtrTy();
     const nomeC = qual === 'chaves' ? 'delegua_dicionario_chaves' : 'delegua_dicionario_valores';
-    const funcao = this.obterFuncaoRuntime(nomeC, llvm.Type.getVoidTy(this.contexto), [ptr, ptr]);
-    const saida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, `dict_${qual}`);
-    this.montador.CreateCall(funcao, [dicionarioPtr, saida]);
-    return saida;
+    const funcao = this.obterFuncaoRuntime(nomeC, ptr, [ptr]);
+    return this.montador.CreateCall(funcao, [dicionarioPtr], `dict_${qual}`);
 }
 
 // Resolve um valor a ser armazenado como valor de dicionário (sempre void*).
@@ -80,13 +78,8 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
             tipo === 'qualquer' ||
             tipoEhVetor(tipo) ||
             this.ehTipoObjeto(tipo);
-        // Vetor: o dicionário guarda um cabeçalho %Vetor próprio no heap. Carregar o ponteiro
-        // direto da variável traria só o primeiro campo (o buffer de elementos), e o endereço
-        // da variável aponta para a pilha, que não sobrevive à função que a declarou.
-        if (tipoEhVetor(tipo) && this.tipoEstruturaVetor) {
-            const estrutura = this.montador.CreateLoad(this.tipoEstruturaVetor, resolvido.variavelLlvm, 'dict_vetor');
-            return this.embalarValorEmHeap(estrutura, this.tipoEstruturaVetor);
-        }
+        // Vetores são objetos ARC no heap: a variável guarda o ponteiro, que o dicionário
+        // retém. Não copiar o cabeçalho %Vetor por valor (o slot tem só 8 bytes).
         if (ehPonteiro) {
             return this.resolverPonteiroDireto(resolvido);
         }
@@ -103,7 +96,7 @@ export function embalarValorParaDicionario(this: CompiladorLLVM, resolvido: any)
     return this.embalarValorEmHeap(valorLlvm, valorLlvm.getType());
 }
 
-// Aloca uma célula no heap (malloc) do tamanho do tipo dado e armazena o valor nela.
+// Aloca uma caixa ARC (delegua_arc_caixa) do tamanho do tipo dado e armazena o valor nela.
 export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo: llvm.Type): llvm.Value {
     const construtorTipo = tipo?.constructor;
     // Estruturas (ex.: %Vetor devolvido por valor por uma função) ocupam mais de 8 bytes.
@@ -115,7 +108,10 @@ export function embalarValorEmHeap(this: CompiladorLLVM, valor: llvm.Value, tipo
             ? 1
             : 8;
     const tamanho = ConstantInt.get(this.contexto, new APInt(64, tamanhoBytes));
-    const caixa = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'dict_caixa');
+    const funcaoCaixa = this.obterFuncaoRuntime('delegua_arc_caixa', this.montador.getPtrTy(), [
+        llvm.Type.getInt64Ty(this.contexto),
+    ]);
+    const caixa = this.montador.CreateCall(funcaoCaixa, [tamanho], 'dict_caixa');
     this.montador.CreateStore(valor, caixa);
     return caixa;
 }
@@ -124,6 +120,26 @@ export function tamElementoEmBytes(this: CompiladorLLVM, tipoElem: string): numb
     if (tipoElem === 'inteiro') return 4;
     // número, longo, texto (ponteiro 64-bit) → 8 bytes
     return 8;
+}
+
+// Verdadeiro se os elementos de um vetor deste tipo são ponteiros gerenciados por ARC
+// (texto, instâncias, vetores, dicionários, `qualquer`, handles opacos): o tempo de execução retém o
+// que o vetor guarda e libera o que ele remove. Escalares (inteiro, número, lógico, longo) não.
+export function elementoVetorGerenciado(this: CompiladorLLVM, tipoElem: string): boolean {
+    if (!tipoElem) return false;
+    // Escalares, ponteiros de função e ponteiros brutos de FFI não têm cabeçalho ARC.
+    const naoGerenciados = ['inteiro', 'número', 'numero', 'longo', 'lógico', 'logico', 'real', 'ponteiro'];
+    if (naoGerenciados.includes(tipoElem)) return false;
+    return !tipoElem.startsWith('função') && !tipoElem.startsWith('funcao');
+}
+
+// Argumentos (tamanho_inicial, tam_elem, gerenciado) de delegua_vetor_criar.
+export function argumentosVetorCriar(this: CompiladorLLVM, tamanhoInicial: number, tipoElem: string): llvm.Value[] {
+    return [
+        ConstantInt.get(this.contexto, new APInt(32, tamanhoInicial)),
+        ConstantInt.get(this.contexto, new APInt(32, this.tamElementoEmBytes(tipoElem))),
+        ConstantInt.get(this.contexto, new APInt(32, this.elementoVetorGerenciado(tipoElem) ? 1 : 0)),
+    ];
 }
 
 // Constante i32 para tamanho de elemento.
@@ -203,9 +219,7 @@ export async function chamarMetodoVetor(
             const fim = argumentos[1]
                 ? await this.carregarArgumentoInteiro(argumentos[1])
                 : ConstantInt.get(this.contexto, new APInt(32, 0x7fffffff));
-            const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'fatia');
-            this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem, alocSaida]);
-            return alocSaida;
+            return this.montador.CreateCall(this.funcaoVetorFatiar, [vetorPtr, inicio, fim, tamElem], 'fatia');
         }
 
         case 'juntar': {
@@ -225,27 +239,21 @@ export async function chamarMetodoVetor(
                 [tipoElem],
                 'inteiro' // predicado retorna inteiro (0/1)
             );
-            const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'filtrado');
             if (tipoElem === 'inteiro') {
-                this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
-            } else {
-                this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
+                return this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr], 'filtrado');
             }
-            return alocSaida;
+            return this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr], 'filtrado');
         }
 
         case 'mapear': {
             const tipoRetorno = tipoElem;
             const fnPtr = await this.resolverPonteiroDeFuncao(argumentos[0], [tipoElem], tipoRetorno);
-            const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
             if (tipoElem === 'inteiro') {
-                this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
+                return this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr], 'mapeado');
             } else if (tipoElem === 'número' || tipoElem === 'numero') {
-                this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
-            } else {
-                this.montador.CreateCall(this.funcaoVetorMapearTexto, [vetorPtr, fnPtr, alocSaida]);
+                return this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr], 'mapeado');
             }
-            return alocSaida;
+            return this.montador.CreateCall(this.funcaoVetorMapearTexto, [vetorPtr, fnPtr], 'mapeado');
         }
         case 'tamanho':
             return this.montador.CreateCall(this.funcaoVetorTamanho, [vetorPtr]);
@@ -283,8 +291,7 @@ export async function chamarMapear(this: CompiladorLLVM, argumentos: ConstrutoIn
 
     // Resolve o vetor de entrada
     const vetorResolvido = await vetorArg.aceitar(this);
-    const vetorPtr: llvm.Value =
-        vetorResolvido instanceof VariavelEscopo ? vetorResolvido.variavelLlvm : (vetorResolvido as llvm.Value);
+    const vetorPtr = this.ponteiroParaVetor(vetorResolvido);
 
     // Determina o tipo do elemento
     const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
@@ -293,13 +300,10 @@ export async function chamarMapear(this: CompiladorLLVM, argumentos: ConstrutoIn
 
     const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], tipoElem);
 
-    const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'mapeado');
     if (ehNumero) {
-        this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr, alocSaida]);
-    } else {
-        this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr, alocSaida]);
+        return this.montador.CreateCall(this.funcaoVetorMapearNumero, [vetorPtr, fnPtr], 'mapeado');
     }
-    return alocSaida;
+    return this.montador.CreateCall(this.funcaoVetorMapearInteiro, [vetorPtr, fnPtr], 'mapeado');
 }
 
 export async function chamarEncontrar(this: CompiladorLLVM, argumentos: ConstrutoInterface[]): Promise<llvm.Value> {
@@ -308,19 +312,15 @@ export async function chamarEncontrar(this: CompiladorLLVM, argumentos: Construt
     const fnArg = argumentos[1];
 
     const vetorResolvido = await vetorArg.aceitar(this);
-    const vetorPtr: llvm.Value =
-        vetorResolvido instanceof VariavelEscopo ? vetorResolvido.variavelLlvm : (vetorResolvido as llvm.Value);
+    const vetorPtr = this.ponteiroParaVetor(vetorResolvido);
 
     const tipoVetor = vetorArg.tipo ?? this.resolverTipoConstruto(vetorArg);
     const tipoElem = tipoElementoVetor(tipoVetor);
 
     const fnPtr = await this.resolverPonteiroDeFuncao(fnArg, [tipoElem], 'inteiro');
 
-    const alocSaida = this.criarAllocaNoBlocoEntrada(this.tipoEstruturaVetor, 'encontrado');
     if (tipoElem === 'inteiro') {
-        this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr, alocSaida]);
-    } else {
-        this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr, alocSaida]);
+        return this.montador.CreateCall(this.funcaoVetorFiltrarInteiro, [vetorPtr, fnPtr], 'encontrado');
     }
-    return alocSaida;
+    return this.montador.CreateCall(this.funcaoVetorFiltrarNumero, [vetorPtr, fnPtr], 'encontrado');
 }

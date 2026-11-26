@@ -1,43 +1,24 @@
-import llvm from '@designliquido/llvm-bindings';
 import type { CompiladorLLVM } from '../compilador-llvm';
 import { EntradaFuncaoModulo } from '../interfaces/entrada-funcao-modulo';
+import { criarRegistradorFuncaoModulo } from './registrador';
 
 export function registrarModuloDados(this: CompiladorLLVM): void {
-    const ptr = this.montador.getPtrTy();
-    const i32 = this.montador.getInt32Ty();
-    const d = this.montador.getDoubleTy();
-
-    const reg = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
-        const tiposLlvm = tiposParametros.map((t) => (t === 'inteiro' ? i32 : ptr));
-        const tipo = llvm.FunctionType.get(ptr, tiposLlvm, false);
-        const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
-        return { callee, tiposParametros, tipoRetorno: 'texto' };
-    };
-    const regInt = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
-        const tiposLlvm = tiposParametros.map((t) => (t === 'inteiro' ? i32 : ptr));
-        const tipo = llvm.FunctionType.get(i32, tiposLlvm, false);
-        const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
-        return { callee, tiposParametros, tipoRetorno: 'inteiro' };
-    };
-    const regDouble = (nomeCFunc: string, tiposParametros: string[]): EntradaFuncaoModulo => {
-        const tiposLlvm = tiposParametros.map((t) => (t === 'inteiro' ? i32 : t === 'numero' ? d : ptr));
-        const tipo = llvm.FunctionType.get(d, tiposLlvm, false);
-        const callee = this.modulo.getOrInsertFunction(nomeCFunc, tipo);
-        return { callee, tiposParametros, tipoRetorno: 'numero' };
-    };
+    const reg = criarRegistradorFuncaoModulo(this);
 
     const funcoes = new Map<string, EntradaFuncaoModulo>([
-        ['lerCSV', reg('delegua_dados_ler_csv', ['texto'])],
-        ['cabeca', reg('delegua_dados_cabeca', ['texto', 'inteiro'])],
-        ['cauda', reg('delegua_dados_cauda', ['texto', 'inteiro'])],
-        ['info', reg('delegua_dados_info', ['texto'])],
-        ['paraTexto', reg('delegua_dados_para_texto', ['texto'])],
-        ['removerNulo', reg('delegua_dados_remover_nulo', ['texto'])],
-        ['selecionarColuna', reg('delegua_dados_selecionar_coluna', ['texto', 'texto'])],
-        ['serieMax', regDouble('delegua_dados_serie_max', ['texto'])],
-        ['serieMin', regDouble('delegua_dados_serie_min', ['texto'])],
-        ['serieMedia', regDouble('delegua_dados_serie_media', ['texto'])],
-        ['serieTamanho', regInt('delegua_dados_serie_tamanho', ['texto'])],
+        ['lerCSV', reg('delegua_dados_ler_csv', ['texto'], 'opaco:dados_recorte')],
+        ['cabeca', reg('delegua_dados_cabeca', ['opaco:dados_recorte', 'inteiro'], 'opaco:dados_recorte')],
+        ['cauda', reg('delegua_dados_cauda', ['opaco:dados_recorte', 'inteiro'], 'opaco:dados_recorte')],
+        ['info', reg('delegua_dados_info', ['opaco:dados_recorte'], 'texto')],
+        ['paraTexto', reg('delegua_dados_para_texto', ['opaco:dados_recorte'], 'texto')],
+        ['removerNulo', reg('delegua_dados_remover_nulo', ['opaco:dados_recorte'], 'opaco:dados_recorte')],
+        ['selecionarColuna', reg('delegua_dados_selecionar_coluna', ['opaco:dados_recorte', 'texto'], 'opaco:dados_serie')],
+        ['serieMax', reg('delegua_dados_serie_max', ['opaco:dados_serie'], 'numero')],
+        ['serieMin', reg('delegua_dados_serie_min', ['opaco:dados_serie'], 'numero')],
+        ['serieMedia', reg('delegua_dados_serie_media', ['opaco:dados_serie'], 'numero')],
+        ['serieTamanho', reg('delegua_dados_serie_tamanho', ['opaco:dados_serie'], 'inteiro')],
+        ['liberar', reg('delegua_dados_liberar', ['opaco:dados_recorte'], 'vazio')],
+        ['liberarSerie', reg('delegua_dados_serie_liberar', ['opaco:dados_serie'], 'vazio')],
     ]);
 
     this.mapaModulos.set('dados', funcoes);

@@ -1,4 +1,5 @@
 #include "criptografia.h"
+#include "arc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +13,7 @@ char* delegua_cript_cifrar_xor(char* texto, char* chave) {
     size_t tam_texto = strlen(texto);
     size_t tam_chave = strlen(chave);
     // 2 hex chars por byte + '\0'
-    char* resultado = (char*)malloc(tam_texto * 2 + 1);
+    char* resultado = delegua_arc_texto_criar(tam_texto * 2);
     if (!resultado) return NULL;
     for (size_t i = 0; i < tam_texto; i++) {
         unsigned char x = (unsigned char)texto[i] ^ (unsigned char)chave[i % tam_chave];
@@ -28,7 +29,7 @@ char* delegua_cript_decifrar_xor(char* hex, char* chave) {
     size_t tam_hex   = strlen(hex);
     size_t tam_bytes = tam_hex / 2;
     size_t tam_chave = strlen(chave);
-    char* resultado  = (char*)malloc(tam_bytes + 1);
+    char* resultado  = delegua_arc_texto_criar(tam_bytes);
     if (!resultado) return NULL;
     for (size_t i = 0; i < tam_bytes; i++) {
         unsigned int byte;
@@ -44,7 +45,7 @@ char* delegua_cript_decifrar_xor(char* hex, char* chave) {
 char* delegua_cript_rot_n(char* texto, int n) {
     if (!texto) return NULL;
     size_t tam = strlen(texto);
-    char*  resultado = (char*)malloc(tam + 1);
+    char*  resultado = delegua_arc_texto_criar(tam);
     if (!resultado) return NULL;
     // Normaliza para 0–25
     int desl = ((n % 26) + 26) % 26;
@@ -80,7 +81,7 @@ char* delegua_cript_base64_codificar(char* texto) {
     size_t tam   = strlen(texto);
     // Saída: ceil(tam/3)*4 chars + '\0'
     size_t tam_b64 = ((tam + 2) / 3) * 4 + 1;
-    char* resultado = (char*)malloc(tam_b64);
+    char* resultado = delegua_arc_texto_criar(tam_b64);
     if (!resultado) return NULL;
 
     size_t pos = 0;
@@ -114,7 +115,7 @@ char* delegua_cript_base64_decodificar(char* b64) {
     if (tam_b64 % 4 != 0) return NULL;
     // Saída máxima: tam_b64/4*3 bytes + '\0'
     size_t tam_max = (tam_b64 / 4) * 3 + 1;
-    char* resultado = (char*)malloc(tam_max);
+    char* resultado = delegua_arc_texto_criar(tam_max);
     if (!resultado) return NULL;
 
     size_t pos = 0;
@@ -123,7 +124,7 @@ char* delegua_cript_base64_decodificar(char* b64) {
         int v1 = base64_valor(b64[i + 1]);
         int v2 = (b64[i + 2] != '=') ? base64_valor(b64[i + 2]) : 0;
         int v3 = (b64[i + 3] != '=') ? base64_valor(b64[i + 3]) : 0;
-        if (v0 < 0 || v1 < 0) { free(resultado); return NULL; }
+        if (v0 < 0 || v1 < 0) { delegua_arc_liberar(resultado); return NULL; }
 
         resultado[pos++] = (char)((v0 << 2) | (v1 >> 4));
         if (b64[i + 2] != '=') resultado[pos++] = (char)(((v1 & 0x0f) << 4) | (v2 >> 2));
@@ -144,7 +145,7 @@ char* delegua_cript_menino_do_acre_cif(char* texto) {
     if (!texto) return NULL;
     size_t tam = strlen(texto);
     // Pior caso: cada char se torna 3 bytes UTF-8.
-    char* resultado = (char*)malloc(tam * 3 + 1);
+    char* resultado = delegua_arc_texto_criar(tam * 3);
     if (!resultado) return NULL;
 
     size_t pos = 0;
@@ -168,7 +169,7 @@ char* delegua_cript_menino_do_acre_dec(char* texto) {
     if (!texto) return NULL;
     size_t tam = strlen(texto);
     // Pior caso: output menor ou igual ao input (3 bytes → 1 char).
-    char* resultado = (char*)malloc(tam + 1);
+    char* resultado = delegua_arc_texto_criar(tam);
     if (!resultado) return NULL;
 
     size_t pos  = 0;

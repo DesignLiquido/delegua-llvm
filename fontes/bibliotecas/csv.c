@@ -1,4 +1,5 @@
 #include "csv.h"
+#include "arc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,16 +91,34 @@ static char* ler_campo(const char* texto, int* pos, char sep, int* eol) {
 
 // ── Funções públicas ────────────────────────────────────────────────────────
 
+// Libera células, linhas e o vetor de linhas; idempotente (destrutor ARC e csv.liberar).
+static void tabela_liberar_conteudo(TabelaCsv* tabela) {
+    for (int l = 0; l < tabela->total_linhas; l++) {
+        LinhaCsv* linha = &tabela->linhas[l];
+        for (int c = 0; c < linha->colunas; c++) free(linha->celulas[c]);
+        free(linha->celulas);
+    }
+    free(tabela->linhas);
+    tabela->linhas = NULL;
+    tabela->total_linhas = 0;
+    tabela->colunas = 0;
+}
+
+static void tabela_destruir(void* payload) {
+    tabela_liberar_conteudo((TabelaCsv*)payload);
+}
+
+static const ArcDescritor DESCRITOR_TABELA_CSV = {"TabelaCsv", tabela_destruir, NULL};
+
 TabelaCsv* delegua_csv_texto_para_tabela(char* texto, char sep) {
     if (!texto) return NULL;
 
-    TabelaCsv* tabela = (TabelaCsv*)calloc(1, sizeof(TabelaCsv));
-    if (!tabela) return NULL;
+    TabelaCsv* tabela = (TabelaCsv*)delegua_arc_alocar(sizeof(TabelaCsv), &DESCRITOR_TABELA_CSV);
 
     // Crescimento dinâmico de linhas
     int cap_linhas = 16;
     tabela->linhas = (LinhaCsv*)malloc(cap_linhas * sizeof(LinhaCsv));
-    if (!tabela->linhas) { free(tabela); return NULL; }
+    if (!tabela->linhas) { delegua_arc_liberar(tabela); return NULL; }
 
     int pos = 0;
     int max_colunas = 0;
@@ -195,21 +214,26 @@ char* delegua_csv_tabela_para_texto(TabelaCsv* tabela, char sep) {
 #undef OUT_STR
 
     buf[len] = '\0';
-    return buf;
+    // O buffer de montagem é interno; devolve uma cópia gerenciada (ARC, +1).
+    char* resultado = delegua_arc_texto_copiar_trecho(buf, (size_t)len);
+    free(buf);
+    return resultado;
 }
 
 TabelaCsv* delegua_csv_ler(char* caminho, char sep) {
+    if (!caminho) return NULL;
     FILE* fp = fopen(caminho, "rb");
     if (!fp) return NULL;
 
     fseek(fp, 0, SEEK_END);
     long tam = ftell(fp);
     rewind(fp);
+    if (tam < 0) { fclose(fp); return NULL; }
 
-    char* conteudo = (char*)malloc(tam + 1);
+    char* conteudo = (char*)malloc((size_t)tam + 1);
     if (!conteudo) { fclose(fp); return NULL; }
-    fread(conteudo, 1, tam, fp);
-    conteudo[tam] = '\0';
+    size_t lidos = fread(conteudo, 1, (size_t)tam, fp);
+    conteudo[lidos] = '\0';
     fclose(fp);
 
     TabelaCsv* tabela = delegua_csv_texto_para_tabela(conteudo, sep);
@@ -223,7 +247,7 @@ void delegua_csv_escrever(char* caminho, TabelaCsv* tabela, char sep) {
     if (!texto) return;
     FILE* fp = fopen(caminho, "w");
     if (fp) { fputs(texto, fp); fclose(fp); }
-    free(texto);
+    delegua_arc_liberar(texto);
 }
 
 int delegua_csv_total_linhas(TabelaCsv* tabela) {
@@ -238,16 +262,11 @@ char* delegua_csv_obter_celula(TabelaCsv* tabela, int linha, int coluna) {
     if (!tabela || linha < 0 || linha >= tabela->total_linhas) return NULL;
     LinhaCsv* l = &tabela->linhas[linha];
     if (coluna < 0 || coluna >= l->colunas) return NULL;
-    return l->celulas[coluna];
+    return l->celulas[coluna] ? delegua_arc_texto_copiar(l->celulas[coluna]) : NULL;
 }
 
+// Libera o conteúdo agora (idempotente); a estrutura é desalocada pelo ARC.
 void delegua_csv_liberar(TabelaCsv* tabela) {
     if (!tabela) return;
-    for (int l = 0; l < tabela->total_linhas; l++) {
-        LinhaCsv* linha = &tabela->linhas[l];
-        for (int c = 0; c < linha->colunas; c++) free(linha->celulas[c]);
-        free(linha->celulas);
-    }
-    free(tabela->linhas);
-    free(tabela);
+    tabela_liberar_conteudo(tabela);
 }

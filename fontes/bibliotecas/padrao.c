@@ -1,5 +1,6 @@
 #include "./padrao.h"
 #include "./excecoes.h"
+#include "./arc.h"
 #include <time.h>
 
 #ifdef _WIN32
@@ -24,7 +25,7 @@ static void _delegua_handler_parametro_invalido(
 // restaura a página original ao terminar, para não deixar o console alterado. (Só a saída:
 // a leitura do console em UTF-8 não é confiável em todas as versões do Windows.)
 // Declaradas aqui, e não com <windows.h>, para não trazer as macros do Windows para o
-// código do runtime; ficam na kernel32, sempre ligada.
+// código do tempo de execução; ficam na kernel32, sempre ligada.
 __declspec(dllimport) unsigned int __stdcall GetConsoleOutputCP(void);
 __declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int codigo);
 #define DELEGUA_CP_UTF8 65001u
@@ -94,26 +95,19 @@ void *leia(const char *texto, const char *fmt)
   }
   remove_nova_linha(buffer);
 
-  // Retorna string alocada
+  // Retorna texto gerenciado (+1).
   if (strcmp(fmt, "%s") == 0)
   {
-    size_t tamanho = strlen(buffer);
-    char *saida = malloc(tamanho + 1);
-    if (!saida)
-      return NULL;
-    memcpy(saida, buffer, tamanho + 1);
-    return saida;
+    return delegua_arc_texto_copiar(buffer);
   }
 
   // Inteiro
   if (strcmp(fmt, "%d") == 0)
   {
-    int *saida = malloc(sizeof(int));
-    if (!saida)
-      return NULL;
+    int *saida = (int *)delegua_arc_caixa(sizeof(int));
     if (sscanf(buffer, "%d", saida) != 1)
     {
-      free(saida);
+      delegua_arc_liberar(saida);
       return NULL;
     }
     return saida;
@@ -122,12 +116,10 @@ void *leia(const char *texto, const char *fmt)
   // Double (%lf)
   if (strcmp(fmt, "%lf") == 0)
   {
-    double *saida = malloc(sizeof(double));
-    if (!saida)
-      return NULL;
+    double *saida = (double *)delegua_arc_caixa(sizeof(double));
     if (sscanf(buffer, "%lf", saida) != 1)
     {
-      free(saida);
+      delegua_arc_liberar(saida);
       return NULL;
     }
     return saida;
@@ -178,19 +170,19 @@ int aleatorioEntre(double a, double b) {
 }
 
 char* texto_de_inteiro(int val) {
-    char* buf = (char*)malloc(32);
+    char* buf = delegua_arc_texto_criar(31);
     snprintf(buf, 32, "%d", val);
     return buf;
 }
 
 char* texto_de_longo(long long val) {
-    char* buf = (char*)malloc(32);
+    char* buf = delegua_arc_texto_criar(31);
     snprintf(buf, 32, "%lld", val);
     return buf;
 }
 
 char* texto_de_numero(double val) {
-    char* buf = (char*)malloc(64);
+    char* buf = delegua_arc_texto_criar(63);
     snprintf(buf, 64, "%g", val);
     return buf;
 }
@@ -205,11 +197,7 @@ char* delegua_formatar(const char* fmt, ...) {
 
     if (tamanho < 0) return NULL;
 
-    char* resultado = (char*)malloc(tamanho + 1);
-
-    if (resultado == NULL) {
-        return NULL;
-    }
+    char* resultado = delegua_arc_texto_criar((size_t)tamanho);
 
     // Segunda passagem: preencher o buffer
     va_start(args, fmt);

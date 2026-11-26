@@ -1,9 +1,10 @@
 #include "./texto.h"
+#include "./arc.h"
 #include <ctype.h>
 
 char* delegua_texto_maiusculo(const char* s) {
     size_t tam = strlen(s);
-    char* resultado = (char*)malloc(tam + 1);
+    char* resultado = delegua_arc_texto_criar(tam);
     for (size_t i = 0; i <= tam; i++) {
         resultado[i] = (char)toupper((unsigned char)s[i]);
     }
@@ -12,7 +13,7 @@ char* delegua_texto_maiusculo(const char* s) {
 
 char* delegua_texto_minusculo(const char* s) {
     size_t tam = strlen(s);
-    char* resultado = (char*)malloc(tam + 1);
+    char* resultado = delegua_arc_texto_criar(tam);
     for (size_t i = 0; i <= tam; i++) {
         resultado[i] = (char)tolower((unsigned char)s[i]);
     }
@@ -28,12 +29,12 @@ char* delegua_texto_subtexto(const char* s, int inicio, int fim) {
     if (inicio < 0) inicio = 0;
     if (fim > tam) fim = tam;
     if (inicio >= fim) {
-        char* vazio = (char*)malloc(1);
+        char* vazio = delegua_arc_texto_criar(0);
         vazio[0] = '\0';
         return vazio;
     }
     int tamanho = fim - inicio;
-    char* resultado = (char*)malloc(tamanho + 1);
+    char* resultado = delegua_arc_texto_criar(tamanho);
     memcpy(resultado, s + inicio, tamanho);
     resultado[tamanho] = '\0';
     return resultado;
@@ -45,7 +46,7 @@ char* delegua_texto_substituir(const char* s, const char* de, const char* para) 
 
     if (tam_de == 0) {
         size_t tam = strlen(s);
-        char* copia = (char*)malloc(tam + 1);
+        char* copia = delegua_arc_texto_criar(tam);
         memcpy(copia, s, tam + 1);
         return copia;
     }
@@ -66,7 +67,7 @@ char* delegua_texto_substituir(const char* s, const char* de, const char* para) 
         tam_resultado = tam_s - contagem * (tam_de - tam_para);
     }
 
-    char* resultado = (char*)malloc(tam_resultado + 1);
+    char* resultado = delegua_arc_texto_criar(tam_resultado);
     char* dest = resultado;
     const char* src = s;
     while ((pos = strstr(src, de)) != NULL) {
@@ -86,7 +87,7 @@ char* delegua_texto_substituir(const char* s, const char* de, const char* para) 
 // ───────────────────────────────────────────────────────────
 
 static char* copiar_trecho(const char* inicio, size_t tamanho) {
-    char* resultado = (char*)malloc(tamanho + 1);
+    char* resultado = delegua_arc_texto_criar(tamanho);
     if (!resultado) return NULL;
     memcpy(resultado, inicio, tamanho);
     resultado[tamanho] = '\0';
@@ -110,46 +111,46 @@ char* delegua_texto_aparar(const char* s) { return aparar(s, 1, 1); }
 char* delegua_texto_aparar_inicio(const char* s) { return aparar(s, 1, 0); }
 char* delegua_texto_aparar_fim(const char* s) { return aparar(s, 0, 1); }
 
-// Acrescenta `parte` a `saida`, crescendo o buffer por duplicação.
-static void acrescentar_parte(Vetor* saida, int* capacidade, char* parte) {
-    if (saida->tamanho >= *capacidade) {
-        int nova = *capacidade > 0 ? *capacidade * 2 : 4;
-        void* novoPtr = realloc(saida->ptr, (size_t)nova * sizeof(char*));
-        if (!novoPtr) return;
-        saida->ptr = novoPtr;
-        *capacidade = nova;
-    }
-    ((char**)saida->ptr)[saida->tamanho++] = parte;
+// Acrescenta `parte` a `saida`, delegando para delegua_vetor_adicionar.
+// O vetor (gerenciado) retém a parte; a referência criada aqui é então liberada.
+static void acrescentar_parte(Vetor* saida, char* parte) {
+    delegua_vetor_adicionar(saida, &parte, (int)sizeof(char*));
+    delegua_arc_liberar(parte);
 }
 
-void delegua_texto_dividir(const char* s, const char* delimitador, int limite, Vetor* saida) {
-    if (!saida) return;
-    saida->ptr = NULL;
-    saida->tamanho = 0;
-    if (!s) return;
+Vetor* delegua_texto_dividir(const char* s, const char* delimitador, int limite) {
+    Vetor* saida = delegua_vetor_criar(0, (int)sizeof(char*), 1);
+    if (!saida || !s) return saida;
     if (!delimitador) delimitador = "";
 
-    int capacidade = 0;
     size_t tamDelimitador = strlen(delimitador);
 
     if (tamDelimitador == 0) {
         for (const char* c = s; *c; c++) {
             if (limite > 0 && saida->tamanho == limite - 1) {
-                acrescentar_parte(saida, &capacidade, copiar_trecho(c, strlen(c)));
-                return;
+                acrescentar_parte(saida, copiar_trecho(c, strlen(c)));
+                return saida;
             }
-            acrescentar_parte(saida, &capacidade, copiar_trecho(c, 1));
+            acrescentar_parte(saida, copiar_trecho(c, 1));
         }
-        return;
+        return saida;
     }
 
     const char* inicio = s;
     const char* encontrado;
     while ((limite <= 0 || saida->tamanho < limite - 1) && (encontrado = strstr(inicio, delimitador)) != NULL) {
-        acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, (size_t)(encontrado - inicio)));
+        acrescentar_parte(saida, copiar_trecho(inicio, (size_t)(encontrado - inicio)));
         inicio = encontrado + tamDelimitador;
     }
-    acrescentar_parte(saida, &capacidade, copiar_trecho(inicio, strlen(inicio)));
+    acrescentar_parte(saida, copiar_trecho(inicio, strlen(inicio)));
+    return saida;
+}
+
+char* delegua_texto_caractere_em(const char* s, int indice) {
+    if (!s || indice < 0) return copiar_trecho("", 0);
+    size_t tam = strlen(s);
+    if ((size_t)indice >= tam) return copiar_trecho("", 0);
+    return copiar_trecho(s + indice, 1);
 }
 
 int delegua_texto_encontrar(const char* s, const char* sub, int inicio) {
@@ -190,7 +191,7 @@ char* delegua_texto_concatenar(const char* a, const char* b) {
     if (!b) b = "";
     size_t tamA = strlen(a);
     size_t tamB = strlen(b);
-    char* resultado = (char*)malloc(tamA + tamB + 1);
+    char* resultado = delegua_arc_texto_criar(tamA + tamB);
     if (!resultado) return NULL;
     memcpy(resultado, a, tamA);
     memcpy(resultado + tamA, b, tamB + 1);
@@ -200,7 +201,7 @@ char* delegua_texto_concatenar(const char* a, const char* b) {
 char* delegua_texto_inverter(const char* s) {
     if (!s) return copiar_trecho("", 0);
     size_t tam = strlen(s);
-    char* resultado = (char*)malloc(tam + 1);
+    char* resultado = delegua_arc_texto_criar(tam);
     if (!resultado) return NULL;
     for (size_t i = 0; i < tam; i++) resultado[i] = s[tam - 1 - i];
     resultado[tam] = '\0';

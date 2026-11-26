@@ -19,15 +19,35 @@ describe('Compilador - módulo rede', () => {
             'escreva(porta)',
             'escreva(requisicao)',
         ]);
-        expect(ir).toMatch(/call ptr @delegua_rede_escutar\(ptr @str[.\d]*, i32 0\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_escutar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 0\)/);
         expect(ir).toMatch(/call i32 @delegua_rede_porta_local\(ptr %ponteiro_val\d*\)/);
         expect(ir).toMatch(/call ptr @delegua_rede_aceitar\(ptr %ponteiro_val\d*, i32 120000\)/);
-        expect(ir).toMatch(/call ptr @delegua_rede_ler_ate\(ptr %ponteiro_val\d*, ptr @str[.\d]*, i32 65536, i32 5000\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_ler_ate\(ptr %ponteiro_val\d*, ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 65536, i32 5000\)/);
         expect(ir).toContain('call i32 @delegua_rede_escrever(');
         expect(ir).toContain('call void @delegua_rede_fechar(');
         // porta é inteiro e requisicao é texto.
         expect(ir).toContain('%porta = alloca i32');
         expect(ir).toContain('%requisicao = alloca ptr');
+    });
+
+    it('soquetes são handles ARC: a variável assume a referência, liberada só na saída', async () => {
+        const ir = await compilar([
+            'var rede = importar("rede")',
+            'var servidor = rede.escutar("127.0.0.1", 0)',
+            'var conexao = rede.aceitar(servidor, 1000)',
+            'rede.fechar(conexao)',
+        ]);
+        // O +1 do temporário passa para a variável (slot zerado), em vez de o temporário ser
+        // liberado no fim da instrução — o que destruía (e fechava) o soquete na hora.
+        for (const nome of ['escutar', 'aceitar']) {
+            expect(ir).toMatch(
+                new RegExp(
+                    `(%\\d+) = call ptr @delegua_rede_${nome}\\([^\\n]*\\n\\s+store ptr \\1, ptr (%arc_tmp\\d*)[^\\n]*\\n\\s+store ptr null, ptr \\2`
+                )
+            );
+        }
+        expect(ir).toMatch(/%arc_saida\d+ = load ptr, ptr %servidor/);
+        expect(ir).toMatch(/%arc_saida\d+ = load ptr, ptr %conexao/);
     });
 
     it('cliente: conectar, ler e ultimoErro; nulo indica falha', async () => {
@@ -39,7 +59,7 @@ describe('Compilador - módulo rede', () => {
             '}',
             'escreva(rede.ler(cliente, 1024, 1000))',
         ]);
-        expect(ir).toMatch(/call ptr @delegua_rede_conectar\(ptr @str[.\d]*, i32 80, i32 3000\)/);
+        expect(ir).toMatch(/call ptr @delegua_rede_conectar\(ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\), i32 80, i32 3000\)/);
         expect(ir).toContain('call ptr @delegua_rede_ultimo_erro()');
         expect(ir).toMatch(/call ptr @delegua_rede_ler\(ptr %ponteiro_val\d*, i32 1024, i32 1000\)/);
     });

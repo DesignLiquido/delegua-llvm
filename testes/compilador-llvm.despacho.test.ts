@@ -94,9 +94,38 @@ describe('Compilador - Despacho dinâmico de métodos', () => {
         ]);
 
         expect(resultado).toContain('@__despacho_Fonte_versoes(ptr %0, ptr %1)');
-        expect(resultado).toContain('call %Vetor @FonteMemoria_versoes(ptr %0, ptr %1)');
-        expect(resultado).toContain('call %Vetor @FonteRegistro_versoes(ptr %0, ptr %1)');
+        expect(resultado).toContain('call ptr @FonteMemoria_versoes(ptr %0, ptr %1)');
+        expect(resultado).toContain('call ptr @FonteRegistro_versoes(ptr %0, ptr %1)');
         expect(resultado).toContain('@msg_despacho');
+    });
+
+    it('retorno de despacho (interface e sobrescrita) é temporário +1 de quem chama', async () => {
+        const compilador = new CompiladorLLVM();
+        const resultado = await compilador.compilar([
+            'interface Fonte {',
+            '    descricao(): texto',
+            '}',
+            'classe FonteRegistro implementa Fonte {',
+            '    url: texto',
+            '    construtor(url: texto) { isto.url = url }',
+            '    descricao(): texto { retorna "registro " + isto.url }',
+            '}',
+            'classe Animal {',
+            '    nome(): texto { retorna "animal" }',
+            '}',
+            'classe Ave herda Animal {',
+            '    nome(): texto { retorna "ave " + texto(2) }',
+            '}',
+            'funcao usar(f: Fonte) { escreva(f.descricao() + "!") }',
+            'funcao mostrar(a: Animal) { escreva(a.nome() + "!") }',
+            'usar(FonteRegistro("http://x"))',
+            'mostrar(Ave())',
+        ]);
+
+        // Sem registrar o nome do despacho no ARC, o resultado não ia para um slot
+        // arc_tmp e o texto devolvido pela implementação vazava.
+        expect(resultado).toMatch(/(%\d+) = call ptr @__despacho_Fonte_descricao\(ptr %0\)\n\s+store ptr \1, ptr %arc_tmp/);
+        expect(resultado).toMatch(/(%\d+) = call ptr @__despacho_Animal_nome\(ptr %0\)\n\s+store ptr \1, ptr %arc_tmp/);
     });
 
     it('vetor devolvido por método pode ser indexado diretamente', async () => {
@@ -109,7 +138,8 @@ describe('Compilador - Despacho dinâmico de métodos', () => {
             'usar(Fonte())',
         ]);
 
-        expect(resultado).toContain('call %Vetor @Fonte_versoes(');
+        expect(resultado).toContain('call ptr @Fonte_versoes(');
+        expect(resultado).not.toContain('%Vetor @');
     });
 });
 
@@ -128,7 +158,7 @@ describe('Compilador - longo em campos e conversões', () => {
         expect(resultado).toContain('store i64');
     });
 
-    it('longo(texto) chama a conversão de 64 bits do runtime', async () => {
+    it('longo(texto) chama a conversão de 64 bits do tempo de execução', async () => {
         const compilador = new CompiladorLLVM();
         const resultado = await compilador.compilar(['var n: longo = longo("12345678901")', 'escreva(n)']);
 

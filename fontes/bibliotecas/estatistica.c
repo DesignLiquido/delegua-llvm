@@ -4,7 +4,7 @@
 #include <string.h>
 
 static double* elementos_double(Vetor* v) {
-    return (double*)v->elementos;
+    return (double*)v->ptr;
 }
 
 double delegua_est_max(Vetor* vetor) {
@@ -48,7 +48,7 @@ double delegua_est_mediana(Vetor* vetor) {
     int n = vetor->tamanho;
     double* copia = (double*)malloc(n * sizeof(double));
     if (!copia) return 0.0;
-    memcpy(copia, vetor->elementos, n * sizeof(double));
+    memcpy(copia, vetor->ptr, n * sizeof(double));
     qsort(copia, n, sizeof(double), comparar_double);
     double resultado;
     int meio = n / 2;

@@ -2,16 +2,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Deve coincidir com %Vetor = type { ptr, i32, i32, i32, i32 } do IR gerado.
+// O próprio Vetor é uma alocação ARC (ver arc.h); `ptr` é um buffer interno do vetor.
 typedef struct {
     void* ptr;
     int tamanho;
+    int capacidade;
+    int tam_elem;
+    // 1 quando os elementos são ponteiros gerenciados (texto, objetos, vetores, dicionários):
+    // o vetor retém o que guarda e libera o que remove ou ao ser destruído.
+    int gerenciado;
 } Vetor;
+
+// Aloca um novo Vetor (ARC, +1) com `tamanho_inicial` elementos zerados de tamanho `tam_elem`.
+Vetor* delegua_vetor_criar(int tamanho_inicial, int tam_elem, int gerenciado);
 
 // Retorna o número de elementos no vetor.
 int delegua_vetor_tamanho(Vetor* v);
 
-// Mapeia elementos texto (char*→char*) — cria novo vetor em *saida.
-void delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*), Vetor* saida);
+// Mapeia elementos texto (char*→char*) — cria e retorna novo Vetor*.
+Vetor* delegua_vetor_mapear_texto(Vetor* v, char* (*fn)(char*));
 
 // Adiciona um elemento ao final do vetor. Retorna o novo tamanho.
 int delegua_vetor_adicionar(Vetor* v, void* elem, int tam_elem);
@@ -40,8 +50,8 @@ void delegua_vetor_ordenar(Vetor* v, int tam_elem, int tipo);
 // elementos considerados iguais mantêm a ordem original.
 void delegua_vetor_ordenar_com_funcao(Vetor* v, int tam_elem, int (*comparar)(const void*, const void*));
 
-// Fatia o vetor [inicio, fim) e preenche *saida (out-param para evitar ABI de struct).
-void delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem, Vetor* saida);
+// Fatia o vetor [inicio, fim) e retorna novo Vetor*.
+Vetor* delegua_vetor_fatiar(Vetor* v, int inicio, int fim, int tam_elem);
 
 // Junta elementos inteiros como texto separado por sep.
 char* delegua_vetor_juntar_inteiro(Vetor* v, const char* sep);
@@ -52,17 +62,17 @@ char* delegua_vetor_juntar_numero(Vetor* v, const char* sep);
 // Junta elementos texto (char*) separados por sep.
 char* delegua_vetor_juntar_texto(Vetor* v, const char* sep);
 
-// Filtra elementos inteiros usando predicado — cria novo vetor em *saida.
-void delegua_vetor_filtrar_inteiro(Vetor* v, int (*fn)(int), Vetor* saida);
+// Filtra elementos inteiros usando predicado — retorna novo Vetor*.
+Vetor* delegua_vetor_filtrar_inteiro(Vetor* v, int (*fn)(int));
 
-// Filtra elementos número (double) usando predicado — cria novo vetor em *saida.
-void delegua_vetor_filtrar_numero(Vetor* v, int (*fn)(double), Vetor* saida);
+// Filtra elementos número (double) usando predicado — retorna novo Vetor*.
+Vetor* delegua_vetor_filtrar_numero(Vetor* v, int (*fn)(double));
 
-// Mapeia elementos inteiros (int→int) — cria novo vetor em *saida.
-void delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int), Vetor* saida);
+// Mapeia elementos inteiros (int→int) — retorna novo Vetor*.
+Vetor* delegua_vetor_mapear_inteiro(Vetor* v, int (*fn)(int));
 
-// Mapeia elementos número (double→double) — cria novo vetor em *saida.
-void delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double), Vetor* saida);
+// Mapeia elementos número (double→double) — retorna novo Vetor*.
+Vetor* delegua_vetor_mapear_numero(Vetor* v, double (*fn)(double));
 
 // Verifica se o vetor de char* contém a string s (strcmp). Retorna 1 se sim, 0 caso contrário.
 int delegua_vetor_inclui_texto(Vetor* v, const char* s);

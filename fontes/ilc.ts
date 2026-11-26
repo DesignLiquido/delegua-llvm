@@ -346,26 +346,36 @@ async function principal() {
 
         const arquivosObj: string[] = [];
         const nivelOtimizacaoC = emitirDebug ? '-O0' : '-O2';
+        // Flags extras para o compilador C (objetos do tempo de execução e ligação), ex.:
+        // DELEGUA_FLAGS_C="-fsanitize=address -fno-omit-frame-pointer" nos testes com sanitizadores.
+        const flagsExtrasC = (process.env.DELEGUA_FLAGS_C ?? '').split(/\s+/).filter(Boolean);
+        const comFlagsExtras = ([programa, argumentos]: [string, string[]]): [string, string[]] => [
+            programa,
+            [...argumentos, ...flagsExtrasC],
+        ];
 
         for (const arquivoC of arquivosC) {
             const nomeArquivo = path.basename(arquivoC, '.c');
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            executarFerramenta(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC), cadeia);
+            executarFerramenta(comFlagsExtras(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC)), cadeia);
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado: ${path.basename(arquivoC)} → ${path.basename(objPath)}`);
         }
 
-        // Fontes C de pacotes ("nativo.fontes"). Podem incluir os cabeçalhos do runtime
+        // Fontes C de pacotes ("nativo.fontes"). Podem incluir os cabeçalhos do tempo de execução
         // (ex.: "vetor.h"). O nome do objeto leva um hash do caminho para não colidir
-        // com os objetos do runtime nem com fontes homônimas de outros pacotes.
+        // com os objetos do tempo de execução nem com fontes homônimas de outros pacotes.
         for (const arquivoC of compilador.fontesNativasPacotes) {
             const hashCaminho = createHash('sha1').update(arquivoC).digest('hex').slice(0, 8);
             const nomeArquivo = `pacote-${hashCaminho}-${path.basename(arquivoC, '.c')}`;
             const objPath = path.join(diretorioSaida, `${nomeArquivo}.o`);
 
-            executarFerramenta(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC, [bibliotecasDir]), cadeia);
+            executarFerramenta(
+                comFlagsExtras(comandoCompilarObjeto(cadeia, arquivoC, objPath, nivelOtimizacaoC, [bibliotecasDir])),
+                cadeia
+            );
             arquivosObj.push(objPath);
             arquivosTemporarios.push(objPath);
             taquigrafarSucesso(`Compilado (pacote): ${path.relative(diretorioProjeto, arquivoC)} → ${path.basename(objPath)}`);
@@ -414,7 +424,7 @@ async function principal() {
         }
         const flagsOtimizacao = emitirDebug ? ['-O0', '-gdwarf-4'] : ['-O2'];
         executarFerramenta(
-            comandoLigar(cadeia, irParaCompilacao, arquivosObj, flagsLink, caminhoBinario, flagsOtimizacao),
+            comFlagsExtras(comandoLigar(cadeia, irParaCompilacao, arquivosObj, flagsLink, caminhoBinario, flagsOtimizacao)),
             cadeia
         );
         taquigrafarSucesso(`Binário gerado: ${caminhoBinario}`);

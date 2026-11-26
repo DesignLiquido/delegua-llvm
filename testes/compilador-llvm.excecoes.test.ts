@@ -59,7 +59,7 @@ describe('Compilador - Exceções (setjmp/longjmp)', () => {
         const ir = await compilar(['falhar "erro proposital"']);
         expect(ir).toContain('%Excecao = type { i32, ptr }');
         expect(ir).toMatch(/store i32 1000000, ptr %excecao_tipo_ptr/);
-        expect(ir).toMatch(/call void @delegua_excecao_lancar\(ptr %excecao, ptr @str[.\d]*\)/);
+        expect(ir).toMatch(/call void @delegua_excecao_lancar\(ptr %excecao, ptr getelementptr inbounds \(\{[^}]*\}, ptr @texto_arc_\d+, i32 0, i32 3, i32 0\)\)/);
         expect(ir).toMatch(/declare void @delegua_excecao_lancar\(ptr, ptr\) #\d+/);
     });
 
@@ -102,10 +102,11 @@ describe('Compilador - Exceções (setjmp/longjmp)', () => {
             '}',
         ]);
         const despacho = ir.slice(ir.indexOf('pegue_0_seguinte:'));
-        expect(despacho).toMatch(/call void @delegua_excecao_lancar\(ptr %objeto, ptr %mensagem_atual\)/);
+        // A mensagem vem do slot dono do despacho (o tempo de execução já soltou a sua em concluir).
+        expect(despacho).toMatch(/call void @delegua_excecao_lancar\(ptr %objeto, ptr %mensagem_excecao\d*\)/);
     });
 
-    it('exceção do runtime C (sem objeto) vira uma Excecao no despacho', async () => {
+    it('exceção do tempo de execução C (sem objeto) vira uma Excecao no despacho', async () => {
         const ir = await compilar(['tente {', '  escreva("x")', '} pegue (erro) {', '  escreva(erro.mensagem)', '}']);
         expect(ir).toContain('call ptr @delegua_excecao_atual()');
         expect(ir).toContain('pegue_criar_excecao:');
@@ -126,7 +127,7 @@ describe('Compilador - Exceções (setjmp/longjmp)', () => {
         const corpo = corpoFuncao(ir, 'f');
         const posRetornoUm = corpo.indexOf('ret i32 1');
         expect(corpo.lastIndexOf('call void @delegua_excecao_desempilhar()', posRetornoUm)).toBeGreaterThan(-1);
-        // No pegue o tratador já foi removido pelo runtime: retorna 2 não desempilha.
+        // No pegue o tratador já foi removido pelo tempo de execução: retorna 2 não desempilha.
         const trechoPegue = corpo.slice(corpo.indexOf('pegue_0:'), corpo.indexOf('ret i32 2'));
         expect(trechoPegue).not.toContain('delegua_excecao_desempilhar');
     });

@@ -1,8 +1,8 @@
 #pragma once
 
 // Exceções de Delégua (tente/pegue/falhar) com setjmp/longjmp, sem depender da ABI de
-// exceções de C++. Delégua compilado não tem destrutores, então não há nada a executar
-// nos quadros de pilha que um `falhar` atravessa.
+// exceções de C++. As variáveis gerenciadas (ARC) das funções que um `falhar` atravessa são
+// liberadas pelos quadros de limpeza de arc.h antes do longjmp.
 //
 // Cada `tente` em execução tem um quadro, guardado na pilha da função que contém o `tente`
 // (área de DELEGUA_TAMANHO_QUADRO_EXCECAO bytes reservada pelo compilador, com o jmp_buf no
@@ -20,6 +20,8 @@ void        delegua_excecao_desempilhar(void);
 // e encerra o programa com código 1.
 void        delegua_excecao_lancar(void* objeto, const char* mensagem);
 
-// Exceção sendo tratada (no bloco pegue).
+// Exceção sendo tratada (no bloco pegue). Referências emprestadas do tempo de execução.
 void*       delegua_excecao_atual(void);
 const char* delegua_excecao_mensagem_atual(void);
+// O pegue já guardou objeto e mensagem nas suas variáveis: o tempo de execução solta os dele.
+void        delegua_excecao_concluir(void);

@@ -159,7 +159,7 @@ describe('Compilador - integração com importação de arquivo (diretorioBase)'
         );
 
         expect(resultado).toBeTruthy();
-        expect(resultado).toContain('call ptr @malloc(i64');
+        expect(resultado).toContain('ptr @__arc_desc_Ponto)');
         expect(resultado).toContain('call void @Ponto_construtor(ptr');
     });
 });

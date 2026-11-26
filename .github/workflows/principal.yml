@@ -53,6 +53,53 @@ jobs:
           fail_ci_if_error: false
         continue-on-error: true
 
+  arc-sanitizadores:
+    name: ARC with AddressSanitizer + LeakSanitizer
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'yarn'
+
+      - name: Install LLVM 23, sanitizer runtime and C libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          # libclang-rt: runtime do ASan/LSan; libssl/libcurl: módulos criptografia e http.
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev clang-${{ env.LLVM_VERSION_MAJOR }} \
+            libclang-rt-${{ env.LLVM_VERSION_MAJOR }}-dev libssl-dev libcurl4-openssl-dev
+          echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
+          sudo ln -sf /usr/bin/clang-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/clang
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # Todo o tempo de execução C compila, inclusive os módulos que dependem de OpenSSL e libcurl.
+      - name: Check C runtime sources
+        run: |
+          for arquivo in fontes/bibliotecas/*.c; do
+            clang -fsyntax-only -Wall -Werror=implicit-function-declaration -Werror=int-conversion \
+              -Werror=incompatible-pointer-types -I fontes/bibliotecas "$arquivo"
+          done
+
+      # Programas compilados com ASan + LSan (DELEGUA_FLAGS_C), no modo estrito do ARC
+      # (testes/configuracao-arc.ts), incluindo a suíte de estresse.
+      - name: Run execution and stress tests with sanitizers
+        env:
+          DELEGUA_FLAGS_C: -fsanitize=address -fno-omit-frame-pointer
+          DELEGUA_TESTES_ESTRESSE: '1'
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+        run: yarn testes-unitarios --coverage=false testes/compilador-llvm.arc testes/compilador-llvm.vetores-execucao testes/compilador-llvm.despacho-execucao testes/bibliotecas/arc testes/bibliotecas/argumentos-execucao testes/bibliotecas/http-execucao
+
   compilacao-cruzada:
     name: Cross-compile (zig)
     runs-on: ubuntu-24.04

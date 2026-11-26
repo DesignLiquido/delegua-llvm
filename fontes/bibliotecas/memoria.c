@@ -1,4 +1,5 @@
 #include "memoria.h"
+#include "arc.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -64,8 +65,8 @@ void delegua_memoria_escrever_byte(void* base, int64_t deslocamento, int valor) 
 
 char* delegua_memoria_texto_de_tamanho(void* ponteiro, int64_t bytes) {
     if (!ponteiro || bytes < 0) return NULL;
-    char* copia = (char*)malloc((size_t)bytes + 1);
-    if (!copia) return NULL;
+    // Texto Delégua gerenciado (ARC); a memória bruta de origem continua do chamador.
+    char* copia = delegua_arc_texto_criar((size_t)bytes);
     memcpy(copia, ponteiro, (size_t)bytes);
     copia[bytes] = '\0';
     return copia;

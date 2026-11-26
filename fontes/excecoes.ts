@@ -8,7 +8,7 @@ import { VariavelEscopo } from './variavel-escopo';
 /**
  * Exceções (tente/pegue/senão/finalmente e falhar) com setjmp/longjmp, sem a ABI de
  * exceções de C++ — o mesmo mecanismo em Linux, macOS e Windows (MSVC e MinGW).
- * Implementado como mixin de CompiladorLLVM; o runtime está em bibliotecas/excecoes.c.
+ * Implementado como mixin de CompiladorLLVM; o tempo de execução está em bibliotecas/excecoes.c.
  *
  * Semântica do núcleo de Delégua:
  *   - `falhar <instância de classe>` lança o objeto; `falhar <outro valor>` lança uma
@@ -77,6 +77,12 @@ export function registrarClasseExcecao(this: CompiladorLLVM): void {
         [ConstantInt.get(this.contexto, new APInt(32, 0)), ConstantInt.get(this.contexto, new APInt(32, 1))],
         'mensagem_ptr'
     );
+    // O objeto é dono da mensagem (o destrutor gerado de Excecao a libera).
+    const reter = this.modulo.getOrInsertFunction(
+        'delegua_arc_reter',
+        llvm.FunctionType.get(llvm.Type.getVoidTy(this.contexto), [ptr], false)
+    );
+    montador.CreateCall(reter, [mensagem]);
     montador.CreateStore(mensagem, campo);
     montador.CreateRetVoid();
 }
@@ -122,8 +128,7 @@ export function mensagemDeExcecao(this: CompiladorLLVM, objeto: llvm.Value, nome
 /** Nova instância de Excecao com a mensagem (char*). */
 export function criarObjetoExcecao(this: CompiladorLLVM, mensagem: llvm.Value): llvm.Value {
     const tipoStruct = this.registroClasses.get(NOME_CLASSE_EXCECAO);
-    const tamanho = ConstantInt.get(this.contexto, new APInt(64, this.layoutDados.getTypeAllocSize(tipoStruct)));
-    const objeto = this.montador.CreateCall(this.funcaoMalloc, [tamanho], 'excecao');
+    const objeto = this.alocarObjetoArc(NOME_CLASSE_EXCECAO, 'excecao');
     const zero = ConstantInt.get(this.contexto, new APInt(32, 0));
     const campoTipo = this.montador.CreateInBoundsGEP(tipoStruct, objeto, [zero, zero], 'excecao_tipo_ptr');
     this.montador.CreateStore(ConstantInt.get(this.contexto, new APInt(32, ID_CLASSE_EXCECAO)), campoTipo);
@@ -133,7 +138,8 @@ export function criarObjetoExcecao(this: CompiladorLLVM, mensagem: llvm.Value): 
         [zero, ConstantInt.get(this.contexto, new APInt(32, 1))],
         'excecao_mensagem_ptr'
     );
-    this.montador.CreateStore(mensagem, campoMensagem);
+    // Objeto recém-criado (campo nulo): atribuir só retém a mensagem.
+    this.emitirArcAtribuir(campoMensagem, mensagem);
     return objeto;
 }
 
@@ -161,7 +167,7 @@ export async function compilarFalhar(this: CompiladorLLVM, expressao: Falhar): P
         objeto = resolvido instanceof VariavelEscopo ? this.carregarPtrClasseSePreciso(resolvido) : (resolvido as llvm.Value);
         mensagem = this.herdaDeExcecao(tipo)
             ? this.mensagemDeExcecao(objeto, tipo)
-            : this.montador.CreateGlobalStringPtr(`<objeto ${tipo}>`, 'mensagem_objeto', 0, this.modulo);
+            : this.literalTextoArc(`<objeto ${tipo}>`);
     } else {
         // Qualquer outro valor vira a mensagem de uma Excecao (como no núcleo de Delégua).
         mensagem = await this.chamarFuncaoTexto([valor]);
@@ -256,23 +262,31 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
         }
     }
 
-    // ── Despacho da exceção (o runtime já removeu o tratador) ──
+    // ── Despacho da exceção (o tempo de execução já removeu o tratador) ──
     this.montador.SetInsertPoint(blocoDespacho);
-    const slotObjeto = this.criarAllocaNoBlocoEntrada(ptr, 'objeto_excecao');
+    // Temporários de uma instrução do corpo interrompida pelo longjmp (Fase 4.3).
+    this.liberarTodosTemporariosArc();
+    // Objeto e mensagem ficam em slots donos desta função (o tempo de execução só empresta os seus e os
+    // solta em delegua_excecao_concluir): continuam válidos no `finalmente` e ao repropagar.
+    const slotObjeto = this.criarAllocaNoBlocoEntrada(ptr, 'objeto_excecao', true);
+    const slotMensagem = this.criarAllocaNoBlocoEntrada(ptr, 'mensagem_excecao', true);
     const objetoBruto = this.montador.CreateCall(this.obterFuncaoRuntime('delegua_excecao_atual', ptr, []), [], 'excecao_atual');
-    const mensagemAtual = this.montador.CreateCall(
+    const mensagemBruta = this.montador.CreateCall(
         this.obterFuncaoRuntime('delegua_excecao_mensagem_atual', ptr, []),
         [],
         'mensagem_atual'
     );
-    this.montador.CreateStore(objetoBruto, slotObjeto);
-    // Exceção lançada pelo runtime C (falhar(mensagem)): cria a Excecao aqui.
+    this.armazenarVariavelArc(slotObjeto, objetoBruto, NOME_CLASSE_EXCECAO);
+    this.armazenarVariavelArc(slotMensagem, mensagemBruta, 'texto');
+    this.montador.CreateCall(this.obterFuncaoRuntime('delegua_excecao_concluir', vazio, []), []);
+    const mensagemAtual = this.montador.CreateLoad(ptr, slotMensagem, 'mensagem_excecao');
+    // Exceção lançada pelo tempo de execução C (falhar(mensagem)): cria a Excecao aqui.
     const semObjeto = this.montador.CreateICmpEQ(objetoBruto, llvm.Constant.getNullValue(ptr) as unknown as llvm.Value, 'sem_objeto');
     const blocoCriarObjeto = novoBloco('pegue_criar_excecao');
     const blocoComObjeto = novoBloco('pegue_com_objeto');
     this.montador.CreateCondBr(semObjeto, blocoCriarObjeto, blocoComObjeto);
     this.montador.SetInsertPoint(blocoCriarObjeto);
-    this.montador.CreateStore(this.criarObjetoExcecao(mensagemAtual), slotObjeto);
+    this.armazenarVariavelArc(slotObjeto, this.criarObjetoExcecao(mensagemAtual), NOME_CLASSE_EXCECAO);
     this.montador.CreateBr(blocoComObjeto);
     this.montador.SetInsertPoint(blocoComObjeto);
     const objeto = this.montador.CreateLoad(ptr, slotObjeto, 'objeto');
@@ -302,8 +316,9 @@ export async function compilarTente(this: CompiladorLLVM, declaracao: Tente): Pr
         this.montador.SetInsertPoint(blocoTratamento);
         if (bloco.parametro?.lexema) {
             const tipoParametro = nomeTipo ?? NOME_CLASSE_EXCECAO;
-            const slot = this.criarAllocaNoBlocoEntrada(ptr, bloco.parametro.lexema);
-            this.montador.CreateStore(objeto, slot);
+            const slot = this.criarAllocaNoBlocoEntrada(ptr, bloco.parametro.lexema, true);
+            // Variável dona: a Excecao criada aqui é um temporário liberado ao fim da 1ª instrução.
+            this.armazenarVariavelArc(slot, objeto, tipoParametro);
             this.pilhaVariaveisEscopo.topoDaPilha().set(bloco.parametro.lexema, new VariavelEscopo(slot, undefined, tipoParametro));
         }
         await this.aceitarListaDeclaracoes(declaracoesDe(bloco.corpo));
