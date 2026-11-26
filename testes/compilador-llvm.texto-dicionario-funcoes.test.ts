@@ -178,4 +178,18 @@ describe('Compilador - correções de vetores e funções', () => {
         expect(ir).toMatch(/%conv_arg\w* = fptosi double %load_arg to i32/);
         expect(ir).toMatch(/call i32 @g\(i32 %conv_arg\w*\)/);
     });
+
+    it('caractere de texto (s[i]) guardado em variável é texto', async () => {
+        const ir = await compilar(['var s = "item"', 'var c = s[0]', 'escreva(c.tamanho())', 'escreva(c)']);
+        // Antes, `c` ficava `qualquer` e `c.tamanho()` virava delegua_vetor_tamanho.
+        expect(ir).not.toContain('@delegua_vetor_tamanho(ptr %c)');
+        expect(ir).toMatch(/call i64 @strlen\(ptr %\w+\)|@delegua_texto_tamanho/);
+    });
+
+    it('variável número gravada em campo inteiro é convertida, não reinterpretada', async () => {
+        const ir = await compilar(['classe Elo {', '    valor: inteiro', '}', 'var a = Elo()', 'var i = 7', 'a.valor = i']);
+        expect(ir).toMatch(/%load_val = load double, ptr %i/);
+        expect(ir).toMatch(/fptosi double %load_val to i32/);
+    });
 });
+

@@ -22,7 +22,11 @@ descrever('ARC - execução sem vazamentos', () => {
         fs.rmSync(diretorio, { recursive: true, force: true });
     });
 
-    async function compilarEExecutar(nome: string, linhas: string[]): Promise<string[]> {
+    async function compilarEExecutar(
+        nome: string,
+        linhas: string[],
+        ambiente: NodeJS.ProcessEnv = {}
+    ): Promise<string[]> {
         const fonte = path.join(diretorio, `${nome}.delegua`);
         fs.writeFileSync(fonte, linhas.join('\n'));
         const raiz = path.resolve(__dirname, '..');
@@ -36,7 +40,7 @@ descrever('ARC - execução sem vazamentos', () => {
             execFile(
                 executavel,
                 [],
-                { encoding: 'utf-8', env: { ...process.env, DELEGUA_ARC_DEPURACAO: 'estrito' } },
+                { encoding: 'utf-8', env: { ...process.env, DELEGUA_ARC_DEPURACAO: 'estrito', ...ambiente } },
                 (erro, stdout, stderr) =>
                     erro ? rejeitar(new Error(`código de saída ${erro.code}: ${stderr}`)) : resolver(stdout)
             )
@@ -193,8 +197,15 @@ descrever('ARC - execução sem vazamentos', () => {
     }, 300000);
 
     it('exceção não tratada mantém o código de saída 1 no modo estrito', async () => {
-        await expect(compilarEExecutar('nao-tratada', ['var s = "x" + "y"', 'falhar "fim " + s'])).rejects.toThrow(
-            /código de saída 1: Erro não tratado: fim xy/
+        // Sair por exceção não tratada deixa objetos vivos de propósito: com o LeakSanitizer
+        // (CI com DELEGUA_FLAGS_C=-fsanitize=address), a detecção de vazamentos trocaria o
+        // código de saída 1 pelo dele.
+        const semDeteccaoDeVazamentos = { ASAN_OPTIONS: 'detect_leaks=0' };
+        await expect(
+            compilarEExecutar('nao-tratada', ['var s = "x" + "y"', 'falhar "fim " + s'], semDeteccaoDeVazamentos)
+        ).rejects.toThrow(
+            // Sanitizadores podem escrever avisos próprios antes da mensagem na saída de erro.
+            /código de saída 1: [\s\S]*Erro não tratado: fim xy/
         );
     }, 300000);
 
@@ -262,6 +273,28 @@ descrever('ARC - execução sem vazamentos', () => {
             'escreva(\"fim\")',
         ]);
         expect(linhas).toEqual(['20000', '20000', 'p', 'pai nulo', 'fim']);
+    }, 300000);
+
+    it('cadeia longa de objetos é destruída sem estourar a pilha', async () => {
+        // Cada elo libera o próximo no destrutor: com destruição recursiva, 300 mil elos
+        // estouravam a pilha de C.
+        const linhas = await compilarEExecutar('cadeia-longa', [
+            'classe Elo {',
+            '    valor: inteiro',
+            '    proximo: Elo',
+            '}',
+            'var cabeca = Elo()',
+            'para (var i = 0; i < 300000; i = i + 1) {',
+            '    var novo = Elo()',
+            '    novo.valor = i',
+            '    novo.proximo = cabeca',
+            '    cabeca = novo',
+            '}',
+            'escreva(cabeca.valor)',
+            'cabeca = nulo',
+            'escreva("liberada")',
+        ]);
+        expect(linhas).toEqual(['299999', 'liberada']);
     }, 300000);
 
     it('iterável temporário, módulos e vetores devolvidos', async () => {

@@ -11,6 +11,9 @@ static int64_t arc_ciclos_coletados = 0;
 // Chamadas a reter/liberar (inclusive as que não fazem nada), para medir o custo do ARC.
 static int64_t arc_chamadas_reter = 0;
 static int64_t arc_chamadas_liberar = 0;
+// Máximo de alocações vivas ao mesmo tempo: mostra se a memória é recuperada durante a execução
+// (e não só no fim).
+static int64_t arc_pico_vivas = 0;
 static int arc_fim_normal = 0;
 static ArcQuadroLimpeza* arc_topo_limpeza = NULL;
 
@@ -366,10 +369,11 @@ static void relatorio_depuracao(void) {
     // Ciclos ainda não coletados contam como vazamento só se sobreviverem a uma coleta final.
     delegua_arc_coletar_ciclos();
     fprintf(stderr,
-            "[DELEGUA ARC] alocacoes=%lld liberacoes=%lld vivas=%lld ciclos=%lld reter=%lld liberar=%lld\n",
+            "[DELEGUA ARC] alocacoes=%lld liberacoes=%lld vivas=%lld pico=%lld ciclos=%lld reter=%lld liberar=%lld\n",
             (long long)arc_total_alocacoes,
             (long long)arc_total_liberacoes,
             (long long)arc_alocacoes_vivas,
+            (long long)arc_pico_vivas,
             (long long)arc_ciclos_coletados,
             (long long)arc_chamadas_reter,
             (long long)arc_chamadas_liberar);
@@ -396,7 +400,7 @@ void* delegua_arc_alocar(size_t tamanho, const ArcDescritor* descritor) {
     c->rc = 1;
     c->magia = (uint32_t)MAGIA_BASE << 8;
     c->tipo = descritor;
-    arc_alocacoes_vivas++;
+    if (++arc_alocacoes_vivas > arc_pico_vivas) arc_pico_vivas = arc_alocacoes_vivas;
     arc_total_alocacoes++;
     return payload_de(c);
 }
@@ -424,6 +428,21 @@ void delegua_arc_reter(void* p) {
     pintar(c, COR_PRETO);
 }
 
+static ListaCabecalhos arc_pendentes_destruicao = {0};
+static int arc_destruindo = 0;
+
+// Roda o destrutor de um objeto com rc = 0 e desaloca a memória (ou a deixa para a coleta,
+// se ainda estiver no buffer de raízes candidatas).
+static void destruir(ArcCabecalho* c) {
+    if (c->tipo && c->tipo->destrutor) c->tipo->destrutor(payload_de(c));
+    pintar(c, COR_PRETO);
+    if (tem(c, MARCA_BUFERIZADO)) {
+        marcar(c, MARCA_DESTRUIDO);
+        return;
+    }
+    desalocar(c);
+}
+
 void delegua_arc_liberar(void* p) {
     arc_chamadas_liberar++;
     ArcCabecalho* c = cabecalho_valido(p);
@@ -438,15 +457,18 @@ void delegua_arc_liberar(void* p) {
         return;
     }
 
+    // Referências fracas viram nulo já: o objeto está morto mesmo antes do destrutor rodar.
     zerar_fracos(c);
-    if (c->tipo && c->tipo->destrutor) c->tipo->destrutor(p);
-    pintar(c, COR_PRETO);
-    if (tem(c, MARCA_BUFERIZADO)) {
-        // Ainda referenciado pelo buffer de raízes: a coleta desaloca a memória.
-        marcar(c, MARCA_DESTRUIDO);
-        return;
-    }
-    desalocar(c);
+    // Destruição sem recursão: o destrutor de uma cadeia longa (lista ligada, `amigos[0]` de
+    // `amigos[0]`...) liberaria o próximo elo dentro de si, um quadro de pilha de C por elo, e
+    // estouraria a pilha. Os objetos mortos entram numa fila que só a chamada mais externa
+    // esvazia, em laço.
+    lista_empilhar(&arc_pendentes_destruicao, c);
+    if (arc_destruindo) return;
+    arc_destruindo = 1;
+    ArcCabecalho* morto;
+    while ((morto = lista_desempilhar(&arc_pendentes_destruicao))) destruir(morto);
+    arc_destruindo = 0;
 }
 
 void delegua_arc_atribuir(void** slot, void* novo) {

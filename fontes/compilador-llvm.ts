@@ -2979,6 +2979,14 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
             }
             if (tipoEhPonteiro(tipoVariavel)) {
                 const tipoLlvm = this.obterTipoLlvm(tipoDelegua);
+                // Variável escalar de outro tipo (ex.: `var i = 3`, número, gravada num campo
+                // inteiro): carrega com o tipo da variável e converte, em vez de reinterpretar
+                // os bytes do slot (ler um i32 de um double dava os bits baixos do número).
+                const escalares = ['inteiro', 'longo', 'número', 'numero', 'lógico', 'logico'];
+                if (escalares.includes(valor.tipo) && escalares.includes(tipoDelegua) && valor.tipo !== tipoDelegua) {
+                    const carregado = this.montador.CreateLoad(this.obterTipoLlvm(valor.tipo), valor.variavelLlvm, nomeLoad);
+                    return this.coagirEscalar(carregado, tipoLlvm, `${nomeLoad}_conv`);
+                }
                 return this.montador.CreateLoad(tipoLlvm, valor.variavelLlvm, nomeLoad);
             }
             return valor.variavelLlvm;
@@ -3890,6 +3898,8 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                         if (varEscopo && tipoEhVetor(varEscopo.tipo)) {
                             return tipoElementoVetor(varEscopo.tipo);
                         }
+                        // `s[i]` num texto é um texto de um caractere.
+                        if (varEscopo?.tipo === 'texto') return 'texto';
                     } catch {
                         /* variável não encontrada */
                     }
@@ -3899,6 +3909,7 @@ export class CompiladorLLVM implements VisitanteDeleguaInterface {
                     if (tipoAlvo && tipoEhVetor(tipoAlvo)) {
                         return tipoElementoVetor(tipoAlvo);
                     }
+                    if (tipoAlvo === 'texto') return 'texto';
                 }
                 return construto.tipo;
             }

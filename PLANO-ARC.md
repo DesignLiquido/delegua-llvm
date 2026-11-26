@@ -132,5 +132,25 @@ Este documento registra a auditoria completa de vazamentos de memória e riscos 
   - Pendente: operações com custo ainda evitável (liberações de nulo nas saídas de função, temporários de condições de `se`/`enquanto` liberados só na instrução seguinte).
 
 ### Fase 5 — Verificação e Regressão Anti-Vazamento
-- [ ] **5.1 Modo estrito de testes (`DELEGUA_ARC_DEPURACAO`):** Falhar testes de execução quando `alocacoes_vivas > 0` ao fim do programa.
-- [ ] **5.2 Suíte de estresse e ASan/LSan:** Testes com 1M iterações de strings, classes, vetores, dicionários, ciclos, exceções, JSON, CSV, arquivos e HTTP, além de CI com `-fsanitize=address,leak` no Linux.
+- [x] **5.1 Modo estrito em todos os testes de execução:** `testes/configuracao-arc.ts` (em `setupFiles` do Jest) define `DELEGUA_ARC_DEPURACAO=estrito` para todo programa que os testes compilam e executam (vetores, despacho, argumentos, HTTP, console, ARC). Um programa que termina normalmente com alocações vivas (após a coleta de ciclos final) sai com código 99 e o teste falha. O relatório mostra `alocacoes`, `liberacoes`, `vivas`, `pico` (máximo de vivas ao mesmo tempo), `ciclos`, `reter` e `liberar`.
+- [x] **5.2 Suíte de estresse e sanitizadores:**
+  - `testes/compilador-llvm.arc-estresse.test.ts` (com `DELEGUA_TESTES_ESTRESSE=1`): 1 milhão de iterações com textos (concatenação, interpolação, indexação, dividir/juntar); 200 mil objetos em vetores e dicionários sobrescritos e removidos; 200 mil ciclos pai ↔ filho; 100 mil exceções atravessando funções; 3000 rodadas de JSON, CSV e arquivos sem `liberar` manual. Além do resultado e de 0 vivas no fim, cada teste limita o `pico`: a memória precisa ser recuperada durante a execução.
+  - `DELEGUA_FLAGS_C`: flags extras do compilador C passadas por `ilc` aos objetos do tempo de execução e à ligação (ex.: `-fsanitize=address -fno-omit-frame-pointer`).
+  - CI (`.github/workflows/principal.yml`, job `arc-sanitizadores`, Linux): compila todo o tempo de execução C (inclusive `criptografia*` com OpenSSL e `http` com libcurl) e roda os testes de execução e de estresse com AddressSanitizer + LeakSanitizer no modo estrito.
+- **Estado (2026-11-25):** Fase 5 concluída localmente (Windows, AddressSanitizer sem LeakSanitizer, que não existe no Windows); o job de CI no Linux ainda precisa rodar pela primeira vez.
+  - Correções encontradas pela suíte de estresse:
+    - **Destruição sem recursão:** a destruição de uma cadeia longa (cada objeto liberando o próximo no destrutor) estourava a pilha de C com 200 mil elos. Objetos que chegam a `rc = 0` agora entram numa fila esvaziada em laço pela chamada mais externa de `delegua_arc_liberar`; referências fracas continuam zeradas no momento da morte.
+    - Variável `número` gravada em campo `inteiro` era lida como i32 a partir dos bits do double (`a.valor = i` com `var i = 7` gravava 0): `carregarValorSeNecessario` agora carrega com o tipo da variável e converte.
+    - `var c = s[i]` sobre um texto era inferido como `qualquer` (`c.tamanho()` virava `delegua_vetor_tamanho`, `escreva(c)` não escrevia nada): a indexação de texto agora é inferida como `texto`.
+  - Uma exceção não tratada deixa objetos vivos de propósito; o teste correspondente desliga a detecção do LeakSanitizer para manter o código de saída 1.
+
+---
+
+## Resumo
+
+Com as fases 0–5, programas Delégua compilados liberam a própria memória de forma determinística: textos, vetores, dicionários, instâncias e handles de módulos são contados por referência; ciclos são coletados; campos `@fraco` não retêm; exceções liberam as funções que atravessam. Os testes de execução, a suíte de estresse e o interpretador `delegua-delegua` compilado terminam com 0 alocações vivas e sem erros do AddressSanitizer.
+
+Limitações conhecidas:
+- Vetores não verificam limites: além da posição sentinela após o fim, uma leitura fora do intervalo é indefinida.
+- Temporários criados dentro de funções do tempo de execução C que chamam `falhar` no meio do trabalho não são liberados.
+- Chamadas por ponteiro de função (sem nome conhecido) tratam o resultado como emprestado: no pior caso vazam.
